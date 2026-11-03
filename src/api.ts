@@ -72,27 +72,8 @@ export async function fetchProjects(): Promise<Project[]> {
     }
   } catch {}
 
-  // Starter default projects for demonstration if completely empty
-  const defaultProjects: Project[] = [
-    {
-      id: "sonus-demo-1",
-      name: "PLTS Rooftop Cikarang Factory 500 kWp",
-      type: "Rooftop",
-      capacity: 500,
-      status: "In Progress",
-      updated: new Date().toLocaleDateString("id-ID", { day: "2-digit", month: "short", year: "numeric" }),
-    },
-    {
-      id: "sonus-demo-2",
-      name: "PLTS Ground-mounted Karawang 2 MWp",
-      type: "Ground-mounted",
-      capacity: 2000,
-      status: "Planning",
-      updated: new Date().toLocaleDateString("id-ID", { day: "2-digit", month: "short", year: "numeric" }),
-    },
-  ];
-  localStorage.setItem(LOCAL_PROJECTS_KEY, JSON.stringify(defaultProjects));
-  return defaultProjects;
+  // Return empty list if no local projects exist
+  return [];
 }
 
 export async function saveLocalProjects(projects: Project[]) {

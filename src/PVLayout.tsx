@@ -27,7 +27,7 @@ const defaults = {
 
 function storageKey(userId: string, projectId: string | null) { return `${STORAGE_KEY}:${userId}:${projectId ?? "unassigned"}`; }
 
-function loadSaved(userId: string, projectId: string | null): { settings: typeof defaults; panels: Panel[]; obstacles?: Obstacle[]; backgroundImage?: string; backgroundOpacity?: number } | null {
+function loadSaved(userId: string, projectId: string | null): { settings: typeof defaults; panels: Panel[]; obstacles?: Obstacle[]; backgroundImage?: string; backgroundOpacity?: number; site?: { coordinates: { lat: number; lng: number }; address: string } } | null {
   try {
     const raw = localStorage.getItem(storageKey(userId, projectId));
     if (!raw) return null;
@@ -44,6 +44,7 @@ export default function PVLayout({ lang, userId, projectId = null, projectName =
   const [obstacles, setObstacles] = useState<Obstacle[]>(saved?.obstacles ?? []);
   const [backgroundImage, setBackgroundImage] = useState<string>(saved?.backgroundImage ?? "");
   const [backgroundOpacity, setBackgroundOpacity] = useState<number>(saved?.backgroundOpacity ?? 0.8);
+  const [site, setSite] = useState(saved?.site ?? null);
   const imageInputRef = useRef<HTMLInputElement>(null);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [selectedObstacleId, setSelectedObstacleId] = useState<number | null>(null);
@@ -84,13 +85,15 @@ export default function PVLayout({ lang, userId, projectId = null, projectName =
 
   function handleGoogleMapsApply(data: { widthMm: number; heightMm: number; imageSrc: string; coordinates: { lat: number; lng: number }; address: string }) {
     const nextSettings = { ...settings, areaWidth: data.widthMm, areaHeight: data.heightMm };
+    const nextSite = { coordinates: data.coordinates, address: data.address };
+    setSite(nextSite);
     setSettings(nextSettings);
     if (data.imageSrc) {
       setBackgroundImage(data.imageSrc);
     }
     const safePanels = panels.filter(p => isPlacementValid(p, obstacles));
     setPanels(safePanels);
-    saveDraft(safePanels, nextSettings, obstacles);
+    saveDraft(safePanels, nextSettings, obstacles, nextSite);
     setNotice(id ? `Dimensi atap diperbarui dari Google Maps: ${data.widthMm.toLocaleString()} × ${data.heightMm.toLocaleString()} mm.` : `Rooftop dimensions updated from Google Maps: ${data.widthMm.toLocaleString()} × ${data.heightMm.toLocaleString()} mm.`);
   }
 
@@ -113,7 +116,7 @@ export default function PVLayout({ lang, userId, projectId = null, projectName =
         const dataUrl = canvas.toDataURL("image/jpeg", 0.78);
         setBackgroundImage(dataUrl);
         try {
-          localStorage.setItem(storageKey(userId, projectId), JSON.stringify({ settings, panels, obstacles, backgroundImage: dataUrl, backgroundOpacity }));
+          localStorage.setItem(storageKey(userId, projectId), JSON.stringify({ projectId, settings, panels, obstacles, site, backgroundImage: dataUrl, backgroundOpacity }));
           setNotice(id ? "Citra lokasi ditambahkan dan draft disimpan." : "Site image added and draft saved.");
         } catch {
           setNotice(id ? "Citra ditambahkan, tetapi terlalu besar untuk disimpan di browser. Gunakan gambar lebih kecil." : "Image added, but too large for browser storage. Try a smaller image.");
@@ -126,7 +129,7 @@ export default function PVLayout({ lang, userId, projectId = null, projectName =
   }
   function removeBackgroundImage() {
     setBackgroundImage("");
-    try { localStorage.setItem(storageKey(userId, projectId), JSON.stringify({ settings, panels, obstacles, backgroundImage: "", backgroundOpacity })); } catch { /* ignore storage errors */ }
+    try { localStorage.setItem(storageKey(userId, projectId), JSON.stringify({ projectId, settings, panels, obstacles, site, backgroundImage: "", backgroundOpacity })); } catch { /* ignore storage errors */ }
     setNotice(id ? "Citra lokasi dihapus." : "Site image removed.");
   }
 
@@ -136,8 +139,8 @@ export default function PVLayout({ lang, userId, projectId = null, projectName =
     // Persist settings immediately so the 3D viewer reads the latest 2D parameters.
     saveDraft(panels, nextSettings, obstacles);
   }
-  function saveDraft(nextPanels = panels, nextSettings = settings, nextObstacles = obstacles) {
-    try { localStorage.setItem(storageKey(userId, projectId), JSON.stringify({ settings: nextSettings, panels: nextPanels, obstacles: nextObstacles, backgroundImage, backgroundOpacity })); } catch { /* image or draft may exceed browser storage quota */ }
+  function saveDraft(nextPanels = panels, nextSettings = settings, nextObstacles = obstacles, nextSite = site) {
+    try { localStorage.setItem(storageKey(userId, projectId), JSON.stringify({ projectId, settings: nextSettings, panels: nextPanels, obstacles: nextObstacles, site: nextSite, backgroundImage, backgroundOpacity })); } catch { /* image or draft may exceed browser storage quota */ }
   }
   function generate() {
     const rows = Math.max(1, Math.min(100, Math.floor(Number(settings.rows) || 1)));
@@ -302,7 +305,7 @@ export default function PVLayout({ lang, userId, projectId = null, projectName =
           {backgroundImage && <button className="secondary-button" type="button" onClick={removeBackgroundImage}><X size={15} />{copy.removeImage}</button>}
         </div>
         <div style={{ fontSize: 12, color: "var(--muted, #93a69a)", lineHeight: 1.5 }}>{copy.imageHelp}</div>
-        {backgroundImage && <label className="pv-field"><span>{copy.imageOpacity} ({Math.round(backgroundOpacity * 100)}%)</span><input type="range" min="0" max="1" step="0.05" value={backgroundOpacity} onChange={e => { const value = Number(e.target.value); setBackgroundOpacity(value); try { localStorage.setItem(storageKey(userId, projectId), JSON.stringify({ settings, panels, obstacles, backgroundImage, backgroundOpacity: value })); } catch { /* ignore storage errors */ } }} /></label>}
+        {backgroundImage && <label className="pv-field"><span>{copy.imageOpacity} ({Math.round(backgroundOpacity * 100)}%)</span><input type="range" min="0" max="1" step="0.05" value={backgroundOpacity} onChange={e => { const value = Number(e.target.value); setBackgroundOpacity(value); try { localStorage.setItem(storageKey(userId, projectId), JSON.stringify({ projectId, settings, panels, obstacles, site, backgroundImage, backgroundOpacity: value })); } catch { /* ignore storage errors */ } }} /></label>}
         <div className="pv-section-title"><strong>{copy.obstacles}</strong></div>
         <div className="pv-input-grid"><NumberField label={copy.obstacleWidth} value={settings.obstacleWidth} min={100} step={100} onChange={v => update("obstacleWidth", v)} /><NumberField label={copy.obstacleHeight} value={settings.obstacleHeight} min={100} step={100} onChange={v => update("obstacleHeight", v)} /></div>
         <button className="secondary-button pv-generate" onClick={addObstacle}><Grid2X2 size={15} />{copy.addObstacle}</button>
