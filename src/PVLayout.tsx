@@ -93,6 +93,8 @@ export default function PVLayout({ lang, userId, projectId = null, projectName =
     imageSrc: string;
     coordinates: { lat: number; lng: number };
     address: string;
+    polygonPoints?: Array<{ lat: number; lng: number }>;
+    rotationDeg?: number;
     pitchDegrees?: number;
     azimuthDegrees?: number;
     googleSolarData?: any;
@@ -101,6 +103,8 @@ export default function PVLayout({ lang, userId, projectId = null, projectName =
     const nextSite = {
       coordinates: data.coordinates,
       address: data.address,
+      polygonPoints: data.polygonPoints,
+      rotationDeg: data.rotationDeg,
       pitchDegrees: data.pitchDegrees,
       azimuthDegrees: data.azimuthDegrees,
       googleSolarData: data.googleSolarData,
@@ -114,7 +118,8 @@ export default function PVLayout({ lang, userId, projectId = null, projectName =
     setPanels(safePanels);
     saveDraft(safePanels, nextSettings, obstacles, nextSite);
     const solarInfo = data.pitchDegrees !== undefined ? ` [Google Solar Pitch: ${data.pitchDegrees}°, Azimuth: ${data.azimuthDegrees}°]` : "";
-    setNotice(id ? `Dimensi atap diperbarui dari Google Maps: ${data.widthMm.toLocaleString()} × ${data.heightMm.toLocaleString()} mm.${solarInfo}` : `Rooftop dimensions updated from Google Maps: ${data.widthMm.toLocaleString()} × ${data.heightMm.toLocaleString()} mm.${solarInfo}`);
+    const rotInfo = data.rotationDeg ? ` [Rotasi: ${data.rotationDeg}°]` : "";
+    setNotice(id ? `Dimensi & batas area diperbarui: ${data.widthMm.toLocaleString()} × ${data.heightMm.toLocaleString()} mm.${rotInfo}${solarInfo}` : `Area dimensions & boundary updated: ${data.widthMm.toLocaleString()} × ${data.heightMm.toLocaleString()} mm.${rotInfo}${solarInfo}`);
   }
 
   function handleBackgroundUpload(file?: File) {
