@@ -549,7 +549,7 @@ export default function App() {
           ) : active === "survey" ? (
             <SurveyReport lang={lang} />
           ) : active === "report" ? (
-            <EngineeringReport lang={lang} />
+            <EngineeringReport lang={lang} projectId={activeProject?.id} project={activeProject} />
           ) : active === "settings" ? (
             <section className="panel module-page">
               <h2>{t.settings}</h2>

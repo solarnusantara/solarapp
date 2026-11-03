@@ -87,9 +87,24 @@ export default function PVLayout({ lang, userId, projectId = null, projectName =
   const isPlacementValid = (p: Pick<Panel, "x" | "y" | "w" | "h">, list: Obstacle[] = obstacles) =>
     withinSetback(p) && !list.some(o => intersectsObstacle(p, o));
 
-  function handleGoogleMapsApply(data: { widthMm: number; heightMm: number; imageSrc: string; coordinates: { lat: number; lng: number }; address: string }) {
+  function handleGoogleMapsApply(data: {
+    widthMm: number;
+    heightMm: number;
+    imageSrc: string;
+    coordinates: { lat: number; lng: number };
+    address: string;
+    pitchDegrees?: number;
+    azimuthDegrees?: number;
+    googleSolarData?: any;
+  }) {
     const nextSettings = { ...settings, areaWidth: data.widthMm, areaHeight: data.heightMm };
-    const nextSite = { coordinates: data.coordinates, address: data.address };
+    const nextSite = {
+      coordinates: data.coordinates,
+      address: data.address,
+      pitchDegrees: data.pitchDegrees,
+      azimuthDegrees: data.azimuthDegrees,
+      googleSolarData: data.googleSolarData,
+    };
     setSite(nextSite);
     setSettings(nextSettings);
     if (data.imageSrc) {
@@ -98,7 +113,8 @@ export default function PVLayout({ lang, userId, projectId = null, projectName =
     const safePanels = panels.filter(p => isPlacementValid(p, obstacles));
     setPanels(safePanels);
     saveDraft(safePanels, nextSettings, obstacles, nextSite);
-    setNotice(id ? `Dimensi atap diperbarui dari Google Maps: ${data.widthMm.toLocaleString()} × ${data.heightMm.toLocaleString()} mm.` : `Rooftop dimensions updated from Google Maps: ${data.widthMm.toLocaleString()} × ${data.heightMm.toLocaleString()} mm.`);
+    const solarInfo = data.pitchDegrees !== undefined ? ` [Google Solar Pitch: ${data.pitchDegrees}°, Azimuth: ${data.azimuthDegrees}°]` : "";
+    setNotice(id ? `Dimensi atap diperbarui dari Google Maps: ${data.widthMm.toLocaleString()} × ${data.heightMm.toLocaleString()} mm.${solarInfo}` : `Rooftop dimensions updated from Google Maps: ${data.widthMm.toLocaleString()} × ${data.heightMm.toLocaleString()} mm.${solarInfo}`);
   }
 
   function handleBackgroundUpload(file?: File) {

@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import { X, Search, MapPin, Maximize2, Check, RefreshCw, Layers } from "lucide-react";
+import { X, Search, MapPin, Maximize2, Check, RefreshCw, Layers, Zap, Sparkles, SunMedium } from "lucide-react";
+import { fetchGoogleSolarInsights } from "./gisSolarService";
+import type { GoogleSolarInsights } from "./gisSolarService";
 
 interface GoogleMapsModalProps {
   isOpen: boolean;
@@ -10,6 +12,9 @@ interface GoogleMapsModalProps {
     imageSrc: string;
     coordinates: { lat: number; lng: number };
     address: string;
+    pitchDegrees?: number;
+    azimuthDegrees?: number;
+    googleSolarData?: GoogleSolarInsights;
   }) => void;
   initialWidthMm?: number;
   initialHeightMm?: number;
@@ -51,7 +56,12 @@ export default function GoogleMapsModal({
     lng: 107.1985,
   });
 
-  const apiKey = window.GOOGLE_MAPS_API_KEY || DEFAULT_API_KEY;
+  // Google Solar API Integration State
+  const [solarDetecting, setSolarDetecting] = useState(false);
+  const [solarInsights, setSolarInsights] = useState<GoogleSolarInsights | null>(null);
+  const [solarStatusMsg, setSolarStatusMsg] = useState<string>("");
+
+  const apiKey = (window as any).GOOGLE_MAPS_API_KEY || DEFAULT_API_KEY;
 
   // Load Google Maps SDK
   useEffect(() => {
@@ -60,16 +70,18 @@ export default function GoogleMapsModal({
     let isMounted = true;
     setLoading(true);
     setErrorMsg("");
+    setSolarInsights(null);
+    setSolarStatusMsg("");
 
     function loadScript(): Promise<void> {
-      if (window.google?.maps?.Map) {
+      if ((window as any).google?.maps?.Map) {
         return Promise.resolve();
       }
       return new Promise((resolve, reject) => {
         const scriptId = "google-maps-solar-sdk";
         const existing = document.getElementById(scriptId);
         if (existing) {
-          if (window.google?.maps?.Map) {
+          if ((window as any).google?.maps?.Map) {
             resolve();
             return;
           }
@@ -82,7 +94,8 @@ export default function GoogleMapsModal({
         script.async = true;
         script.defer = true;
         script.onload = () => resolve();
-        script.onerror = () => reject(new Error("Gagal mengunduh script Google Maps. Periksa koneksi internet atau proteksi domain API Key."));
+        script.onerror = () =>
+          reject(new Error("Gagal mengunduh script Google Maps. Periksa koneksi internet atau proteksi domain API Key."));
         document.head.appendChild(script);
       });
     }
@@ -105,12 +118,13 @@ export default function GoogleMapsModal({
   }, [isOpen]);
 
   function initMap() {
-    if (!mapRef.current || !window.google?.maps) return;
+    const win = window as any;
+    if (!mapRef.current || !win.google?.maps) return;
 
     const defaultLat = centerCoords.lat;
     const defaultLng = centerCoords.lng;
 
-    const map = new window.google.maps.Map(mapRef.current, {
+    const map = new win.google.maps.Map(mapRef.current, {
       center: { lat: defaultLat, lng: defaultLng },
       zoom: 19,
       mapTypeId: "satellite",
@@ -120,11 +134,11 @@ export default function GoogleMapsModal({
       mapTypeControl: true,
       mapTypeControlOptions: {
         mapTypeIds: ["satellite", "hybrid"],
-        position: window.google.maps.ControlPosition.TOP_RIGHT,
+        position: win.google.maps.ControlPosition.TOP_RIGHT,
       },
       zoomControl: true,
       zoomControlOptions: {
-        position: window.google.maps.ControlPosition.RIGHT_CENTER,
+        position: win.google.maps.ControlPosition.RIGHT_CENTER,
       },
     });
 
@@ -134,8 +148,8 @@ export default function GoogleMapsModal({
     createOrUpdateRectangle(map, { lat: defaultLat, lng: defaultLng }, widthM, heightM);
 
     // Setup Places Autocomplete
-    if (searchInputRef.current && window.google.maps.places?.Autocomplete) {
-      const autocomplete = new window.google.maps.places.Autocomplete(searchInputRef.current, {
+    if (searchInputRef.current && win.google.maps.places?.Autocomplete) {
+      const autocomplete = new win.google.maps.places.Autocomplete(searchInputRef.current, {
         fields: ["geometry", "name", "formatted_address"],
         componentRestrictions: { country: "id" },
       });
@@ -153,6 +167,8 @@ export default function GoogleMapsModal({
 
         createOrUpdateRectangle(map, { lat: newLat, lng: newLng }, widthM, heightM);
         setSearchAddress(place.formatted_address || place.name || "");
+        setSolarInsights(null);
+        setSolarStatusMsg("");
       });
     }
   }
@@ -163,24 +179,25 @@ export default function GoogleMapsModal({
     wM: number,
     hM: number
   ) {
-    if (!window.google?.maps) return;
+    const win = window as any;
+    if (!win.google?.maps) return;
 
     setCenterCoords(center);
 
     // Hitung offset lat/lng untuk dimensi wM x hM di sekitar center
-    const latOffset = (hM / 2) / 111111;
-    const lngOffset = (wM / 2) / (111111 * Math.cos((center.lat * Math.PI) / 180));
+    const latOffset = hM / 2 / 111111;
+    const lngOffset = wM / 2 / (111111 * Math.cos((center.lat * Math.PI) / 180));
 
-    const bounds = new window.google.maps.LatLngBounds(
-      new window.google.maps.LatLng(center.lat - latOffset, center.lng - lngOffset),
-      new window.google.maps.LatLng(center.lat + latOffset, center.lng + lngOffset)
+    const bounds = new win.google.maps.LatLngBounds(
+      new win.google.maps.LatLng(center.lat - latOffset, center.lng - lngOffset),
+      new win.google.maps.LatLng(center.lat + latOffset, center.lng + lngOffset)
     );
 
     if (rectangle) {
       rectangle.setBounds(bounds);
       rectangle.setMap(map);
     } else {
-      const rect = new window.google.maps.Rectangle({
+      const rect = new win.google.maps.Rectangle({
         bounds: bounds,
         editable: true,
         draggable: true,
@@ -198,19 +215,17 @@ export default function GoogleMapsModal({
 
         const sw = b.getSouthWest();
         const ne = b.getNorthEast();
-        const nw = new window.google.maps.LatLng(ne.lat(), sw.lng());
+        const nw = new win.google.maps.LatLng(ne.lat(), sw.lng());
 
-        // Geodesic distance in meters using google.maps.geometry.spherical
         let computedW = wM;
         let computedH = hM;
 
-        if (window.google.maps.geometry?.spherical) {
-          computedW = window.google.maps.geometry.spherical.computeDistanceBetween(nw, ne);
-          computedH = window.google.maps.geometry.spherical.computeDistanceBetween(nw, sw);
+        if (win.google.maps.geometry?.spherical) {
+          computedW = win.google.maps.geometry.spherical.computeDistanceBetween(nw, ne);
+          computedH = win.google.maps.geometry.spherical.computeDistanceBetween(nw, sw);
         } else {
-          // Fallback formula jika geometry library belum ready
           const latDiff = (ne.lat() - sw.lat()) * 111111;
-          const lngDiff = (ne.lng() - sw.lng()) * 111111 * Math.cos(((ne.lat() + sw.lat()) / 2 * Math.PI) / 180);
+          const lngDiff = (ne.lng() - sw.lng()) * 111111 * Math.cos((((ne.lat() + sw.lat()) / 2) * Math.PI) / 180);
           computedW = Math.abs(lngDiff);
           computedH = Math.abs(latDiff);
         }
@@ -235,6 +250,8 @@ export default function GoogleMapsModal({
     mapInstance.setZoom(19);
     createOrUpdateRectangle(mapInstance, { lat: preset.lat, lng: preset.lng }, widthM, heightM);
     setSearchAddress(preset.name);
+    setSolarInsights(null);
+    setSolarStatusMsg("");
   }
 
   function handleSwapDimensions() {
@@ -253,6 +270,48 @@ export default function GoogleMapsModal({
     createOrUpdateRectangle(mapInstance, { lat: center.lat(), lng: center.lng() }, widthM, heightM);
   }
 
+  /**
+   * Auto-Detect Roof Geometry & Solar Potential via Google Solar API
+   */
+  async function handleAutoDetectGoogleSolar() {
+    if (!apiKey) return;
+    setSolarDetecting(true);
+    setSolarStatusMsg("Menghubungi Google Solar API (kualitas BASE)...");
+
+    try {
+      const insights = await fetchGoogleSolarInsights(centerCoords.lat, centerCoords.lng, apiKey);
+      if (insights.available && insights.boundingBoxM) {
+        setSolarInsights(insights);
+        const newW = Math.max(10, insights.boundingBoxM.widthM);
+        const newH = Math.max(10, insights.boundingBoxM.heightM);
+        setWidthM(newW);
+        setHeightM(newH);
+
+        const targetCenter = insights.center ? { lat: insights.center.lat, lng: insights.center.lng } : centerCoords;
+        setCenterCoords(targetCenter);
+
+        if (mapInstance) {
+          mapInstance.setCenter(targetCenter);
+          createOrUpdateRectangle(mapInstance, targetCenter, newW, newH);
+        }
+
+        setSolarStatusMsg(
+          `✅ Atap terdeteksi via Google Solar! Luas ${insights.roofAreaM2} m² · Kemiringan ${insights.pitchDegrees}° · Azimuth ${insights.azimuthDegrees}° · Potensi maks ${insights.maxPanels} panel.`
+        );
+      } else {
+        setSolarInsights(null);
+        setSolarStatusMsg(
+          `ℹ️ ${insights.error || "Poligon atap spesifik belum tersedia di titik ini. Silakan sesuaikan kotak secara manual."}`
+        );
+      }
+    } catch (err: any) {
+      setSolarInsights(null);
+      setSolarStatusMsg(`Gagal mendeteksi via Google Solar: ${err?.message || "Kesalahan koneksi"}`);
+    } finally {
+      setSolarDetecting(false);
+    }
+  }
+
   async function handleApply() {
     setApplying(true);
     setErrorMsg("");
@@ -263,7 +322,7 @@ export default function GoogleMapsModal({
       const wM = widthM;
       const hM = heightM;
 
-      // Kalkulasi optimal zoom untuk Static Map (maks 1150px dari 1280px)
+      // Kalkulasi optimal zoom untuk Static Map (maks 1100px dari 1280px)
       const maxDim = Math.max(wM, hM);
       const cosLat = Math.cos((lat * Math.PI) / 180);
       const targetPx = 1100;
@@ -273,55 +332,55 @@ export default function GoogleMapsModal({
       // URL Google Static Map
       const staticUrl = `https://maps.googleapis.com/maps/api/staticmap?center=${lat},${lng}&zoom=${targetZoom}&size=640x640&scale=2&maptype=satellite&key=${apiKey}`;
 
-      // Ambil citra via fetch
-      const resp = await fetch(staticUrl);
-      if (!resp.ok) {
-        throw new Error(`Google Static Maps mengembalikan status HTTP ${resp.status}`);
+      let croppedDataUrl = "";
+      try {
+        const resp = await fetch(staticUrl);
+        if (resp.ok) {
+          const blob = await resp.blob();
+          const img = new Image();
+          const blobUrl = URL.createObjectURL(blob);
+
+          await new Promise<void>((resolve, reject) => {
+            img.onload = () => resolve();
+            img.onerror = () => reject(new Error("Gagal membaca hasil citra satelit"));
+            img.src = blobUrl;
+          });
+
+          const res = (156543.03392 * cosLat) / Math.pow(2, targetZoom);
+          const cropW = Math.min(1280, Math.max(20, Math.round(wM / res)));
+          const cropH = Math.min(1280, Math.max(20, Math.round(hM / res)));
+          const cropX = Math.max(0, Math.round(640 - cropW / 2));
+          const cropY = Math.max(0, Math.round(640 - cropH / 2));
+
+          const offscreenCanvas = document.createElement("canvas");
+          offscreenCanvas.width = cropW;
+          offscreenCanvas.height = cropH;
+          const ctx = offscreenCanvas.getContext("2d");
+
+          if (ctx) {
+            ctx.drawImage(img, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
+            croppedDataUrl = offscreenCanvas.toDataURL("image/jpeg", 0.86);
+          }
+          URL.revokeObjectURL(blobUrl);
+        }
+      } catch (e) {
+        console.warn("Static Map fetch failed (likely referrer restriction), continuing with dimensions only:", e);
       }
-      const blob = await resp.blob();
 
-      // Buat crop canvas yang hanya menyisakan atap gedung terpilih
-      const img = new Image();
-      const blobUrl = URL.createObjectURL(blob);
-
-      await new Promise<void>((resolve, reject) => {
-        img.onload = () => resolve();
-        img.onerror = () => reject(new Error("Gagal membaca hasil citra satelit"));
-        img.src = blobUrl;
-      });
-
-      // Ground resolution pada target zoom
-      const res = (156543.03392 * cosLat) / Math.pow(2, targetZoom);
-      const cropW = Math.min(1280, Math.max(20, Math.round(wM / res)));
-      const cropH = Math.min(1280, Math.max(20, Math.round(hM / res)));
-      const cropX = Math.max(0, Math.round(640 - cropW / 2));
-      const cropY = Math.max(0, Math.round(640 - cropH / 2));
-
-      const offscreenCanvas = document.createElement("canvas");
-      offscreenCanvas.width = cropW;
-      offscreenCanvas.height = cropH;
-      const ctx = offscreenCanvas.getContext("2d");
-
-      if (!ctx) throw new Error("Gagal menginisialisasi canvas untuk crop citra");
-
-      ctx.drawImage(img, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
-      const croppedDataUrl = offscreenCanvas.toDataURL("image/jpeg", 0.86);
-
-      URL.revokeObjectURL(blobUrl);
-
-      // Teruskan data ukuran atap (dalam mm) dan gambar ke PVLayout
       onApply({
         widthMm: Math.round(wM * 1000),
         heightMm: Math.round(hM * 1000),
         imageSrc: croppedDataUrl,
         coordinates: { lat, lng },
-        address: searchAddress,
+        address: searchAddress || `Koordinat (${lat.toFixed(4)}, ${lng.toFixed(4)})`,
+        pitchDegrees: solarInsights?.pitchDegrees,
+        azimuthDegrees: solarInsights?.azimuthDegrees,
+        googleSolarData: solarInsights || undefined,
       });
 
       onClose();
     } catch (err: any) {
       console.error("Gagal memproses citra satelit:", err);
-      // Fallback: terapkan dimensi atap tanpa gambar jika static map diblokir
       setErrorMsg(`Gagal memuat citra satelit: ${err.message}. Tetap terapkan ukuran atap?`);
     } finally {
       setApplying(false);
@@ -334,7 +393,10 @@ export default function GoogleMapsModal({
       heightMm: Math.round(heightM * 1000),
       imageSrc: "",
       coordinates: centerCoords,
-      address: searchAddress,
+      address: searchAddress || `Koordinat (${centerCoords.lat.toFixed(4)}, ${centerCoords.lng.toFixed(4)})`,
+      pitchDegrees: solarInsights?.pitchDegrees,
+      azimuthDegrees: solarInsights?.azimuthDegrees,
+      googleSolarData: solarInsights || undefined,
     });
     onClose();
   }
@@ -342,7 +404,7 @@ export default function GoogleMapsModal({
   if (!isOpen) return null;
 
   const areaM2 = Math.round(widthM * heightM);
-  const approxPanels = Math.floor((areaM2 * 0.65) / 2.58);
+  const approxPanels = solarInsights?.maxPanels || Math.floor((areaM2 * 0.65) / 2.58);
   const approxKwp = Math.round((approxPanels * 580) / 1000);
 
   return (
@@ -350,9 +412,9 @@ export default function GoogleMapsModal({
       <div
         className="modal-card"
         style={{
-          maxWidth: 1080,
-          width: "95vw",
-          height: "90vh",
+          maxWidth: 1120,
+          width: "96vw",
+          height: "92vh",
           display: "flex",
           flexDirection: "column",
           padding: 0,
@@ -367,7 +429,7 @@ export default function GoogleMapsModal({
             display: "flex",
             justifyContent: "space-between",
             alignItems: "center",
-            padding: "16px 20px",
+            padding: "14px 20px",
             borderBottom: "1px solid #243527",
             background: "#162019",
           }}
@@ -387,11 +449,26 @@ export default function GoogleMapsModal({
               <Layers size={18} />
             </div>
             <div>
-              <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: "#edf5ef" }}>
-                🛰️ Google Maps Satellite Scanner — Atap PLTS
-              </h2>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: "#edf5ef" }}>
+                  🛰️ Google Maps Satellite & Solar GIS Scanner
+                </h2>
+                <span
+                  style={{
+                    background: "#1e3825",
+                    color: "#b8f36b",
+                    fontSize: 10,
+                    fontWeight: 700,
+                    padding: "2px 6px",
+                    borderRadius: 4,
+                    border: "1px solid #2f5637",
+                  }}
+                >
+                  Solar API Ready
+                </span>
+              </div>
               <p style={{ margin: 0, fontSize: 11, color: "var(--muted, #93a69a)" }}>
-                Cari lokasi pabrik, sesuaikan kotak atap gedung, dan kalkulasi dimensi otomatis untuk layout PV.
+                Cari lokasi pabrik, manfaatkan deteksi otomatis Google Solar, atau sesuaikan kotak atap & lahan secara presisi.
               </p>
             </div>
           </div>
@@ -405,7 +482,7 @@ export default function GoogleMapsModal({
           </button>
         </div>
 
-        {/* Toolbar: Search & Presets */}
+        {/* Toolbar: Search, Presets, and Google Solar Trigger */}
         <div
           style={{
             padding: "10px 20px",
@@ -420,7 +497,7 @@ export default function GoogleMapsModal({
           {/* Autocomplete Input */}
           <div
             style={{
-              flex: "1 1 320px",
+              flex: "1 1 280px",
               display: "flex",
               alignItems: "center",
               gap: 8,
@@ -434,7 +511,7 @@ export default function GoogleMapsModal({
             <input
               ref={searchInputRef}
               type="text"
-              placeholder="Ketik nama pabrik / kawasan industri (cth: GIIC Cikarang, PT ABC Karawang)..."
+              placeholder="Ketik nama pabrik / kawasan (cth: GIIC Cikarang, KIIC Karawang)..."
               style={{
                 background: "transparent",
                 border: "none",
@@ -445,6 +522,38 @@ export default function GoogleMapsModal({
               }}
             />
           </div>
+
+          {/* Google Solar Auto-Detect Button */}
+          <button
+            type="button"
+            onClick={handleAutoDetectGoogleSolar}
+            disabled={solarDetecting}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+              background: solarDetecting ? "#1a2c20" : "linear-gradient(135deg, #1d402b 0%, #173322 100%)",
+              border: "1px solid #366d47",
+              color: "#b8f36b",
+              borderRadius: 6,
+              padding: "6px 12px",
+              fontSize: 12,
+              fontWeight: 600,
+              cursor: solarDetecting ? "wait" : "pointer",
+              boxShadow: "0 2px 8px #00000040",
+            }}
+            title="Deteksi atap bangunan, kemiringan sudut (pitch), orientasi (azimuth), dan potensi energi via Google Solar API"
+          >
+            {solarDetecting ? (
+              <>
+                <RefreshCw size={13} className="animate-spin" /> Menganalisis...
+              </>
+            ) : (
+              <>
+                <Zap size={13} /> ⚡ Deteksi Atap Otomatis (Google Solar)
+              </>
+            )}
+          </button>
 
           {/* Preset Buttons */}
           <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
@@ -462,6 +571,25 @@ export default function GoogleMapsModal({
             ))}
           </div>
         </div>
+
+        {/* Solar Detection Banner (if active/notified) */}
+        {solarStatusMsg && (
+          <div
+            style={{
+              padding: "8px 20px",
+              background: solarInsights?.available ? "#142a1b" : "#1a221d",
+              borderBottom: "1px solid #233b28",
+              fontSize: 11,
+              color: solarInsights?.available ? "#d1fae5" : "#cbd5e1",
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+            }}
+          >
+            {solarInsights?.available ? <Sparkles size={14} style={{ color: "#b8f36b" }} /> : <SunMedium size={14} />}
+            <span>{solarStatusMsg}</span>
+          </div>
+        )}
 
         {/* Map Container & Floating HUD */}
         <div style={{ flex: 1, position: "relative", minHeight: 340, background: "#0b100d" }}>
@@ -519,7 +647,7 @@ export default function GoogleMapsModal({
           {/* The Google Map Element */}
           <div ref={mapRef} style={{ width: "100%", height: "100%" }} />
 
-          {/* Floating Live Roof Metrics Overlay */}
+          {/* Floating Live Roof & Solar Metrics Overlay */}
           <div
             style={{
               position: "absolute",
@@ -581,13 +709,24 @@ export default function GoogleMapsModal({
 
               <div>
                 <div style={{ fontSize: 10, color: "#8a9c90", textTransform: "uppercase", letterSpacing: 0.5 }}>
-                  Est. Kapasitas (~65% density)
+                  {solarInsights?.available ? "Potensi Google Solar" : "Est. Kapasitas (~65%)"}
                 </div>
                 <div style={{ fontSize: 15, fontWeight: 700, color: "#edf5ef" }}>
                   ~{approxKwp} kWp{" "}
                   <small style={{ fontSize: 11, color: "#93a69a" }}>({approxPanels} panel)</small>
                 </div>
               </div>
+
+              {solarInsights?.pitchDegrees !== undefined && (
+                <div>
+                  <div style={{ fontSize: 10, color: "#8a9c90", textTransform: "uppercase", letterSpacing: 0.5 }}>
+                    Sudut Kemiringan / Pitch
+                  </div>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: "#b8f36b" }}>
+                    {solarInsights.pitchDegrees}° (Azimuth {solarInsights.azimuthDegrees}°)
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Actions */}
@@ -621,7 +760,7 @@ export default function GoogleMapsModal({
               >
                 {applying ? (
                   <>
-                    <RefreshCw size={14} className="animate-spin" /> Mengambil Citra...
+                    <RefreshCw size={14} className="animate-spin" /> Memproses...
                   </>
                 ) : (
                   <>
@@ -647,8 +786,7 @@ export default function GoogleMapsModal({
           }}
         >
           <span>
-            💡 <strong>Petunjuk:</strong> Seret bagian tengah kotak untuk memindahkan posisi. Tarik titik-titik sudut
-            atau tepi kotak untuk mengubah ukuran atap gedung pabrik secara presisi.
+            💡 <strong>Petunjuk:</strong> Klik <strong>⚡ Deteksi Atap Otomatis</strong> untuk membaca poligon atap Google Solar secara presisi, atau seret & tarik kotak untuk menyesuaikan manual.
           </span>
           <span style={{ color: "#5d7063", whiteSpace: "nowrap" }}>
             Lat: {centerCoords.lat.toFixed(5)}, Lng: {centerCoords.lng.toFixed(5)}
