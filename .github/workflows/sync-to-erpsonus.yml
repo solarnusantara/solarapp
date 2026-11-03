@@ -1,0 +1,73 @@
+name: Sync & Deploy to SonusID SuperApp
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build-and-sync:
+    name: Build & Deploy to Production
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout SolarApp
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build Production ERP Bundle
+        env:
+          BUILD_TARGET: erp
+        run: npm run build
+
+      - name: Setup SSH Deploy Key for erpsonus
+        env:
+          DEPLOY_KEY: ${{ secrets.ERPSONUS_DEPLOY_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          echo "$DEPLOY_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -t ed25519,rsa github.com >> ~/.ssh/known_hosts
+
+      - name: Clone erpsonus & Sync Submodule + Static Bundle
+        env:
+          SOLARAPP_SHA: ${{ github.sha }}
+          COMMIT_MSG: ${{ github.event.head_commit.message }}
+        run: |
+          git config --global user.name "SolarApp CI/CD"
+          git config --global user.email "bot@solar-nusantara.id"
+
+          git clone git@github.com:solarnusantara/erpsonus.git erpsonus-repo
+          cd erpsonus-repo
+
+          # 1. Update submodule pointer to this exact commit
+          git submodule update --init --recursive
+          cd frontend/solar-studio
+          git fetch origin
+          git checkout "$SOLARAPP_SHA"
+          cd ../..
+
+          # 2. Copy compiled assets from dist/ to static/apps/solar-studio/
+          mkdir -p static/apps/solar-studio
+          cp -r ../dist/* static/apps/solar-studio/
+
+          # 3. Stage and commit changes if any
+          git add .gitmodules frontend/solar-studio static/apps/solar-studio
+          if git diff --staged --quiet; then
+            echo "No changes detected. Skipping push."
+          else
+            SHORT_SHA="${SOLARAPP_SHA:0:7}"
+            git commit -m "chore(solarapp): auto-sync bundle from commit $SHORT_SHA" \
+                       -m "Triggered by push to solarnusantara/solarapp:main" \
+                       -m "Commit message: $COMMIT_MSG"
+            git push origin main
+            echo "Successfully pushed to erpsonus:main! Production deploy workflow initiated on app.sonus.id."
+          fi

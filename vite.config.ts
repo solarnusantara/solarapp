@@ -6,17 +6,18 @@ import path from "node:path";
 export default defineConfig(({ command }) => {
   const isInsideMonolith = fs.existsSync(path.resolve(__dirname, "../../Cargo.toml"));
   const forceStandalone = process.env.STANDALONE === "true";
-  const isERP = isInsideMonolith && !forceStandalone;
+  const forceERP = process.env.BUILD_TARGET === "erp";
+  const isERP = (isInsideMonolith || forceERP) && !forceStandalone;
 
   const base = command === "serve" || !isERP ? "/" : "/static/apps/solar-studio/";
-  const outDir = isERP ? "../../static/apps/solar-studio" : "dist";
+  const outDir = isInsideMonolith && !forceStandalone ? "../../static/apps/solar-studio" : "dist";
 
   return {
     plugins: [react()],
     base,
     build: {
       outDir,
-      emptyOutDir: !isERP,
+      emptyOutDir: true,
       rollupOptions: {
         output: {
           entryFileNames: "solar-studio.js",
