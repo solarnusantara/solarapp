@@ -5,11 +5,21 @@
 
 ---
 
+## 👨‍💻 Origin & Main Developer
+
+- **Main Developer & Author**: **[Ilham Wahyudin (@ilhamwah)](https://github.com/ilhamwah)**
+- **Upstream Source Repository**: **[https://github.com/ilhamwah/SolarApps](https://github.com/ilhamwah/SolarApps)**
+- **Enterprise Integration & Deployment**: PT Solar Nusantara Indonesia ([@solarnusantara](https://github.com/solarnusantara)) for [SonusID SuperApp](https://app.sonus.id)
+
+This repository is derived from and builds upon the foundational SolarApps platform developed by **[@ilhamwah](https://github.com/ilhamwah)**, integrating enterprise CAD 2D/3D workflows, Google Maps satellite measurements, and automated BoQ take-off into the SonusID SuperApp ecosystem.
+
+---
+
 ## ⚡ Overview
 
 **SolarApp** is an independent, high-performance web engineering suite purpose-built for solar photovoltaic (PLTS) engineers. It empowers EPC teams to perform complete rooftop and ground-mounted solar feasibility, CAD layout generation, 3D shadow analysis, electrical string configuration, engineering sizing, and automated Bill of Quantities (BoQ) calculation without needing desktop CAD licenses.
 
-This repository (`solarnusantara/solarapp`) serves as the dedicated frontend codebase for the solar engineering team. It can be developed, tested, and previewed completely standalone with zero backend dependencies, or embedded as a Git submodule inside the `erpsonus` monolith serving `app.sonus.id/design`.
+This repository (`solarnusantara/solarapp`) serves as the dedicated frontend codebase for the solar engineering team led by **[@ilhamwah](https://github.com/ilhamwah)**. It can be developed, tested, and previewed completely standalone with zero backend dependencies, or embedded as a Git submodule inside the `erpsonus` monolith serving `app.sonus.id/design`.
 
 ---
 
@@ -87,6 +97,7 @@ erpsonus/frontend/solar-studio/
 ---
 
 ## 💻 Tech Stack
+- **Lead Developer**: [Ilham Wahyudin (@ilhamwah)](https://github.com/ilhamwah)
 - **Framework**: React 18, TypeScript
 - **Bundler**: Vite 6
 - **3D Engine**: Three.js
@@ -96,5 +107,6 @@ erpsonus/frontend/solar-studio/
 
 ---
 
-## 📄 License & Confidentiality
-Proprietary & Confidential. Copyright © 2026 PT Solar Nusantara Indonesia. All rights reserved.
+## 📄 License & Attribution
+- Original Work Copyright © 2024-2026 [Ilham Wahyudin (@ilhamwah)](https://github.com/ilhamwah).
+- Integrated & Maintained by PT Solar Nusantara Indonesia.

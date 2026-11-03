@@ -4,6 +4,16 @@
   "version": "1.0.0",
   "type": "module",
   "description": "SolarApp — Solar PV Engineering Studio (CAD 2D/3D, Sizing, BoQ) for SonusID SuperApp",
+  "author": "Ilham Wahyudin (https://github.com/ilhamwah)",
+  "contributors": [
+    "Ilham Wahyudin <https://github.com/ilhamwah>",
+    "PT Solar Nusantara Indonesia <https://github.com/solarnusantara>"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/solarnusantara/solarapp.git"
+  },
+  "homepage": "https://github.com/solarnusantara/solarapp#readme",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
@@ -16,7 +26,7 @@
     "three": "^0.171.0"
   },
   "devDependencies": {
-    "@types/node": "^20.19.43",
+    "@types/node": "^20.17.0",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "@types/three": "^0.171.0",
