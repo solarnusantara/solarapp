@@ -44,23 +44,20 @@ jobs:
         run: |
           git config --global user.name "SolarApp CI/CD"
           git config --global user.email "bot@solar-nusantara.id"
+          git config --global url."https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/solarnusantara/solarapp".insteadOf "https://github.com/solarnusantara/solarapp"
 
           git clone git@github.com:solarnusantara/erpsonus.git erpsonus-repo
           cd erpsonus-repo
 
-          # 1. Update submodule pointer to this exact commit
-          git submodule update --init --recursive
-          cd frontend/solar-studio
-          git fetch origin
-          git checkout "$SOLARAPP_SHA"
-          cd ../..
+          # 1. Update submodule pointer directly via git index
+          git update-index --cacheinfo 160000,"$SOLARAPP_SHA",frontend/solar-studio
 
           # 2. Copy compiled assets from dist/ to static/apps/solar-studio/
           mkdir -p static/apps/solar-studio
           cp -r ../dist/* static/apps/solar-studio/
 
           # 3. Stage and commit changes if any
-          git add .gitmodules frontend/solar-studio static/apps/solar-studio
+          git add frontend/solar-studio static/apps/solar-studio
           if git diff --staged --quiet; then
             echo "No changes detected. Skipping push."
           else
