@@ -1,3 +1,4 @@
+import { getProjectDefaultLayout } from "./defaultProjectsData";
 import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
@@ -49,7 +50,11 @@ export default function PVLayout3D({ lang = "en", userId = "anonymous", projectI
   async function fetchDem() {
     let saved: SavedLayout = {};
     try { saved = JSON.parse(localStorage.getItem(scopedStorageKey) || "{}"); } catch { /* ignore */ }
-    const site = saved.site;
+    let site = saved.site;
+    if (!site?.coordinates) {
+      const defaultData = getProjectDefaultLayout(projectId);
+      if (defaultData?.site) site = defaultData.site;
+    }
     if (!site?.coordinates || !Number.isFinite(site.coordinates.lat) || !Number.isFinite(site.coordinates.lng)) {
       setDemStatus(id ? "Koordinat lokasi belum tersimpan. Terapkan lokasi dari Google Maps di PV Layout 2D terlebih dahulu." : "Project coordinates are missing. Apply a Google Maps location in PV Layout 2D first."); return;
     }
@@ -88,6 +93,10 @@ export default function PVLayout3D({ lang = "en", userId = "anonymous", projectI
     const host = hostRef.current; if (!host) return;
     let saved: SavedLayout = {};
     try { saved = JSON.parse(localStorage.getItem(scopedStorageKey) || "{}"); } catch { saved = {}; }
+    if (!saved?.panels || !saved.panels.length) {
+      const defaultData = getProjectDefaultLayout(projectId);
+      if (defaultData) saved = defaultData as any;
+    }
     const settings = saved.settings ?? {}, panels = Array.isArray(saved.panels) ? saved.panels : [], obstacles = Array.isArray(saved.obstacles) ? saved.obstacles : [];
     const areaW = Math.max(1000, Number(settings.areaWidth) || 12000) / 1000, areaH = Math.max(1000, Number(settings.areaHeight) || 8000) / 1000;
     const system = settings.system === "Ground-mounted" ? "Ground-mounted" : "Rooftop";

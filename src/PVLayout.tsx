@@ -1,3 +1,4 @@
+import { getProjectDefaultLayout } from "./defaultProjectsData";
 import { useMemo, useRef, useState } from "react";
 import { Download, Grid2X2, MousePointer2, RotateCcw, Trash2, WandSparkles, ImagePlus, X, Globe } from "lucide-react";
 import GoogleMapsModal from "./GoogleMapsModal";
@@ -30,10 +31,13 @@ function storageKey(userId: string, projectId: string | null) { return `${STORAG
 function loadSaved(userId: string, projectId: string | null): { settings: typeof defaults; panels: Panel[]; obstacles?: Obstacle[]; backgroundImage?: string; backgroundOpacity?: number; site?: { coordinates: { lat: number; lng: number }; address: string } } | null {
   try {
     const raw = localStorage.getItem(storageKey(userId, projectId));
-    if (!raw) return null;
-    const parsed = JSON.parse(raw);
-    if (parsed?.settings && Array.isArray(parsed?.panels)) return parsed;
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed?.settings && Array.isArray(parsed?.panels) && parsed.panels.length > 0) return parsed;
+    }
   } catch { /* ignore invalid local draft */ }
+  const defaultData = getProjectDefaultLayout(projectId);
+  if (defaultData) return defaultData as any;
   return null;
 }
 

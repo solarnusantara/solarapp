@@ -1,3 +1,4 @@
+import { getProjectDefaultBoq, getProjectDefaultLayout } from "./defaultProjectsData";
 import { useMemo, useRef, useState } from "react";
 import { Download, Plus, Trash2, FileDown, FileUp, Printer, RotateCcw } from "lucide-react";
 
@@ -81,14 +82,26 @@ function downloadFile(name: string, content: string, type: string) {
   URL.revokeObjectURL(url);
 }
 
-export default function BOQ({ lang = "en", userId = "anonymous" }: { lang?: Lang; userId?: string }) {
+export default function BOQ({ lang = "en", userId = "anonymous", projectId = null, projectName = null }: { lang?: Lang; userId?: string; projectId?: string | null; projectName?: string | null }) {
+  const scopedBoqKey = `solar-apps-boq-v1:${userId}:${projectId ?? "unassigned"}`;
   const idText = lang === "id";
-  const [project, setProject] = useState("PLTS Project");
+  const [project, setProject] = useState(projectName || "PLTS Project");
   const [client, setClient] = useState("");
   const [currency, setCurrency] = useState<"IDR" | "USD">("IDR");
   const [taxPercent, setTaxPercent] = useState(11);
   const [contingencyPercent, setContingencyPercent] = useState(0);
-  const [items, setItems] = useState<Item[]>(starterItems.map(x => ({ ...x })));
+  const [items, setItems] = useState<Item[]>(() => {
+    try {
+      const raw = localStorage.getItem(scopedBoqKey);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch {}
+    const defBoq = getProjectDefaultBoq(projectId);
+    if (defBoq) return defBoq.map(x => ({ ...x }));
+    return starterItems.map(x => ({ ...x }));
+  });
   const [filter, setFilter] = useState("All");
   const [catalogFilter, setCatalogFilter] = useState("All categories");
   const fileRef = useRef<HTMLInputElement>(null);
@@ -113,26 +126,34 @@ export default function BOQ({ lang = "en", userId = "anonymous" }: { lang?: Lang
   }
   function syncPVLayout() {
     try {
-      const raw = localStorage.getItem(`${PV_LAYOUT_STORAGE_KEY}:${userId}`);
-      if (!raw) {
+      const raw = localStorage.getItem(`${PV_LAYOUT_STORAGE_KEY}:${userId}:${projectId ?? "unassigned"}`)
+        || localStorage.getItem(`${PV_LAYOUT_STORAGE_KEY}:${userId}`);
+      let data: any = null;
+      if (raw) {
+        data = JSON.parse(raw);
+      } else {
+        data = getProjectDefaultLayout(projectId);
+      }
+      if (!data) {
         setPvSyncInfo(null);
         setPvSyncMessage(idText ? "Draft PV Layout belum ditemukan. Buka PV Layout, buat/simpan layout, lalu coba sinkronkan lagi." : "No saved PV Layout draft found. Open PV Layout, create/save a layout, then sync again.");
         return;
       }
-      const data = JSON.parse(raw);
       const count = Array.isArray(data?.panels) ? data.panels.length : 0;
       const watts = Math.max(0, Number(data?.settings?.watts) || 0);
       const system = String(data?.settings?.system || "PV Layout");
-      if (!Array.isArray(data?.panels)) throw new Error("Invalid PV Layout draft");
       if (count === 0) {
         setPvSyncInfo({ count, watts, system });
         setPvSyncMessage(idText ? "Layout tersimpan, tetapi belum ada panel. Tambahkan/generate panel terlebih dahulu." : "Layout is saved but contains no panels. Add/generate panels first.");
         return;
       }
       setItems(old => {
-        const existing = old.find(item => item.id === "pv-1") || old.find(item => item.category === "PV Module");
-        if (existing) return old.map(item => item.id === existing.id ? { ...item, quantity: count, specification: `${watts || "?"} Wp/module · ${system} · synced from PV Layout (${count} modules)` } : item);
-        return [...old, { id: `pv-layout-${Date.now()}`, category: "PV Module", description: "PV module (synced from PV Layout)", specification: `${watts || "?"} Wp/module · ${system} · synced from PV Layout (${count} modules)`, unit: "pcs", quantity: count, unitPrice: 1800000 }];
+        const existing = old.find(item => item.id === "pv-1" || item.id === "c-pv-1" || item.id === "k-pv-1") || old.find(item => item.category === "PV Module");
+        const next = existing
+          ? old.map(item => item.id === existing.id ? { ...item, quantity: count, specification: `${watts || "?"} Wp/module · ${system} · synced from PV Layout (${count} modules)` } : item)
+          : [...old, { id: `pv-layout-${Date.now()}`, category: "PV Module", description: "PV module (synced from PV Layout)", specification: `${watts || "?"} Wp/module · ${system} · synced from PV Layout (${count} modules)`, unit: "pcs", quantity: count, unitPrice: 1800000 }];
+        try { localStorage.setItem(scopedBoqKey, JSON.stringify(next)); } catch {}
+        return next;
       });
       setPvSyncInfo({ count, watts, system });
       setPvSyncMessage(idText ? `Berhasil sinkron: ${count} modul · kapasitas DC ${(count * watts / 1000).toLocaleString("id-ID", { maximumFractionDigits: 2 })} kWp. Kuantitas panel diperbarui di BOQ.` : `Synced ${count} modules · ${(count * watts / 1000).toLocaleString("en-US", { maximumFractionDigits: 2 })} kWp DC. PV module quantity updated in BOQ.`);

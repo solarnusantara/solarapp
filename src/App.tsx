@@ -539,7 +539,7 @@ export default function App() {
           ) : active === "cad" ? (
             <CADDrawings lang={lang} />
           ) : active === "boq" ? (
-            <BOQ lang={lang} userId={user.id} />
+            <BOQ lang={lang} userId={user.id} projectId={activeProject?.id ?? null} projectName={activeProject?.name ?? null} />
           ) : active === "tray" ? (
             <TraySizing lang={lang} />
           ) : active === "breaker" ? (

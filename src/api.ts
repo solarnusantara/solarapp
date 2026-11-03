@@ -1,3 +1,5 @@
+import { REAL_PROJECTS } from "./defaultProjectsData";
+
 export type SonusUser = {
   id: string;
   name: string;
@@ -72,8 +74,8 @@ export async function fetchProjects(): Promise<Project[]> {
     }
   } catch {}
 
-  // Return empty list if no local projects exist
-  return [];
+  localStorage.setItem(LOCAL_PROJECTS_KEY, JSON.stringify(REAL_PROJECTS));
+  return REAL_PROJECTS;
 }
 
 export async function saveLocalProjects(projects: Project[]) {
