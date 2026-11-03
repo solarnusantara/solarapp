@@ -1,6 +1,7 @@
 import { getProjectDefaultBoq, getProjectDefaultLayout } from "./defaultProjectsData";
-import { useMemo, useRef, useState } from "react";
-import { Download, Plus, Trash2, FileDown, FileUp, Printer, RotateCcw } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Download, Plus, Trash2, FileDown, FileUp, Printer, RotateCcw, Database } from "lucide-react";
+import * as api from "./api";
 
 type Lang = "en" | "id";
 type Item = {
@@ -108,6 +109,33 @@ export default function BOQ({ lang = "en", userId = "anonymous", projectId = nul
   const [pvSyncInfo, setPvSyncInfo] = useState<{ count: number; watts: number; system: string } | null>(null);
   const [pvSyncMessage, setPvSyncMessage] = useState("");
 
+  useEffect(() => {
+    if (!projectId) return;
+    let isCancelled = false;
+    const targetId = projectId;
+    async function loadRemoteBoq() {
+      const remote = await api.fetchProjectBoq(targetId);
+      if (remote && Array.isArray(remote) && remote.length > 0 && !isCancelled) {
+        setItems(remote);
+        try {
+          localStorage.setItem(scopedBoqKey, JSON.stringify(remote));
+        } catch {}
+      }
+    }
+    loadRemoteBoq();
+    return () => { isCancelled = true; };
+  }, [projectId, scopedBoqKey]);
+
+  function persistItems(next: Item[]) {
+    setItems(next);
+    try {
+      localStorage.setItem(scopedBoqKey, JSON.stringify(next));
+    } catch {}
+    if (projectId) {
+      api.saveProjectBoq(projectId, next);
+    }
+  }
+
   const rows = useMemo(() => items.filter(i => filter === "All" || i.category === filter), [items, filter]);
   const subtotal = useMemo(() => items.reduce((s, i) => s + Math.max(0, Number(i.quantity) || 0) * Math.max(0, Number(i.unitPrice) || 0), 0), [items]);
   const contingency = subtotal * Math.max(0, contingencyPercent) / 100;
@@ -117,12 +145,13 @@ export default function BOQ({ lang = "en", userId = "anonymous", projectId = nul
   const displayedUnitPrice = (idrPrice: number) => currency === "USD" ? idrPrice / IDR_PER_USD : idrPrice;
 
   function update(id: string, key: keyof Item, value: string) {
-    setItems(old => old.map(item => {
+    const updated = items.map(item => {
       if (item.id !== id) return item;
       if (key === "quantity") return { ...item, quantity: Math.max(0, Number(value) || 0) };
       if (key === "unitPrice") { const enteredPrice = Math.max(0, Number(value) || 0); return { ...item, unitPrice: currency === "USD" ? enteredPrice * IDR_PER_USD : enteredPrice }; }
       return { ...item, [key]: value };
-    }));
+    });
+    persistItems(updated);
   }
   function syncPVLayout() {
     try {
@@ -147,14 +176,11 @@ export default function BOQ({ lang = "en", userId = "anonymous", projectId = nul
         setPvSyncMessage(idText ? "Layout tersimpan, tetapi belum ada panel. Tambahkan/generate panel terlebih dahulu." : "Layout is saved but contains no panels. Add/generate panels first.");
         return;
       }
-      setItems(old => {
-        const existing = old.find(item => item.id === "pv-1" || item.id === "c-pv-1" || item.id === "k-pv-1") || old.find(item => item.category === "PV Module");
-        const next = existing
-          ? old.map(item => item.id === existing.id ? { ...item, quantity: count, specification: `${watts || "?"} Wp/module · ${system} · synced from PV Layout (${count} modules)` } : item)
-          : [...old, { id: `pv-layout-${Date.now()}`, category: "PV Module", description: "PV module (synced from PV Layout)", specification: `${watts || "?"} Wp/module · ${system} · synced from PV Layout (${count} modules)`, unit: "pcs", quantity: count, unitPrice: 1800000 }];
-        try { localStorage.setItem(scopedBoqKey, JSON.stringify(next)); } catch {}
-        return next;
-      });
+      const existing = items.find(item => item.id === "pv-1" || item.id === "c-pv-1" || item.id === "k-pv-1") || items.find(item => item.category === "PV Module");
+      const next = existing
+        ? items.map(item => item.id === existing.id ? { ...item, quantity: count, specification: `${watts || "?"} Wp/module · ${system} · synced from PV Layout (${count} modules)` } : item)
+        : [...items, { id: `pv-layout-${Date.now()}`, category: "PV Module", description: "PV module (synced from PV Layout)", specification: `${watts || "?"} Wp/module · ${system} · synced from PV Layout (${count} modules)`, unit: "pcs", quantity: count, unitPrice: 1800000 }];
+      persistItems(next);
       setPvSyncInfo({ count, watts, system });
       setPvSyncMessage(idText ? `Berhasil sinkron: ${count} modul · kapasitas DC ${(count * watts / 1000).toLocaleString("id-ID", { maximumFractionDigits: 2 })} kWp. Kuantitas panel diperbarui di BOQ.` : `Synced ${count} modules · ${(count * watts / 1000).toLocaleString("en-US", { maximumFractionDigits: 2 })} kWp DC. PV module quantity updated in BOQ.`);
     } catch {
@@ -164,7 +190,7 @@ export default function BOQ({ lang = "en", userId = "anonymous", projectId = nul
   const visibleCatalog = useMemo(() => marketCatalog.filter(x => catalogFilter === "All categories" || x.category === catalogFilter), [catalogFilter]);
 
   function addCatalogItem(product: CatalogItem) {
-    setItems(old => [...old, {
+    persistItems([...items, {
       id: `catalog-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
       category: product.category,
       description: `${product.brand} — ${product.description}`,
@@ -176,7 +202,7 @@ export default function BOQ({ lang = "en", userId = "anonymous", projectId = nul
   }
 
   function addItem() {
-    setItems(old => [...old, { id: `item-${Date.now()}-${Math.random().toString(36).slice(2,7)}`, category: "Other", description: "", specification: "", unit: "pcs", quantity: 0, unitPrice: 0 }]);
+    persistItems([...items, { id: `item-${Date.now()}-${Math.random().toString(36).slice(2,7)}`, category: "Other", description: "", specification: "", unit: "pcs", quantity: 0, unitPrice: 0 }]);
   }
   function exportJSON() {
     downloadFile("solar-apps-boq.json", JSON.stringify({ project, client, currency, taxPercent, contingencyPercent, items, exportedAt: new Date().toISOString() }, null, 2), "application/json");
@@ -201,7 +227,7 @@ export default function BOQ({ lang = "en", userId = "anonymous", projectId = nul
       try {
         const data = JSON.parse(String(reader.result));
         if (!Array.isArray(data.items)) throw new Error("Invalid BOQ file");
-        setItems(data.items.map((x: any, index: number) => ({
+        const imported = data.items.map((x: any, index: number) => ({
           id: String(x.id ?? `import-${index}`),
           category: categories.includes(x.category) ? x.category : "Other",
           description: String(x.description ?? ""),
@@ -209,7 +235,8 @@ export default function BOQ({ lang = "en", userId = "anonymous", projectId = nul
           unit: units.includes(x.unit) ? x.unit : "pcs",
           quantity: Math.max(0, Number(x.quantity) || 0),
           unitPrice: Math.max(0, Number(x.unitPrice) || 0),
-        })));
+        }));
+        persistItems(imported);
         if (typeof data.project === "string") setProject(data.project);
         if (typeof data.client === "string") setClient(data.client);
         if (data.currency === "USD" || data.currency === "IDR") setCurrency(data.currency);
@@ -294,7 +321,7 @@ export default function BOQ({ lang = "en", userId = "anonymous", projectId = nul
         <button style={btn} onClick={exportJSON}><Download size={15} />JSON</button>
         <button style={btn} onClick={exportCSV}><FileDown size={15} />CSV</button>
         <button style={btn} onClick={() => window.print()}><Printer size={15} />PDF / Print</button>
-        <button style={btn} onClick={() => { if (window.confirm(idText ? "Kembalikan daftar awal? Perubahan saat ini akan hilang." : "Reset to starter list? Current edits will be lost.")) { setItems(starterItems.map(x => ({ ...x }))); setProject("PLTS Project"); setClient(""); setTaxPercent(11); setContingencyPercent(0); setCurrency("IDR"); } }}><RotateCcw size={15} /></button>
+        <button style={btn} onClick={() => { if (window.confirm(idText ? "Kembalikan daftar awal? Perubahan saat ini akan hilang." : "Reset to starter list? Current edits will be lost.")) { persistItems(starterItems.map(x => ({ ...x }))); setProject("PLTS Project"); setClient(""); setTaxPercent(11); setContingencyPercent(0); setCurrency("IDR"); } }}><RotateCcw size={15} /></button>
       </div>
     </div>
 
@@ -316,7 +343,7 @@ export default function BOQ({ lang = "en", userId = "anonymous", projectId = nul
             <td style={{ padding: 6, borderBottom: "1px solid var(--border, #26352d)", minWidth: 100 }}><input aria-label="Quantity" style={field} type="number" min="0" step="any" value={item.quantity} onChange={e => update(item.id, "quantity", e.target.value)} /></td>
             <td style={{ padding: 6, borderBottom: "1px solid var(--border, #26352d)", minWidth: 135 }}><input aria-label="Unit price" style={field} type="number" min="0" step="any" value={Number(displayedUnitPrice(item.unitPrice).toFixed(currency === "USD" ? 2 : 0))} onChange={e => update(item.id, "unitPrice", e.target.value)} /></td>
             <td style={{ padding: 10, borderBottom: "1px solid var(--border, #26352d)", whiteSpace: "nowrap", fontWeight: 650 }}>{fmt(item.quantity * item.unitPrice)}</td>
-            <td style={{ padding: 6, borderBottom: "1px solid var(--border, #26352d)" }}><button aria-label="Delete item" title={idText ? "Hapus item" : "Delete item"} style={{ ...btn, padding: 8 }} onClick={() => setItems(old => old.filter(x => x.id !== item.id))}><Trash2 size={15} /></button></td>
+            <td style={{ padding: 6, borderBottom: "1px solid var(--border, #26352d)" }}><button aria-label="Delete item" title={idText ? "Hapus item" : "Delete item"} style={{ ...btn, padding: 8 }} onClick={() => persistItems(items.filter(x => x.id !== item.id))}><Trash2 size={15} /></button></td>
           </tr>)}
           {!rows.length && <tr><td colSpan={9} style={{ padding: 28, textAlign: "center", color: "var(--muted, #93a69a)" }}>{idText ? "Tidak ada item pada kategori ini." : "No items in this category."}</td></tr>}
           </tbody>

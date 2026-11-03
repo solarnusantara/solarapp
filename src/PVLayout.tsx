@@ -1,7 +1,8 @@
 import { getProjectDefaultLayout } from "./defaultProjectsData";
-import { useMemo, useRef, useState } from "react";
-import { Download, Grid2X2, MousePointer2, RotateCcw, Trash2, WandSparkles, ImagePlus, X, Globe } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Download, Grid2X2, MousePointer2, RotateCcw, Trash2, WandSparkles, ImagePlus, X, Globe, Database } from "lucide-react";
 import GoogleMapsModal from "./GoogleMapsModal";
+import * as api from "./api";
 
 type Lang = "en" | "id";
 type Panel = { id: number; x: number; y: number; w: number; h: number };
@@ -57,6 +58,25 @@ export default function PVLayout({ lang, userId, projectId = null, projectName =
   const [notice, setNotice] = useState("");
   const [isMapsModalOpen, setIsMapsModalOpen] = useState(false);
   const id = lang === "id";
+
+  useEffect(() => {
+    if (!projectId) return;
+    const targetId = projectId;
+    let isCancelled = false;
+    async function loadRemoteLayout() {
+      const remote = await api.fetchProjectLayout(targetId);
+      if (remote && !isCancelled) {
+        if (remote.settings) setSettings(prev => ({ ...prev, ...remote.settings }));
+        if (Array.isArray(remote.panels) && remote.panels.length > 0) setPanels(remote.panels);
+        if (Array.isArray(remote.obstacles)) setObstacles(remote.obstacles);
+        if (remote.site) setSite(remote.site);
+        if (remote.backgroundImage) setBackgroundImage(remote.backgroundImage);
+        if (remote.backgroundOpacity !== undefined) setBackgroundOpacity(remote.backgroundOpacity);
+      }
+    }
+    loadRemoteLayout();
+    return () => { isCancelled = true; };
+  }, [projectId]);
 
   const copy = id ? {
     eyebrow: "EDITOR LAYOUT PV", title: "PV Layout 2D", subtitle: "Generate susunan modul otomatis, lalu rapikan secara manual di kanvas.",
@@ -165,7 +185,22 @@ export default function PVLayout({ lang, userId, projectId = null, projectName =
     saveDraft(panels, nextSettings, obstacles);
   }
   function saveDraft(nextPanels = panels, nextSettings = settings, nextObstacles = obstacles, nextSite = site) {
-    try { localStorage.setItem(storageKey(userId, projectId), JSON.stringify({ projectId, settings: nextSettings, panels: nextPanels, obstacles: nextObstacles, site: nextSite, backgroundImage, backgroundOpacity })); } catch { /* image or draft may exceed browser storage quota */ }
+    const payload = {
+      projectId,
+      settings: nextSettings,
+      panels: nextPanels,
+      obstacles: nextObstacles,
+      site: nextSite,
+      backgroundImage,
+      backgroundOpacity,
+    };
+    try {
+      localStorage.setItem(storageKey(userId, projectId), JSON.stringify(payload));
+    } catch { /* image or draft may exceed browser storage quota */ }
+
+    if (projectId) {
+      api.saveProjectLayout(projectId, payload);
+    }
   }
   function generate() {
     const rows = Math.max(1, Math.min(100, Math.floor(Number(settings.rows) || 1)));

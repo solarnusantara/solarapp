@@ -83,6 +83,67 @@ const moduleIcons: Record<ModuleId, any> = {
   settings: Settings2,
 };
 
+
+const VALID_MODULES: ModuleId[] = [
+  "dashboard", "projects", "layout", "layout3d", "electrical", "cable",
+  "protection", "structure", "cad", "boq", "survey", "tray", "breaker",
+  "mounting", "report", "settings"
+];
+
+function parseUrlRoute(projs: Project[]): {
+  module: ModuleId;
+  project: Project | null;
+  openNewModal: boolean;
+} {
+  const path = window.location.pathname.replace(/\/+$/, "");
+  if (!path.startsWith("/design")) {
+    return { module: "dashboard", project: null, openNewModal: false };
+  }
+
+  const remainder = path.slice("/design".length).replace(/^\/+/, "");
+  if (!remainder) {
+    return { module: "dashboard", project: null, openNewModal: false };
+  }
+
+  const parts = remainder.split("/").filter(Boolean);
+  if (parts.length === 1) {
+    const single = parts[0];
+    if (single === "projects") return { module: "projects", project: null, openNewModal: false };
+    if (single === "new") return { module: "projects", project: null, openNewModal: true };
+    if (single === "settings") return { module: "settings", project: null, openNewModal: false };
+    if (single === "dashboard") return { module: "dashboard", project: null, openNewModal: false };
+
+    const foundProj = projs.find(p => p.id === single);
+    if (foundProj) {
+      return { module: "layout", project: foundProj, openNewModal: false };
+    }
+
+    if (VALID_MODULES.includes(single as ModuleId)) {
+      return { module: single as ModuleId, project: projs[0] || null, openNewModal: false };
+    }
+  }
+
+  if (parts.length >= 2) {
+    const [projId, modId] = parts;
+    const foundProj = projs.find(p => p.id === projId) || (projs.length > 0 ? projs[0] : null);
+    const validMod = VALID_MODULES.includes(modId as ModuleId) ? (modId as ModuleId) : "layout";
+    return { module: validMod, project: foundProj, openNewModal: false };
+  }
+
+  return { module: "dashboard", project: null, openNewModal: false };
+}
+
+function buildUrlPath(module: ModuleId, project: Project | null, isNew: boolean = false): string {
+  if (isNew) return "/design/new";
+  if (module === "dashboard") return "/design";
+  if (module === "projects") return "/design/projects";
+  if (module === "settings") return "/design/settings";
+  if (project) {
+    return `/design/${project.id}/${module}`;
+  }
+  return `/design/${module}`;
+}
+
 export default function App() {
   const [lang, setLang] = useState<Lang>("id");
   const [active, setActive] = useState<ModuleId>("dashboard");
@@ -105,6 +166,25 @@ export default function App() {
     { id: 3, title: "Verifikasi Struktur", message: "Validasi beban angin dan sudut tilt sebelum finalisasi konstruksi.", time: "Kemarin", read: true },
   ]);
 
+  function navigateTo(module: ModuleId, project?: Project | null, isNew: boolean = false, replace: boolean = false) {
+    const targetProject = project !== undefined ? project : activeProject;
+    setActive(module);
+    if (project !== undefined) {
+      setActiveProject(project);
+    }
+    setModal(isNew);
+    setMobileNav(false);
+
+    const targetUrl = buildUrlPath(module, targetProject, isNew);
+    if (window.location.pathname !== targetUrl) {
+      if (replace) {
+        window.history.replaceState({ module, projectId: targetProject?.id, isNew }, "", targetUrl);
+      } else {
+        window.history.pushState({ module, projectId: targetProject?.id, isNew }, "", targetUrl);
+      }
+    }
+  }
+
   useEffect(() => {
     async function init() {
       const u = api.getCurrentUser();
@@ -113,18 +193,40 @@ export default function App() {
       const projs = await api.fetchProjects();
       setProjects(projs);
 
+      const parsed = parseUrlRoute(projs);
       const initialId = api.getInitialProjectId();
-      if (initialId) {
+
+      if (initialId && !parsed.project) {
         const found = projs.find(p => p.id === initialId);
         if (found) {
           setActiveProject(found);
           setActive("layout");
+          window.history.replaceState(null, "", `/design/${found.id}/layout`);
+        }
+      } else {
+        setActive(parsed.module);
+        setActiveProject(parsed.project);
+        setModal(parsed.openNewModal);
+        const correctUrl = buildUrlPath(parsed.module, parsed.project, parsed.openNewModal);
+        if (window.location.pathname !== correctUrl && window.location.pathname.startsWith("/design")) {
+          window.history.replaceState(null, "", correctUrl);
         }
       }
       setLoading(false);
     }
     init();
   }, []);
+
+  useEffect(() => {
+    function handlePopState() {
+      const parsed = parseUrlRoute(projects);
+      setActive(parsed.module);
+      setActiveProject(parsed.project);
+      setModal(parsed.openNewModal);
+    }
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, [projects]);
 
   const unreadNotifications = notifications.filter(n => !n.read).length;
   const t = copy[lang];
@@ -186,8 +288,31 @@ export default function App() {
     report: lang === "id" ? "Laporan Engineering" : "Engineering Report", settings: t.settings,
   };
 
-  function openModule(id: ModuleId) { setActive(id); setMobileNav(false); }
-  function openProject(project: Project, module: ModuleId = "layout") { setActiveProject(project); setActive(module); setMobileNav(false); }
+    function openModule(id: ModuleId) {
+    if (id === "dashboard") {
+      navigateTo("dashboard", null);
+    } else if (id === "projects") {
+      navigateTo("projects", null);
+    } else if (id === "settings") {
+      navigateTo("settings", activeProject);
+    } else {
+      const targetProj = activeProject || (projects.length > 0 ? projects[0] : null);
+      navigateTo(id, targetProj);
+    }
+  }
+
+  function openProject(project: Project, module: ModuleId = "layout") {
+    navigateTo(module, project);
+  }
+
+  function openNewProjectModal() {
+    navigateTo(active, activeProject, true);
+  }
+
+  function closeModal() {
+    setModal(false);
+    navigateTo(active, activeProject, false, true);
+  }
 
   async function handleDeleteProject(project: Project) {
     const message = lang === "id"
@@ -217,7 +342,7 @@ export default function App() {
     setProjectName("");
     setProjectCapacity("");
     setModal(false);
-    openProject(created, "layout");
+    navigateTo("layout", created);
   }
 
   const statusLabel = (status: Project["status"]) =>
@@ -312,11 +437,25 @@ export default function App() {
               </span>
             </div>
             <div className="breadcrumb">
-              <span>SolarApp</span>
+              <button
+                type="button"
+                className="text-button"
+                style={{ cursor: "pointer", color: "inherit", padding: 0 }}
+                onClick={() => navigateTo("dashboard", null)}
+              >
+                SolarApp
+              </button>
               <span className="crumb-sep">/</span>
               {activeProject && (
                 <>
-                  <span style={{ color: "var(--green)" }}>{activeProject.name}</span>
+                  <button
+                    type="button"
+                    className="text-button"
+                    style={{ cursor: "pointer", color: "var(--green)", padding: 0, fontWeight: 600 }}
+                    onClick={() => navigateTo("layout", activeProject)}
+                  >
+                    {activeProject.name}
+                  </button>
                   <span className="crumb-sep">/</span>
                 </>
               )}
@@ -362,7 +501,7 @@ export default function App() {
                   <h1>{t.welcome}</h1>
                   <p>{t.subtitle}</p>
                 </div>
-                <button className="primary-button" onClick={() => setModal(true)}>
+                <button className="primary-button" onClick={openNewProjectModal}>
                   <Plus size={16} /> {t.newProject}
                 </button>
               </div>
@@ -451,7 +590,7 @@ export default function App() {
                   <h2>{t.allProjects}</h2>
                   <p>Daftar seluruh desain proyek yang terhubung dengan SonusID</p>
                 </div>
-                <button className="primary-button" onClick={() => setModal(true)}>
+                <button className="primary-button" onClick={openNewProjectModal}>
                   <Plus size={16} /> {t.newProject}
                 </button>
               </div>
@@ -584,7 +723,7 @@ export default function App() {
       </main>
 
       {modal && (
-        <div className="modal-backdrop" onMouseDown={e => { if (e.target === e.currentTarget) setModal(false); }}>
+        <div className="modal-backdrop" onMouseDown={e => { if (e.target === e.currentTarget) closeModal(); }}>
           <form className="modal-card" onSubmit={e => { e.preventDefault(); handleCreateProject(); }}>
             <div className="modal-heading">
               <div>
@@ -592,7 +731,7 @@ export default function App() {
                 <h2>{t.createTitle}</h2>
                 <p>{t.newProjectDesc}</p>
               </div>
-              <button type="button" className="icon-button" onClick={() => setModal(false)} aria-label="Close"><X size={18} /></button>
+              <button type="button" className="icon-button" onClick={closeModal} aria-label="Close"><X size={18} /></button>
             </div>
             <label className="form-label">
               {t.projectName}
@@ -610,7 +749,7 @@ export default function App() {
               <input type="number" required min="0.001" step="0.001" value={projectCapacity} onChange={e => setProjectCapacity(e.target.value)} placeholder="mis. 500" />
             </label>
             <div className="modal-actions">
-              <button type="button" className="secondary-button" onClick={() => setModal(false)}>{t.cancel}</button>
+              <button type="button" className="secondary-button" onClick={closeModal}>{t.cancel}</button>
               <button className="primary-button" type="submit"><Plus size={16} />{t.create}</button>
             </div>
           </form>

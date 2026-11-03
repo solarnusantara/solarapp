@@ -14,9 +14,11 @@ export type Project = {
   capacity: number;
   status: "In Progress" | "Planning" | "Completed";
   updated: string;
+  layout_data?: any;
+  boq_data?: any;
 };
 
-const LOCAL_PROJECTS_KEY = "sonus_solar_studio_projects_v1";
+const LOCAL_PROJECTS_KEY = "sonus_solar_studio_projects_v2";
 
 export function getCurrentUser(): SonusUser {
   const win = window as any;
@@ -51,14 +53,18 @@ export async function fetchProjects(): Promise<Project[]> {
     if (res.ok) {
       const data = await res.json();
       if (Array.isArray(data) && data.length > 0) {
-        return data.map((p: any) => ({
+        const mapped: Project[] = data.map((p: any) => ({
           id: String(p.id),
           name: p.name || p.project_code || "Untitled Project",
-          type: (p.type === "Rooftop" || p.project_type === "Rooftop") ? "Rooftop" : "Ground-mounted",
+          type: (p.type === "Rooftop" || p.project_type === "Rooftop") ? ("Rooftop" as const) : ("Ground-mounted" as const),
           capacity: Number(p.capacity || p.capacity_kwp || 0),
           status: p.status === "Completed" ? "Completed" : p.status === "In Progress" ? "In Progress" : "Planning",
-          updated: p.updated || (p.updated_at ? new Date(p.updated_at).toLocaleDateString("id-ID", { day: "2-digit", month: "short", year: "numeric" }) : "Today"),
+          updated: p.updated || (p.updated_at ? new Date(p.updated_at).toLocaleDateString("id-ID", { day: "2-digit", month: "short", year: "numeric" }) : "Aktif"),
+          layout_data: p.layout_data,
+          boq_data: p.boq_data,
         }));
+        saveLocalProjects(mapped);
+        return mapped;
       }
     }
   } catch (err) {
@@ -74,6 +80,7 @@ export async function fetchProjects(): Promise<Project[]> {
     }
   } catch {}
 
+  // Defaults to the 2 real projects
   localStorage.setItem(LOCAL_PROJECTS_KEY, JSON.stringify(REAL_PROJECTS));
   return REAL_PROJECTS;
 }
@@ -100,7 +107,11 @@ export async function createProject(newProject: Omit<Project, "id" | "updated">)
     });
     if (res.ok) {
       const saved = await res.json();
-      if (saved && saved.id) return saved;
+      if (saved && saved.id) {
+        const existing = await fetchProjects();
+        await saveLocalProjects([saved, ...existing.filter(p => p.id !== saved.id)]);
+        return saved;
+      }
     }
   } catch (err) {
     console.warn("Failed to persist project remotely:", err);
@@ -127,4 +138,66 @@ export async function deleteProject(id: string): Promise<boolean> {
   const updated = existing.filter(p => p.id !== id);
   await saveLocalProjects(updated);
   return true;
+}
+
+export async function fetchProjectLayout(projectId: string): Promise<any | null> {
+  try {
+    const res = await fetch(`/api/design/projects/${projectId}/layout`, { credentials: "same-origin" });
+    if (res.ok) {
+      const data = await res.json();
+      if (data && (data.panels || data.settings || data.layout_data)) {
+        return data.layout_data || data;
+      }
+    }
+  } catch (err) {
+    console.warn("Could not fetch remote layout for project:", projectId, err);
+  }
+  return null;
+}
+
+export async function saveProjectLayout(projectId: string, layoutData: any): Promise<boolean> {
+  try {
+    const res = await fetch(`/api/design/projects/${projectId}/layout`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "same-origin",
+      body: JSON.stringify(layoutData),
+    });
+    return res.ok;
+  } catch (err) {
+    console.warn("Failed to persist layout remotely for project:", projectId, err);
+    return false;
+  }
+}
+
+export async function fetchProjectBoq(projectId: string): Promise<any[] | null> {
+  try {
+    const res = await fetch(`/api/design/projects/${projectId}/boq`, { credentials: "same-origin" });
+    if (res.ok) {
+      const data = await res.json();
+      if (data) {
+        if (Array.isArray(data)) return data;
+        if (Array.isArray(data.items)) return data.items;
+        if (Array.isArray(data.boq_data)) return data.boq_data;
+      }
+    }
+  } catch (err) {
+    console.warn("Could not fetch remote boq for project:", projectId, err);
+  }
+  return null;
+}
+
+export async function saveProjectBoq(projectId: string, boqData: any[]): Promise<boolean> {
+  try {
+    const res = await fetch(`/api/design/projects/${projectId}/boq`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "same-origin",
+      body: JSON.stringify(boqData),
+    });
+    return res.ok;
+  } catch (err) {
+    console.warn("Failed to persist boq remotely for project:", projectId, err);
+    return false;
+  }
 }
