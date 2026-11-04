@@ -220,6 +220,8 @@ export default function PVLayout({
   const [marquee, setMarquee] = useState<{ startX: number; startY: number; currentX: number; currentY: number } | null>(null);
   const marqueeStartRef = useRef<{ x: number; y: number } | null>(null);
   const isMarqueeDraggingRef = useRef(false);
+  const [showZoomHint, setShowZoomHint] = useState(false);
+  const zoomHintTimeoutRef = useRef<number | null>(null);
 
   const [notice, setNotice] = useState("");
   const [isMapsModalOpen, setIsMapsModalOpen] = useState(false);
@@ -713,9 +715,20 @@ export default function PVLayout({
   }, [setbackPolygon, originX, originY, scale]);
 
   function handleWheel(e: React.WheelEvent<HTMLElement>) {
-    e.preventDefault();
-    const delta = e.deltaY < 0 ? 0.12 : -0.12;
-    setZoom(prev => Math.max(0.4, Math.min(3.5, Number((prev + delta).toFixed(2)))));
+    // Only zoom when Ctrl or Cmd key is pressed (Google Maps & Figma CAD standard)
+    if (e.ctrlKey || e.metaKey) {
+      e.preventDefault();
+      const delta = e.deltaY < 0 ? 0.12 : -0.12;
+      setZoom(prev => Math.max(0.4, Math.min(3.5, Number((prev + delta).toFixed(2)))));
+    } else {
+      // Show helpful overlay without trapping page scroll
+      setShowZoomHint(true);
+      if (zoomHintTimeoutRef.current) clearTimeout(zoomHintTimeoutRef.current);
+      zoomHintTimeoutRef.current = window.setTimeout(() => {
+        setShowZoomHint(false);
+      }, 1400);
+      // Let standard page scrolling proceed naturally!
+    }
   }
 
   // Pointer interactions
@@ -1535,7 +1548,32 @@ export default function PVLayout({
             </div>
           </div>
 
-          <div className="pv-canvas-wrap" onWheel={handleWheel}>
+          <div className="pv-canvas-wrap" onWheel={handleWheel} style={{ position: "relative" }}>
+            {showZoomHint && (
+              <div style={{
+                position: "absolute",
+                top: "50%",
+                left: "50%",
+                transform: "translate(-50%, -50%)",
+                background: "rgba(10, 16, 12, 0.88)",
+                border: "1px solid #386b45",
+                color: "#edf5ef",
+                padding: "8px 16px",
+                borderRadius: 8,
+                fontSize: 12,
+                fontWeight: 600,
+                pointerEvents: "none",
+                zIndex: 20,
+                boxShadow: "0 4px 16px rgba(0,0,0,0.5)",
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                backdropFilter: "blur(4px)",
+              }}>
+                <span style={{ color: "var(--green, #b8f36b)", fontSize: 13 }}>💡</span>
+                <span>{id ? "Tahan tombol Ctrl + Scroll untuk Zoom kanvas" : "Hold Ctrl + scroll to zoom canvas"}</span>
+              </div>
+            )}
             <svg
               className="pv-canvas"
               viewBox="0 0 1000 600"
