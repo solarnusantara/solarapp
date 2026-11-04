@@ -98,6 +98,8 @@ function Report3DViewport({
   defaultHour = 12.0,
   coords = { lat: -6.36, lng: 107.17 },
   onHourChange,
+  hideTimeControls = false,
+  titleBadge,
 }: {
   panels: any[];
   obstacles: any[];
@@ -113,10 +115,16 @@ function Report3DViewport({
   defaultHour?: number;
   coords?: { lat: number; lng: number };
   onHourChange?: (h: number) => void;
+  hideTimeControls?: boolean;
+  titleBadge?: string;
 }) {
   const mountRef = useRef<HTMLDivElement>(null);
   const [hour, setHour] = useState(defaultHour);
   const [cameraPreset, setCameraPreset] = useState<"iso" | "top">("iso");
+
+  useEffect(() => {
+    setHour(defaultHour);
+  }, [defaultHour]);
 
   const sunPos = useMemo(() => {
     return computeSolarPosition(hour, coords.lat, coords.lng);
@@ -555,47 +563,68 @@ function Report3DViewport({
           pointerEvents: "none",
         }}
       >
-        {/* Dual Time Controls: Siang (12:00) vs Malam (24:00) */}
-        <div style={{ display: "flex", gap: 5, background: "rgba(11,19,32,0.92)", padding: "3px 5px", borderRadius: 5, border: "1px solid #1e293b", pointerEvents: "auto", boxShadow: "0 2px 8px rgba(0,0,0,0.4)" }}>
-          <button
-            type="button"
-            onClick={() => handleSetHour(12.0)}
+        {/* Dual Time Controls or Static Title Badge */}
+        {hideTimeControls ? (
+          <div
             style={{
-              padding: "3px 9px",
-              fontSize: 9.5,
-              fontWeight: 700,
-              borderRadius: 3,
-              border: "none",
-              cursor: "pointer",
-              background: Math.abs(hour - 12.0) < 0.2 ? "#f59e0b" : "transparent",
-              color: Math.abs(hour - 12.0) < 0.2 ? "#ffffff" : "#94a3b8",
               display: "flex",
               alignItems: "center",
-              gap: 4,
-            }}
-          >
-            ☀️ 12:00 (Siang / Puncak)
-          </button>
-          <button
-            type="button"
-            onClick={() => handleSetHour(24.0)}
-            style={{
-              padding: "3px 9px",
-              fontSize: 9.5,
+              gap: 5,
+              background: "rgba(11,19,32,0.92)",
+              padding: "3px 8px",
+              borderRadius: 4,
+              border: "1px solid #1e293b",
+              pointerEvents: "auto",
+              boxShadow: "0 2px 8px rgba(0,0,0,0.4)",
+              fontSize: 9,
               fontWeight: 700,
-              borderRadius: 3,
-              border: "none",
-              cursor: "pointer",
-              background: (Math.abs(hour - 24.0) < 0.2 || Math.abs(hour - 0.0) < 0.2) ? "#6366f1" : "transparent",
-              color: (Math.abs(hour - 24.0) < 0.2 || Math.abs(hour - 0.0) < 0.2) ? "#ffffff" : "#94a3b8",
-              display: "flex",
-              alignItems: "center",
-              gap: 4,
+              color: (hour >= 20 || hour <= 4 || hour === 24 || hour === 0) ? "#818cf8" : "#f59e0b",
             }}
           >
-            🌙 24:00 (Malam / Nokturnal)
-          </button>
-        </div>
+            {titleBadge || ((hour >= 20 || hour <= 4 || hour === 24 || hour === 0) ? "🌙 24:00 WIB (Malam / Nokturnal)" : "☀️ 12:00 WIB (Siang / Puncak)")}
+          </div>
+        ) : (
+          <div style={{ display: "flex", gap: 5, background: "rgba(11,19,32,0.92)", padding: "3px 5px", borderRadius: 5, border: "1px solid #1e293b", pointerEvents: "auto", boxShadow: "0 2px 8px rgba(0,0,0,0.4)" }}>
+            <button
+              type="button"
+              onClick={() => handleSetHour(12.0)}
+              style={{
+                padding: "3px 9px",
+                fontSize: 9.5,
+                fontWeight: 700,
+                borderRadius: 3,
+                border: "none",
+                cursor: "pointer",
+                background: Math.abs(hour - 12.0) < 0.2 ? "#f59e0b" : "transparent",
+                color: Math.abs(hour - 12.0) < 0.2 ? "#ffffff" : "#94a3b8",
+                display: "flex",
+                alignItems: "center",
+                gap: 4,
+              }}
+            >
+              ☀️ 12:00 (Siang / Puncak)
+            </button>
+            <button
+              type="button"
+              onClick={() => handleSetHour(24.0)}
+              style={{
+                padding: "3px 9px",
+                fontSize: 9.5,
+                fontWeight: 700,
+                borderRadius: 3,
+                border: "none",
+                cursor: "pointer",
+                background: (Math.abs(hour - 24.0) < 0.2 || Math.abs(hour - 0.0) < 0.2) ? "#6366f1" : "transparent",
+                color: (Math.abs(hour - 24.0) < 0.2 || Math.abs(hour - 0.0) < 0.2) ? "#ffffff" : "#94a3b8",
+                display: "flex",
+                alignItems: "center",
+                gap: 4,
+              }}
+            >
+              🌙 24:00 (Malam / Nokturnal)
+            </button>
+          </div>
+        )}
 
         {/* Camera Preset Controls */}
         <div style={{ display: "flex", gap: 4, background: "rgba(11,19,32,0.92)", padding: "3px 5px", borderRadius: 5, border: "1px solid #1e293b", pointerEvents: "auto", boxShadow: "0 2px 8px rgba(0,0,0,0.4)" }}>
@@ -1062,153 +1091,169 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
       </div>
 
       {/* Geolocation & Satellite Map Box */}
-      <div style={{ border: "1.5px solid #0f172a", borderRadius: 4, background: "#f8fafc", padding: 8, marginBottom: 8 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 5 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
-            <MapPin size={13} style={{ color: "#0284c7" }} />
-            <strong style={{ fontSize: 10, color: "#0f172a" }}>Citra Satelit & Peta Geolokasi Tapak Bangunan</strong>
-          </div>
-          <span style={{ fontSize: 8, color: "#059669", fontWeight: 700 }}>
-            Resolusi Citra 0.5m/px · Google Earth Ground Truth
-          </span>
-        </div>
+      {(() => {
+        const deltaLat = 0.0032;
+        const deltaLng = 0.0032 / Math.cos((coords.lat * Math.PI) / 180);
+        const minLng = (coords.lng - deltaLng).toFixed(5);
+        const minLat = (coords.lat - deltaLat).toFixed(5);
+        const maxLng = (coords.lng + deltaLng).toFixed(5);
+        const maxLat = (coords.lat + deltaLat).toFixed(5);
+        const esriSatelliteUrl = `https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/export?bbox=${minLng},${minLat},${maxLng},${maxLat}&bboxSR=4326&imageSR=4326&size=800,450&f=image`;
+        const satelliteImgSrc = savedLayout?.backgroundImage || esriSatelliteUrl;
 
-        <div style={{ display: "grid", gridTemplateColumns: "1.5fr 1fr", gap: 10, alignItems: "stretch" }}>
-          {/* Satellite Map with High-Res Satellite Imagery & Boundary Overlay */}
-          <div style={{ position: "relative", height: 235, borderRadius: 4, overflow: "hidden", border: "1px solid #0f172a", background: "#0b1320" }}>
-            <img
-              src={`https://maps.googleapis.com/maps/api/staticmap?center=${coords.lat},${coords.lng}&zoom=17&size=640x360&scale=2&maptype=satellite&key=${GOOGLE_MAPS_API_KEY}`}
-              alt="Citra Satelit Lokasi PLTS"
-              style={{
-                width: "100%",
-                height: "100%",
-                objectFit: "cover",
-                display: "block",
-              }}
-              onError={(e) => {
-                // If offline or blocked, keep dark raster satellite grid visible
-                (e.currentTarget as HTMLElement).style.display = "none";
-              }}
-            />
-            {/* Fallback styling in case image is loading or offline */}
-            <div
-              style={{
-                position: "absolute",
-                inset: 0,
-                backgroundImage: "radial-gradient(#334155 1.5px, transparent 1.5px), radial-gradient(#1e293b 1.5px, #0f172a 1.5px)",
-                backgroundSize: "16px 16px",
-                backgroundPosition: "0 0, 8px 8px",
-                zIndex: 0,
-                pointerEvents: "none",
-              }}
-            />
-
-            {/* Rooftop / Ground Boundary Polygon Overlay on Satellite Map */}
-            <div
-              style={{
-                position: "absolute",
-                top: "20%",
-                left: "16%",
-                width: "68%",
-                height: "60%",
-                border: "2.5px solid #4ade80",
-                background: "rgba(74, 222, 128, 0.22)",
-                borderRadius: 3,
-                display: "flex",
-                flexDirection: "column",
-                alignItems: "center",
-                justifyContent: "center",
-                boxShadow: "0 0 14px rgba(74, 222, 128, 0.45)",
-                zIndex: 2,
-                pointerEvents: "none",
-              }}
-            >
-              <span style={{ fontSize: 9, fontWeight: 800, color: "#4ade80", background: "rgba(15,23,42,0.90)", padding: "2px 7px", borderRadius: 3, border: "1px solid #4ade80", boxShadow: "0 2px 5px rgba(0,0,0,0.6)" }}>
-                TAPAK PLTS: {(areaW / 1000).toFixed(0)}m × {(areaH / 1000).toFixed(0)}m
-              </span>
-              <span style={{ fontSize: 7.5, color: "#ffffff", background: "rgba(0,0,0,0.72)", padding: "1.5px 5px", borderRadius: 2, marginTop: 3 }}>
-                Luas Tapak: {((areaW * areaH) / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 0 })} m²
+        return (
+          <div style={{ border: "1.5px solid #0f172a", borderRadius: 4, background: "#f8fafc", padding: 8, marginBottom: 8 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 5 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                <MapPin size={13} style={{ color: "#0284c7" }} />
+                <strong style={{ fontSize: 10, color: "#0f172a" }}>Citra Satelit & Peta Geolokasi Tapak Bangunan</strong>
+              </div>
+              <span style={{ fontSize: 8, color: "#059669", fontWeight: 700 }}>
+                Resolusi Citra 0.5m/px · High-Res Satellite Ground Truth
               </span>
             </div>
 
-            {/* Red GPS Center Pin */}
-            <div style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%, -100%)", textAlign: "center", zIndex: 3, pointerEvents: "none" }}>
-              <MapPin size={26} style={{ color: "#ef4444", filter: "drop-shadow(0 2px 6px rgba(0,0,0,0.9))" }} />
-            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1.5fr 1fr", gap: 10, alignItems: "stretch" }}>
+              {/* Satellite Map with High-Res Satellite Imagery & Boundary Overlay */}
+              <div style={{ position: "relative", height: 265, borderRadius: 4, overflow: "hidden", border: "1px solid #0f172a", background: "#0b1320" }}>
+                <img
+                  src={satelliteImgSrc}
+                  alt="Citra Satelit Lokasi PLTS"
+                  crossOrigin="anonymous"
+                  style={{
+                    width: "100%",
+                    height: "100%",
+                    objectFit: "cover",
+                    display: "block",
+                  }}
+                  onError={(e) => {
+                    const target = e.currentTarget as HTMLImageElement;
+                    if (target.src !== esriSatelliteUrl) {
+                      target.src = esriSatelliteUrl;
+                    }
+                  }}
+                />
+                {/* Fallback styling in case image is loading or offline */}
+                <div
+                  style={{
+                    position: "absolute",
+                    inset: 0,
+                    backgroundImage: "radial-gradient(#334155 1.5px, transparent 1.5px), radial-gradient(#1e293b 1.5px, #0f172a 1.5px)",
+                    backgroundSize: "16px 16px",
+                    backgroundPosition: "0 0, 8px 8px",
+                    zIndex: 0,
+                    pointerEvents: "none",
+                  }}
+                />
 
-            {/* North Indicator Badge */}
-            <div style={{ position: "absolute", top: 8, right: 8, background: "rgba(255,255,255,0.92)", padding: "3px 6px", borderRadius: 3, fontSize: 8, fontWeight: 700, color: "#0f172a", display: "flex", alignItems: "center", gap: 3, zIndex: 3, boxShadow: "0 1px 4px rgba(0,0,0,0.3)" }}>
-              <Compass size={11} style={{ color: "#0284c7" }} /> UTARA (N)
-            </div>
+                {/* Rooftop / Ground Boundary Polygon Overlay on Satellite Map */}
+                <div
+                  style={{
+                    position: "absolute",
+                    top: "20%",
+                    left: "16%",
+                    width: "68%",
+                    height: "60%",
+                    border: "2.5px solid #4ade80",
+                    background: "rgba(74, 222, 128, 0.22)",
+                    borderRadius: 3,
+                    display: "flex",
+                    flexDirection: "column",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    boxShadow: "0 0 14px rgba(74, 222, 128, 0.45)",
+                    zIndex: 2,
+                    pointerEvents: "none",
+                  }}
+                >
+                  <span style={{ fontSize: 9, fontWeight: 800, color: "#4ade80", background: "rgba(15,23,42,0.90)", padding: "2px 7px", borderRadius: 3, border: "1px solid #4ade80", boxShadow: "0 2px 5px rgba(0,0,0,0.6)" }}>
+                    TAPAK PLTS: {(areaW / 1000).toFixed(0)}m × {(areaH / 1000).toFixed(0)}m
+                  </span>
+                  <span style={{ fontSize: 7.5, color: "#ffffff", background: "rgba(0,0,0,0.72)", padding: "1.5px 5px", borderRadius: 2, marginTop: 3 }}>
+                    Luas Tapak: {((areaW * areaH) / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 0 })} m²
+                  </span>
+                </div>
 
-            {/* Satellite Metadata Bar at Bottom */}
-            <div style={{ position: "absolute", bottom: 6, left: 6, right: 6, display: "flex", justifyContent: "space-between", alignItems: "center", background: "rgba(15,23,42,0.88)", padding: "3px 8px", borderRadius: 3, fontSize: 7.5, color: "#cbd5e1", zIndex: 3, border: "1px solid #334155" }}>
-              <span>📍 GPS: {coords.lat.toFixed(5)}° S, {coords.lng.toFixed(5)}° E</span>
-              <span>Skala ~1:2500 · Resolusi 0.5m/px</span>
+                {/* Red GPS Center Pin */}
+                <div style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%, -100%)", textAlign: "center", zIndex: 3, pointerEvents: "none" }}>
+                  <MapPin size={26} style={{ color: "#ef4444", filter: "drop-shadow(0 2px 6px rgba(0,0,0,0.9))" }} />
+                </div>
+
+                {/* North Indicator Badge */}
+                <div style={{ position: "absolute", top: 8, right: 8, background: "rgba(255,255,255,0.92)", padding: "3px 6px", borderRadius: 3, fontSize: 8, fontWeight: 700, color: "#0f172a", display: "flex", alignItems: "center", gap: 3, zIndex: 3, boxShadow: "0 1px 4px rgba(0,0,0,0.3)" }}>
+                  <Compass size={11} style={{ color: "#0284c7" }} /> UTARA (N)
+                </div>
+
+                {/* Satellite Metadata Bar at Bottom */}
+                <div style={{ position: "absolute", bottom: 6, left: 6, right: 6, display: "flex", justifyContent: "space-between", alignItems: "center", background: "rgba(15,23,42,0.88)", padding: "3px 8px", borderRadius: 3, fontSize: 7.5, color: "#cbd5e1", zIndex: 3, border: "1px solid #334155" }}>
+                  <span>📍 GPS: {coords.lat.toFixed(5)}° S, {coords.lng.toFixed(5)}° E</span>
+                  <span>Skala ~1:2500 · Resolusi 0.5m/px</span>
+                </div>
+              </div>
+
+              {/* Geolocation Coordinates & Site Data */}
+              <div style={{ display: "flex", flexDirection: "column", justifyContent: "space-between", gap: 4, fontSize: 8 }}>
+                <div style={{ background: "#ffffff", padding: "5px 8px", border: "1px solid #e2e8f0", borderRadius: 3 }}>
+                  <div style={{ color: "#64748b", fontSize: 7.5 }}>Nama Lokasi & Fasilitas</div>
+                  <strong style={{ color: "#0f172a", fontSize: 9 }}>{coords.name}</strong>
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 4 }}>
+                  <div style={{ background: "#ffffff", padding: "5px 8px", border: "1px solid #e2e8f0", borderRadius: 3 }}>
+                    <div style={{ color: "#64748b", fontSize: 7.5 }}>Latitude (Lintang)</div>
+                    <strong style={{ color: "#0284c7" }}>{coords.lat.toFixed(5)}° S</strong>
+                  </div>
+                  <div style={{ background: "#ffffff", padding: "5px 8px", border: "1px solid #e2e8f0", borderRadius: 3 }}>
+                    <div style={{ color: "#64748b", fontSize: 7.5 }}>Longitude (Bujur)</div>
+                    <strong style={{ color: "#0284c7" }}>{coords.lng.toFixed(5)}° E</strong>
+                  </div>
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 4 }}>
+                  <div style={{ background: "#ffffff", padding: "5px 8px", border: "1px solid #e2e8f0", borderRadius: 3 }}>
+                    <div style={{ color: "#64748b", fontSize: 7.5 }}>Elevasi Tapak (DEM)</div>
+                    <strong style={{ color: "#0f172a" }}>+34.2 m dpl</strong>
+                  </div>
+                  <div style={{ background: "#ffffff", padding: "5px 8px", border: "1px solid #e2e8f0", borderRadius: 3 }}>
+                    <div style={{ color: "#64748b", fontSize: 7.5 }}>Luas Tapak Bangunan</div>
+                    <strong style={{ color: "#059669" }}>{((areaW * areaH) / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 0 })} m²</strong>
+                  </div>
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 4 }}>
+                  <div style={{ background: "#ffffff", padding: "5px 8px", border: "1px solid #e2e8f0", borderRadius: 3 }}>
+                    <div style={{ color: "#64748b", fontSize: 7.5 }}>Orientasi Utama</div>
+                    <strong style={{ color: "#0f172a" }}>Hadap Khatulistiwa</strong>
+                  </div>
+                  <div style={{ background: "#ffffff", padding: "5px 8px", border: "1px solid #e2e8f0", borderRadius: 3 }}>
+                    <div style={{ color: "#64748b", fontSize: 7.5 }}>Status Verifikasi</div>
+                    <strong style={{ color: "#059669" }}>✓ Ground Truth OK</strong>
+                  </div>
+                </div>
+                <a
+                  href={`https://www.google.com/maps/search/?api=1&query=${coords.lat},${coords.lng}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="no-print"
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    gap: 5,
+                    background: "#0284c7",
+                    color: "#ffffff",
+                    padding: "5px 8px",
+                    borderRadius: 3,
+                    fontSize: 8.5,
+                    fontWeight: 700,
+                    textDecoration: "none",
+                    marginTop: 2,
+                  }}
+                >
+                  <MapPin size={11} /> Buka Lokasi di Google Maps ↗
+                </a>
+              </div>
             </div>
           </div>
-
-          {/* Geolocation Coordinates & Site Data */}
-          <div style={{ display: "flex", flexDirection: "column", justifyContent: "space-between", gap: 4, fontSize: 8 }}>
-            <div style={{ background: "#ffffff", padding: "5px 8px", border: "1px solid #e2e8f0", borderRadius: 3 }}>
-              <div style={{ color: "#64748b", fontSize: 7.5 }}>Nama Lokasi & Fasilitas</div>
-              <strong style={{ color: "#0f172a", fontSize: 9 }}>{coords.name}</strong>
-            </div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 4 }}>
-              <div style={{ background: "#ffffff", padding: "5px 8px", border: "1px solid #e2e8f0", borderRadius: 3 }}>
-                <div style={{ color: "#64748b", fontSize: 7.5 }}>Latitude (Lintang)</div>
-                <strong style={{ color: "#0284c7" }}>{coords.lat.toFixed(5)}° S</strong>
-              </div>
-              <div style={{ background: "#ffffff", padding: "5px 8px", border: "1px solid #e2e8f0", borderRadius: 3 }}>
-                <div style={{ color: "#64748b", fontSize: 7.5 }}>Longitude (Bujur)</div>
-                <strong style={{ color: "#0284c7" }}>{coords.lng.toFixed(5)}° E</strong>
-              </div>
-            </div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 4 }}>
-              <div style={{ background: "#ffffff", padding: "5px 8px", border: "1px solid #e2e8f0", borderRadius: 3 }}>
-                <div style={{ color: "#64748b", fontSize: 7.5 }}>Elevasi Tapak (DEM)</div>
-                <strong style={{ color: "#0f172a" }}>+34.2 m dpl</strong>
-              </div>
-              <div style={{ background: "#ffffff", padding: "5px 8px", border: "1px solid #e2e8f0", borderRadius: 3 }}>
-                <div style={{ color: "#64748b", fontSize: 7.5 }}>Luas Tapak Bangunan</div>
-                <strong style={{ color: "#059669" }}>{((areaW * areaH) / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 0 })} m²</strong>
-              </div>
-            </div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 4 }}>
-              <div style={{ background: "#ffffff", padding: "5px 8px", border: "1px solid #e2e8f0", borderRadius: 3 }}>
-                <div style={{ color: "#64748b", fontSize: 7.5 }}>Orientasi Utama</div>
-                <strong style={{ color: "#0f172a" }}>Hadap Khatulistiwa</strong>
-              </div>
-              <div style={{ background: "#ffffff", padding: "5px 8px", border: "1px solid #e2e8f0", borderRadius: 3 }}>
-                <div style={{ color: "#64748b", fontSize: 7.5 }}>Status Verifikasi</div>
-                <strong style={{ color: "#059669" }}>✓ Ground Truth OK</strong>
-              </div>
-            </div>
-            <a
-              href={`https://www.google.com/maps/search/?api=1&query=${coords.lat},${coords.lng}`}
-              target="_blank"
-              rel="noreferrer"
-              className="no-print"
-              style={{
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                gap: 5,
-                background: "#0284c7",
-                color: "#ffffff",
-                padding: "5px 8px",
-                borderRadius: 3,
-                fontSize: 8.5,
-                fontWeight: 700,
-                textDecoration: "none",
-                marginTop: 2,
-              }}
-            >
-              <MapPin size={11} /> Buka Lokasi di Google Maps ↗
-            </a>
-          </div>
-        </div>
-      </div>
+        );
+      })()}
 
       {/* Shading Analysis Matrix */}
       <div style={{ border: "1px solid #e2e8f0", borderRadius: 5, padding: "7px 9px", background: "#f8fafc", marginBottom: 8 }}>
@@ -1335,7 +1380,7 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
   );
 
   // =========================================================================
-  // SUB-RENDERER: PAGE 3 (2D CAD & 3D MULTI-TIME COMPARATIVE STUDY)
+  // SUB-RENDERER: PAGE 3 (2D CAD & 3D DUAL-LAYER: SIANG & MALAM)
   // =========================================================================
   const renderPage3 = () => (
     <div>
@@ -1346,7 +1391,7 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
             2D/3D
           </div>
           <div>
-            <div style={{ fontSize: 12.5, fontWeight: 800, color: "#0f172a" }}>DETAIL TATA LETAK MODUL PV 2D & VISUALISASI 3D TIGA WAKTU</div>
+            <div style={{ fontSize: 12.5, fontWeight: 800, color: "#0f172a" }}>DETAIL TATA LETAK MODUL PV 2D & VISUALISASI 3D DUA LAYER (SIANG & MALAM)</div>
             <div style={{ fontSize: 8, color: "#64748b" }}>LEMBAR 3 DARI 3 · EPC DRAWING PACKAGE · REVISI 0 (IFC)</div>
           </div>
         </div>
@@ -1365,7 +1410,7 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
         </div>
 
         {/* 2D CAD SVG */}
-        <svg viewBox="0 0 1000 300" style={{ width: "100%", height: 160, display: "block", background: "#ffffff", border: "1px solid #cbd5e1" }}>
+        <svg viewBox="0 0 1000 300" style={{ width: "100%", height: 140, display: "block", background: "#ffffff", border: "1px solid #cbd5e1" }}>
           <defs>
             <pattern id="cad-grid-page3" width="20" height="20" patternUnits="userSpaceOnUse">
               <path d="M 20 0 L 0 0 0 20" fill="none" stroke="#f1f5f9" strokeWidth="0.8" />
@@ -1479,55 +1524,95 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
         </div>
       </div>
 
-      {/* SECTION B: 3D DUAL-TIME COMPARATIVE STUDY (SIANG 12:00 & MALAM 24:00) */}
+      {/* SECTION B: 3D DUAL-LAYER VISUALIZATION (TOP: SIANG 12:00 & BOTTOM: MALAM 24:00) */}
       <div style={{ border: "1.5px solid #0f172a", borderRadius: 4, background: "#f8fafc", padding: "6px 8px", marginBottom: 6 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
-          <strong style={{ fontSize: 9, color: "#0f172a" }}>BAGIAN B: STUDI VISUALISASI 3D (SIANG 12:00 & MALAM 24:00)</strong>
-          <span style={{ fontSize: 8, color: "#059669", fontWeight: 700 }}>Simulasi Digital Twin Dua Kondisi: Puncak Surya vs Nokturnal Standby</span>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 5 }}>
+          <strong style={{ fontSize: 9, color: "#0f172a" }}>BAGIAN B: STUDI VISUALISASI 3D DUA LAYER (SIANG 12:00 WIB & MALAM 24:00 WIB)</strong>
+          <span style={{ fontSize: 8, color: "#059669", fontWeight: 700 }}>Simulasi Digital Twin Dua Layer: Puncak Surya vs Nokturnal Standby</span>
         </div>
 
-        {/* 3D Viewport in High-Contrast Dark Canvas */}
-        <div style={{ height: 220, width: "100%", borderRadius: 4, overflow: "hidden", border: "1.5px solid #0f172a", background: "#080f1a", marginBottom: 5 }}>
-          <Report3DViewport
-            panels={panels}
-            obstacles={obstacles}
-            areaW={areaW}
-            areaH={areaH}
-            moduleW={moduleW}
-            moduleH={moduleH}
-            tilt={tilt}
-            siteCorners={siteCorners}
-            theme="dark"
-            interactive={true}
-            height={220}
-            defaultHour={active3DHour}
-            coords={coords}
-            onHourChange={setActive3DHour}
-          />
+        {/* LAYER 1 (TOP): SIANG (12:00 WIB) */}
+        <div style={{ marginBottom: 5 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: "#fef3c7", border: "1px solid #fcd34d", borderRadius: "3px 3px 0 0", padding: "2.5px 7px" }}>
+            <span style={{ fontSize: 8.5, fontWeight: 800, color: "#b45309", display: "flex", alignItems: "center", gap: 4 }}>
+              ☀️ 1. LAYER ATAS: KONDISI SIANG (12:00 WIB - Puncak Surya & Radiasi)
+            </span>
+            <span style={{ fontSize: 7.5, color: "#92400e", fontWeight: 700 }}>
+              Elevasi: 78.1° (Zenit) · Azimuth: 18.5° · Klirens Bayangan &lt; 0.5m · Bebas Shading
+            </span>
+          </div>
+          <div style={{ height: 135, width: "100%", borderRadius: "0 0 3px 3px", overflow: "hidden", border: "1.5px solid #0f172a", borderTop: "none", background: "#080f1a" }}>
+            <Report3DViewport
+              panels={panels}
+              obstacles={obstacles}
+              areaW={areaW}
+              areaH={areaH}
+              moduleW={moduleW}
+              moduleH={moduleH}
+              tilt={tilt}
+              siteCorners={siteCorners}
+              theme="dark"
+              interactive={true}
+              height={135}
+              defaultHour={12.0}
+              coords={coords}
+              hideTimeControls={true}
+              titleBadge="☀️ 12:00 WIB - Puncak Surya & Klirens Bayangan"
+            />
+          </div>
         </div>
 
-        {/* 2-Condition Comparative Analysis Cards (Siang vs Malam) */}
+        {/* LAYER 2 (BOTTOM): MALAM (24:00 WIB) */}
+        <div style={{ marginBottom: 5 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: "#e0e7ff", border: "1px solid #c7d2fe", borderRadius: "3px 3px 0 0", padding: "2.5px 7px" }}>
+            <span style={{ fontSize: 8.5, fontWeight: 800, color: "#4338ca", display: "flex", alignItems: "center", gap: 4 }}>
+              🌙 2. LAYER BAWAH: KONDISI MALAM (24:00 WIB - Simulasi Nokturnal & Standby)
+            </span>
+            <span style={{ fontSize: 7.5, color: "#3730a3", fontWeight: 700 }}>
+              Elevasi: -78.0° (Nadir) · Irradiansi: 0 W/m² · Standby Isolation (IEC 62109) · Beacon Aktif
+            </span>
+          </div>
+          <div style={{ height: 135, width: "100%", borderRadius: "0 0 3px 3px", overflow: "hidden", border: "1.5px solid #0f172a", borderTop: "none", background: "#080f1a" }}>
+            <Report3DViewport
+              panels={panels}
+              obstacles={obstacles}
+              areaW={areaW}
+              areaH={areaH}
+              moduleW={moduleW}
+              moduleH={moduleH}
+              tilt={tilt}
+              siteCorners={siteCorners}
+              theme="dark"
+              interactive={true}
+              height={135}
+              defaultHour={24.0}
+              coords={coords}
+              hideTimeControls={true}
+              titleBadge="🌙 24:00 WIB - Standby Isolation Mode (IEC 62109)"
+            />
+          </div>
+        </div>
+
+        {/* 2-Condition Comparative Analysis Summaries (Siang vs Malam) */}
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, fontSize: 8 }}>
-          <div style={{ background: "#ffffff", border: "1px solid #e2e8f0", borderRadius: 3, padding: "5px 7px" }}>
+          <div style={{ background: "#ffffff", border: "1px solid #e2e8f0", borderRadius: 3, padding: "4px 6px" }}>
             <div style={{ fontWeight: 800, color: "#ca8a04", display: "flex", justifyContent: "space-between" }}>
-              <span>☀️ SIANG (12:00 WIB - Puncak Surya)</span>
-              <span>Elevasi 78.1° · Zenit</span>
+              <span>☀️ Evaluasi Kondisi Siang</span>
+              <span style={{ color: "#059669" }}>✓ Efisiensi 100%</span>
             </div>
-            <div style={{ color: "#475569", marginTop: 2, lineHeight: 1.35 }}>
+            <div style={{ color: "#475569", marginTop: 2, lineHeight: 1.3 }}>
               Sinar jatuh hampir tegak lurus (azimuth 18.5°). Bayangan jatuh tepat di bawah obstacle (&lt; 0.5 m). Tidak ada modul yang mengalami shading, efisiensi radiasi 100% dengan daya puncak sistem.
             </div>
-            <div style={{ color: "#059669", fontWeight: 700, marginTop: 2 }}>✓ Bebas Shading & Puncak Injeksi Daya</div>
           </div>
 
-          <div style={{ background: "#ffffff", border: "1px solid #e2e8f0", borderRadius: 3, padding: "5px 7px" }}>
+          <div style={{ background: "#ffffff", border: "1px solid #e2e8f0", borderRadius: 3, padding: "4px 6px" }}>
             <div style={{ fontWeight: 800, color: "#6366f1", display: "flex", justifyContent: "space-between" }}>
-              <span>🌙 MALAM (24:00 WIB - Nokturnal & Standby)</span>
-              <span>Elevasi -78.0° · Nadir</span>
+              <span>🌙 Evaluasi Kondisi Malam</span>
+              <span style={{ color: "#6366f1" }}>✓ Standby Aman</span>
             </div>
-            <div style={{ color: "#475569", marginTop: 2, lineHeight: 1.35 }}>
+            <div style={{ color: "#475569", marginTop: 2, lineHeight: 1.3 }}>
               Elevasi surya di bawah horizon (-78°). Irradiansi 0 W/m². Inverter string dalam status Standby Isolation (IEC 62109) untuk mencegah arus balik. Sistem penerangan perimeter aktif (&lt; 50W).
             </div>
-            <div style={{ color: "#6366f1", fontWeight: 700, marginTop: 2 }}>🌙 Mode Standby Aman & Siap Operasi Fajar</div>
           </div>
         </div>
       </div>
@@ -1543,12 +1628,12 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
       </div>
 
       {/* CAD Title Block */}
-      {renderCadTitleBlock(3, "DETAIL TATA LETAK MODUL PV 2D & VISUALISASI 3D SIANG-MALAM", "SOLARAPP-DED-PV-003")}
+      {renderCadTitleBlock(3, "DETAIL TATA LETAK MODUL PV 2D & VISUALISASI 3D DUA LAYER", "SOLARAPP-DED-PV-003")}
 
       {/* Sheet Footer */}
       <div style={{ display: "flex", justifyContent: "space-between", fontSize: 8, color: "#64748b", borderTop: "1px solid #e2e8f0", paddingTop: 5, marginTop: 6 }}>
         <span>SOLARAPP · DOKUMEN GAMBAR TEKNIS DED</span>
-        <span>LEMBAR 3 DARI 3 (2D & 3D LAYOUT)</span>
+        <span>LEMBAR 3 DARI 3 (2D & 3D DUAL-LAYER)</span>
       </div>
     </div>
   );
@@ -1576,7 +1661,7 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
             {isId ? "Laporan Rekayasa & Estimasi Produksi PLTS" : "PV Engineering & Energy Yield Report"}
           </h1>
           <p style={{ margin: 0, color: "var(--muted, #93a69a)", fontSize: 13 }}>
-            Dokumen 3 Halaman A4: Hal 1 Ringkasan Eksekutif, Hal 2 Geolocation & Shading, Hal 3 Detail Layout 2D CAD & 3D Tiga Waktu (Pagi, Siang, Sore).
+            Dokumen 3 Halaman A4: Hal 1 Ringkasan Eksekutif, Hal 2 Geolocation & Shading, Hal 3 Detail Layout 2D CAD & 3D Dua Layer (Siang & Malam).
           </p>
         </div>
 
@@ -2213,7 +2298,7 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
             {/* Modal Page 3 */}
             <div id="modal-page-3" style={{ width: "100%", maxWidth: 840, display: "flex", flexDirection: "column", alignItems: "center" }}>
               <div style={{ color: "#38bdf8", fontSize: 11, fontWeight: 700, marginBottom: 8, alignSelf: "flex-start" }}>
-                HALAMAN 3: DETAIL TATA LETAK MODUL PV 2D & VISUALISASI 3D TIGA WAKTU (A4)
+                HALAMAN 3: DETAIL TATA LETAK MODUL PV 2D & VISUALISASI 3D DUA LAYER (SIANG & MALAM) (A4)
               </div>
               <div className="a4-page-sheet" style={{ width: "100%", boxSizing: "border-box" }}>
                 {renderPage3()}
