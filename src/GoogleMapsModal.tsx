@@ -40,13 +40,26 @@ const DEFAULT_API_KEY = "AIzaSyC6TAjg7EBuCmkaWRwl-ih0PQ_Be07rc3o";
 
 // Presets kawasan industri terkemuka di Indonesia (lokasi atap pabrik PLTS atap)
 const INDUSTRIAL_PRESETS = [
-  { name: "GIIC Cikarang", lat: -6.3685, lng: 107.1985 },
-  { name: "KIIC Karawang", lat: -6.3475, lng: 107.2798 },
-  { name: "MM2100 Cibitung", lat: -6.2890, lng: 107.0980 },
-  { name: "Suryacipta", lat: -6.3980, lng: 107.3510 },
-  { name: "Krakatau Cilegon", lat: -6.0125, lng: 106.0235 },
-  { name: "SIER Surabaya", lat: -7.3320, lng: 112.7560 },
+  { name: "GIIC Cikarang (Kota Deltamas)", region: "Cikarang Pusat, Bekasi", lat: -6.3685, lng: 107.1985 },
+  { name: "KIIC Karawang (Kawasan Industri)", region: "Telukjambe Timur, Karawang", lat: -6.3475, lng: 107.2798 },
+  { name: "MM2100 Cibitung", region: "Cikarang Barat, Bekasi", lat: -6.2890, lng: 107.0980 },
+  { name: "Suryacipta City of Industry", region: "Ciampel, Karawang", lat: -6.3980, lng: 107.3510 },
+  { name: "Kawasan Industri Jababeka 1-7", region: "Cikarang Utara, Bekasi", lat: -6.2950, lng: 107.1550 },
+  { name: "Krakatau Industrial Estate Cilegon", region: "Cilegon, Banten", lat: -6.0125, lng: 106.0235 },
+  { name: "Kendal Industrial Park (KIK)", region: "Kendal, Jawa Tengah", lat: -6.9180, lng: 110.2240 },
+  { name: "SIER Surabaya Industrial Estate", region: "Rungkut, Surabaya", lat: -7.3320, lng: 112.7560 },
+  { name: "PIER Pasuruan Industrial Estate", region: "Rembang, Pasuruan", lat: -7.6320, lng: 112.8750 },
+  { name: "Kawasan Industri Batamindo", region: "Mukakuning, Batam", lat: 1.0850, lng: 104.0450 },
 ];
+
+export interface SearchSuggestion {
+  id: string;
+  title: string;
+  subtitle: string;
+  lat: number;
+  lng: number;
+  source: "preset" | "google" | "osm";
+}
 
 export default function GoogleMapsModal({
   isOpen,
@@ -57,6 +70,14 @@ export default function GoogleMapsModal({
 }: GoogleMapsModalProps) {
   const mapRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const searchContainerRef = useRef<HTMLDivElement>(null);
+
+  const [searchQuery, setSearchQuery] = useState("");
+  const [suggestions, setSuggestions] = useState<SearchSuggestion[]>([]);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const [isSearching, setIsSearching] = useState(false);
+  const [selectedIndex, setSelectedIndex] = useState(-1);
+  const searchAbortRef = useRef<AbortController | null>(null);
 
   const [mapInstance, setMapInstance] = useState<any>(null);
   const [polygon, setPolygon] = useState<any>(null);
@@ -306,6 +327,181 @@ export default function GoogleMapsModal({
     } else {
       setComputedAreaM2(Math.round(widthM * heightM));
     }
+  }
+
+
+  // Click outside search container to close recommendations dropdown
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (searchContainerRef.current && !searchContainerRef.current.contains(e.target as Node)) {
+        setShowSuggestions(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  // Debounced search-as-you-type autocomplete recommendation
+  useEffect(() => {
+    const q = searchQuery.trim();
+    if (q.length < 2) {
+      setSuggestions([]);
+      setShowSuggestions(false);
+      setIsSearching(false);
+      return;
+    }
+
+    if (searchAbortRef.current) {
+      searchAbortRef.current.abort();
+    }
+    const controller = new AbortController();
+    searchAbortRef.current = controller;
+
+    setIsSearching(true);
+    const timer = setTimeout(async () => {
+      try {
+        const matches: SearchSuggestion[] = [];
+        const cleanQ = q.toLowerCase();
+
+        // 1. Presets match
+        for (const p of INDUSTRIAL_PRESETS) {
+          if (p.name.toLowerCase().includes(cleanQ) || p.region.toLowerCase().includes(cleanQ)) {
+            matches.push({
+              id: `preset-${p.name}`,
+              title: p.name,
+              subtitle: `${p.region} · Kawasan Industri`,
+              lat: p.lat,
+              lng: p.lng,
+              source: "preset",
+            });
+          }
+        }
+
+        // 2. OpenStreetMap Nominatim Search (Indonesian coverage: cities, kecamatan, kelurahan, roads)
+        const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&format=json&countrycodes=id&addressdetails=1&limit=8`;
+        const res = await fetch(url, {
+          signal: controller.signal,
+          headers: { "Accept-Language": "id,en" },
+        });
+
+        if (res.ok) {
+          const data = await res.json();
+          if (Array.isArray(data)) {
+            for (const item of data) {
+              const lat = parseFloat(item.lat);
+              const lng = parseFloat(item.lon);
+              if (!isNaN(lat) && !isNaN(lng)) {
+                const parts = (item.display_name || "").split(", ");
+                const title = parts.slice(0, 2).join(", ");
+                const subtitle = parts.slice(2).join(", ");
+                const isDup = matches.some(m => Math.abs(m.lat - lat) < 0.005 && Math.abs(m.lng - lng) < 0.005);
+                if (!isDup) {
+                  matches.push({
+                    id: `osm-${item.place_id}`,
+                    title: title || item.name || q,
+                    subtitle: subtitle || "Indonesia",
+                    lat,
+                    lng,
+                    source: "osm",
+                  });
+                }
+              }
+            }
+          }
+        }
+
+        setSuggestions(matches.slice(0, 8));
+        setShowSuggestions(matches.length > 0);
+        setSelectedIndex(-1);
+      } catch (err: any) {
+        if (err.name !== "AbortError") {
+          console.warn("Location suggestion fetch warning:", err);
+        }
+      } finally {
+        setIsSearching(false);
+      }
+    }, 250);
+
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [searchQuery]);
+
+  function handleSelectSuggestion(item: SearchSuggestion) {
+    const win = window as any;
+    if (mapInstance && win.google?.maps) {
+      const pos = new win.google.maps.LatLng(item.lat, item.lng);
+      mapInstance.panTo(pos);
+      mapInstance.setZoom(19);
+      setCenterCoords({ lat: item.lat, lng: item.lng });
+      createOrUpdatePolygon(mapInstance, { lat: item.lat, lng: item.lng }, widthM, heightM, rotationAngle);
+    }
+    setSearchQuery(item.title);
+    setSearchAddress(`${item.title}, ${item.subtitle}`);
+    setShowSuggestions(false);
+    setSolarInsights(null);
+    setSolarStatusMsg("");
+  }
+
+  function handleSearchSubmit() {
+    if (selectedIndex >= 0 && suggestions[selectedIndex]) {
+      handleSelectSuggestion(suggestions[selectedIndex]);
+      return;
+    }
+    if (suggestions.length > 0) {
+      handleSelectSuggestion(suggestions[0]);
+      return;
+    }
+
+    const q = searchQuery.trim();
+    if (!q) return;
+
+    setIsSearching(true);
+    fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&format=json&countrycodes=id&limit=1`)
+      .then(res => res.json())
+      .then(data => {
+        if (Array.isArray(data) && data.length > 0) {
+          const item = data[0];
+          const lat = parseFloat(item.lat);
+          const lng = parseFloat(item.lon);
+          if (!isNaN(lat) && !isNaN(lng)) {
+            handleSelectSuggestion({
+              id: `direct-${item.place_id}`,
+              title: item.display_name.split(",")[0] || q,
+              subtitle: item.display_name,
+              lat,
+              lng,
+              source: "osm",
+            });
+          }
+        }
+      })
+      .catch(e => console.warn("Direct search error:", e))
+      .finally(() => setIsSearching(false));
+  }
+
+  function handleKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setSelectedIndex(prev => Math.min(suggestions.length - 1, prev + 1));
+      setShowSuggestions(true);
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setSelectedIndex(prev => Math.max(0, prev - 1));
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      handleSearchSubmit();
+    } else if (e.key === "Escape") {
+      setShowSuggestions(false);
+    }
+  }
+
+  function handleClearSearch() {
+    setSearchQuery("");
+    setSuggestions([]);
+    setShowSuggestions(false);
+    if (searchInputRef.current) searchInputRef.current.focus();
   }
 
   function createOrUpdatePolygon(
@@ -704,33 +900,140 @@ export default function GoogleMapsModal({
             flexWrap: "wrap",
           }}
         >
-          {/* Autocomplete Input */}
+          {/* Autocomplete Input with Google Maps style recommendation dropdown */}
           <div
+            ref={searchContainerRef}
             style={{
-              flex: "1 1 240px",
-              display: "flex",
-              alignItems: "center",
-              gap: 8,
-              background: "#0c120e",
-              border: "1px solid #2a3d2e",
-              borderRadius: 6,
-              padding: "6px 12px",
+              position: "relative",
+              flex: "1 1 280px",
+              minWidth: 260,
+              maxWidth: 480,
             }}
           >
-            <Search size={15} style={{ color: "#7a8a7f" }} />
-            <input
-              ref={searchInputRef}
-              type="text"
-              placeholder="Cari pabrik / kawasan (cth: GIIC Cikarang, KIIC Karawang)..."
+            <div
               style={{
-                background: "transparent",
-                border: "none",
-                outline: "none",
-                color: "#edf5ef",
-                fontSize: 12,
-                width: "100%",
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                background: "#0c120e",
+                border: showSuggestions && suggestions.length > 0 ? "1px solid var(--green, #b8f36b)" : "1px solid #2a3d2e",
+                borderRadius: showSuggestions && suggestions.length > 0 ? "6px 6px 0 0" : 6,
+                padding: "6px 12px",
+                transition: "border-color 0.15s ease",
               }}
-            />
+            >
+              {isSearching ? (
+                <RefreshCw size={14} className="animate-spin" style={{ color: "var(--green, #b8f36b)" }} />
+              ) : (
+                <Search size={14} style={{ color: "#7a8a7f" }} />
+              )}
+              <input
+                ref={searchInputRef}
+                type="text"
+                value={searchQuery}
+                onChange={e => setSearchQuery(e.target.value)}
+                onKeyDown={handleKeyDown}
+                onFocus={() => {
+                  if (suggestions.length > 0) setShowSuggestions(true);
+                }}
+                placeholder="Cari lokasi / kecamatan / kawasan (mis. Beji, Cikarang, Karawang)..."
+                style={{
+                  background: "transparent",
+                  border: "none",
+                  outline: "none",
+                  color: "#edf5ef",
+                  fontSize: 12,
+                  width: "100%",
+                }}
+              />
+              {searchQuery && (
+                <button
+                  type="button"
+                  onClick={handleClearSearch}
+                  className="icon-button"
+                  style={{
+                    padding: 2,
+                    width: 20,
+                    height: 20,
+                    border: "none",
+                    background: "transparent",
+                    color: "#839589",
+                  }}
+                  title="Hapus pencarian"
+                >
+                  <X size={13} />
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={handleSearchSubmit}
+                style={{
+                  background: "#1c2b1e",
+                  border: "1px solid #2e4431",
+                  borderRadius: 4,
+                  padding: "3px 8px",
+                  fontSize: 11,
+                  color: "#b8f36b",
+                  fontWeight: 600,
+                  cursor: "pointer",
+                  whiteSpace: "nowrap",
+                }}
+                title="Cari lokasi sekarang"
+              >
+                Cari
+              </button>
+            </div>
+
+            {/* Suggestions Popup Menu */}
+            {showSuggestions && suggestions.length > 0 && (
+              <div className="search-suggestions-dropdown">
+                <div
+                  style={{
+                    padding: "6px 12px",
+                    fontSize: 10,
+                    color: "#7e9284",
+                    fontWeight: 700,
+                    textTransform: "uppercase",
+                    letterSpacing: 0.5,
+                    borderBottom: "1px solid #1f2d22",
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                  }}
+                >
+                  <span>Rekomendasi Lokasi</span>
+                  <span style={{ fontSize: 9, color: "#5a6b5f" }}>Gunakan ↑ ↓ dan Enter</span>
+                </div>
+                {suggestions.map((item, index) => {
+                  const isSelected = index === selectedIndex;
+                  return (
+                    <button
+                      key={item.id}
+                      type="button"
+                      className={`search-suggestion-item ${isSelected ? "is-selected" : ""}`}
+                      onClick={() => handleSelectSuggestion(item)}
+                      onMouseEnter={() => setSelectedIndex(index)}
+                    >
+                      <MapPin
+                        size={15}
+                        style={{
+                          color: item.source === "preset" ? "#b8f36b" : "#89b98d",
+                          marginTop: 2,
+                          flexShrink: 0,
+                        }}
+                      />
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div className="search-suggestion-title">{item.title}</div>
+                        <div className="search-suggestion-subtitle">{item.subtitle}</div>
+                      </div>
+                      <span className="search-suggestion-badge">
+                        {item.source === "preset" ? "Kawasan Industri" : "Lokasi"}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
           </div>
 
           {/* Shape Presets */}

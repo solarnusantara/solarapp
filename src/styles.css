@@ -129,3 +129,99 @@ body.ts-studio-fullscreen .solar-studio-app .main-area { height: 100vh !importan
 .ts-app-switch-curtain.is-active {
   opacity: 1;
 }
+
+
+/* ────── Google Places Autocomplete Fixes ────── */
+.pac-container {
+  z-index: 1000000 !important;
+  background-color: #151f18 !important;
+  border: 1px solid #2e4432 !important;
+  border-radius: 8px !important;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.6) !important;
+  font-family: inherit !important;
+  margin-top: 4px !important;
+}
+.pac-item {
+  color: #d1ded4 !important;
+  border-top: 1px solid #202e23 !important;
+  padding: 8px 12px !important;
+  font-size: 12px !important;
+  cursor: pointer !important;
+}
+.pac-item:hover, .pac-item-selected {
+  background-color: #223525 !important;
+}
+.pac-item-query {
+  color: #b8f36b !important;
+  font-size: 13px !important;
+}
+.pac-matched {
+  color: #b8f36b !important;
+  font-weight: 700 !important;
+}
+.pac-icon {
+  filter: invert(1) hue-rotate(90deg) !important;
+}
+
+/* ────── Custom Floating Search Suggestions Dropdown ────── */
+.search-suggestions-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  min-width: 320px;
+  max-height: 380px;
+  overflow-y: auto;
+  background: #141d16;
+  border: 1px solid #2d4231;
+  border-top: none;
+  border-radius: 0 0 8px 8px;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.65);
+  z-index: 1000005;
+  padding: 4px 0;
+}
+.search-suggestion-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 9px 12px;
+  cursor: pointer;
+  border-bottom: 1px solid #1c291f;
+  transition: background 0.15s ease;
+  text-align: left;
+  background: transparent;
+  width: 100%;
+  border-left: none;
+  border-right: none;
+  border-top: none;
+  color: inherit;
+}
+.search-suggestion-item:last-child {
+  border-bottom: none;
+}
+.search-suggestion-item:hover,
+.search-suggestion-item.is-selected {
+  background: #1f3022;
+}
+.search-suggestion-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: #edf5ef;
+}
+.search-suggestion-subtitle {
+  font-size: 11px;
+  color: #8c9e91;
+  margin-top: 2px;
+  line-height: 1.35;
+}
+.search-suggestion-badge {
+  font-size: 9px;
+  padding: 2px 5px;
+  border-radius: 4px;
+  background: #253928;
+  color: #b8f36b;
+  font-weight: 600;
+  text-transform: uppercase;
+  margin-left: auto;
+  white-space: nowrap;
+}
