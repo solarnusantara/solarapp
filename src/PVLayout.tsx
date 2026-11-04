@@ -1,6 +1,6 @@
 import { getProjectDefaultLayout } from "./defaultProjectsData";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Download, Grid2X2, MousePointer2, RotateCcw, Trash2, WandSparkles, ImagePlus, X, Globe, Database } from "lucide-react";
+import { Download, Grid2X2, MousePointer2, RotateCcw, Trash2, WandSparkles, ImagePlus, X, Globe, Database, MapPin } from "lucide-react";
 import GoogleMapsModal from "./GoogleMapsModal";
 import * as api from "./api";
 
@@ -532,8 +532,78 @@ export default function PVLayout({ lang, userId, projectId = null, projectName =
           </div>
         )}
         <div className="pv-section-title"><ImagePlus size={16} /><strong>{copy.satellite}</strong></div>
-        <button className="primary-button" type="button" style={{ width: "100%", marginBottom: 8, background: "linear-gradient(135deg, #1b3821 0%, #112617 100%)", border: "1px solid #3d6e44" }} onClick={() => setIsMapsModalOpen(true)}>
-          <Globe size={15} /> {id ? "🛰️ Cari di Peta Satelit Google" : "🛰️ Scan with Google Maps"}
+
+        {site?.coordinates && (
+          <div style={{
+            background: "#131d16",
+            border: "1px solid #28422d",
+            borderRadius: 8,
+            padding: "10px 12px",
+            marginBottom: 10,
+            fontSize: 11,
+            color: "#d0ded4",
+            display: "flex",
+            flexDirection: "column",
+            gap: 6,
+          }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 5, color: "var(--green, #b8f36b)", fontWeight: 700, fontSize: 11 }}>
+                <MapPin size={13} /> {id ? "Geolokasi Terhubung" : "Linked Geolocation"}
+              </span>
+              {site.rotationDeg !== undefined && (
+                <span style={{ fontSize: 10, color: "#93a69a", background: "#1c2a1f", padding: "1px 6px", borderRadius: 4, border: "1px solid #2e4734" }}>
+                  ↻ {site.rotationDeg}°
+                </span>
+              )}
+            </div>
+
+            {site.address && (
+              <div style={{ fontSize: 11, fontWeight: 600, color: "#edf5ef", lineHeight: 1.4, wordBreak: "break-word" }}>
+                📍 {site.address}
+              </div>
+            )}
+
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", color: "#93a69a", fontSize: 10, borderTop: "1px solid #1f2e22", paddingTop: 5 }}>
+              <span>Koordinat (GPS):</span>
+              <strong style={{ color: "var(--green, #b8f36b)", fontFamily: "monospace" }}>
+                {site.coordinates.lat.toFixed(5)}, {site.coordinates.lng.toFixed(5)}
+              </strong>
+            </div>
+
+            {site.pitchDegrees !== undefined && (
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", color: "#93a69a", fontSize: 10 }}>
+                <span>Google Solar:</span>
+                <strong style={{ color: "#edf5ef" }}>
+                  Pitch {site.pitchDegrees}° · Azimuth {site.azimuthDegrees}°
+                </strong>
+              </div>
+            )}
+          </div>
+        )}
+
+        <button
+          type="button"
+          style={{
+            width: "100%",
+            marginBottom: 8,
+            background: "linear-gradient(135deg, #1e3825 0%, #132418 100%)",
+            border: "1px solid #3d6e44",
+            color: "#edf5ef",
+            borderRadius: 7,
+            padding: "10px 14px",
+            fontSize: 12,
+            fontWeight: 700,
+            display: "inline-flex",
+            justifyContent: "center",
+            alignItems: "center",
+            gap: 8,
+            cursor: "pointer",
+            boxShadow: "0 2px 6px rgba(0,0,0,0.3)",
+          }}
+          onClick={() => setIsMapsModalOpen(true)}
+        >
+          <Globe size={16} style={{ color: "var(--green, #b8f36b)" }} />
+          <span style={{ color: "#edf5ef", fontWeight: 700 }}>{id ? "🛰️ Cari di Peta Satelit Google" : "🛰️ Scan with Google Maps"}</span>
         </button>
         <input ref={imageInputRef} type="file" accept="image/*" style={{ display: "none" }} onChange={e => { handleBackgroundUpload(e.target.files?.[0]); e.currentTarget.value = ""; }} />
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
@@ -555,7 +625,24 @@ export default function PVLayout({ lang, userId, projectId = null, projectName =
         <div className="pv-selected-box"><span>{copy.selected}</span><strong>{selected ? `PV-${String(panels.findIndex(p => p.id === selectedId) + 1).padStart(3, "0")}` : "—"}</strong><button className="secondary-button" disabled={!selected} onClick={deleteSelected}><Trash2 size={14} />{copy.delete}</button></div>
       </aside>
       <div className="panel pv-canvas-panel">
-        <div className="pv-canvas-toolbar"><div><MousePointer2 size={15} /><strong>{copy.canvas}</strong><span className="pv-units">{copy.snap}</span></div><span>{settings.areaWidth.toLocaleString()} × {settings.areaHeight.toLocaleString()} mm</span></div>
+        <div className="pv-canvas-toolbar">
+          <div>
+            <MousePointer2 size={15} />
+            <strong>{copy.canvas}</strong>
+            <span className="pv-units">{copy.snap}</span>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            {site?.coordinates && (
+              <span style={{ fontSize: 10, color: "var(--green, #b8f36b)", display: "inline-flex", alignItems: "center", gap: 4, background: "#152419", padding: "2px 8px", borderRadius: 4, border: "1px solid #2e4a35" }}>
+                <MapPin size={11} />
+                <span style={{ maxWidth: 240, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {site.address || `${site.coordinates.lat.toFixed(4)}, ${site.coordinates.lng.toFixed(4)}`}
+                </span>
+              </span>
+            )}
+            <span>{settings.areaWidth.toLocaleString()} × {settings.areaHeight.toLocaleString()} mm</span>
+          </div>
+        </div>
         <div className="pv-canvas-wrap"><svg className="pv-canvas" viewBox="0 0 1000 600" role="img" aria-label="Interactive photovoltaic panel layout canvas" onPointerDown={canvasPointerDown} onPointerMove={canvasPointerMove} onPointerUp={finishDrag} onPointerLeave={finishDrag}>
           <defs>
             <pattern id="pv-grid-small" width="20" height="20" patternUnits="userSpaceOnUse"><path d="M 20 0 L 0 0 0 20" fill="none" stroke="#25322b" strokeWidth="0.7" /></pattern>
