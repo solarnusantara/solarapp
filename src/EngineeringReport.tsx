@@ -1115,34 +1115,40 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
 
             <div style={{ display: "grid", gridTemplateColumns: "1.5fr 1fr", gap: 10, alignItems: "stretch" }}>
               {/* Satellite Map with High-Res Satellite Imagery & Boundary Overlay */}
-              <div style={{ position: "relative", height: 265, borderRadius: 4, overflow: "hidden", border: "1px solid #0f172a", background: "#0b1320" }}>
+              <div style={{ position: "relative", height: 265, borderRadius: 4, overflow: "hidden", border: "1px solid #0f172a", background: "#080f1a" }}>
+                {/* Fallback dark raster grid (behind satellite image) */}
+                <div
+                  style={{
+                    position: "absolute",
+                    inset: 0,
+                    backgroundImage: "radial-gradient(#334155 1.5px, transparent 1.5px), radial-gradient(#1e293b 1.5px, #080f1a 1.5px)",
+                    backgroundSize: "16px 16px",
+                    backgroundPosition: "0 0, 8px 8px",
+                    zIndex: 0,
+                    pointerEvents: "none",
+                  }}
+                />
+
                 <img
                   src={satelliteImgSrc}
                   alt="Citra Satelit Lokasi PLTS"
                   crossOrigin="anonymous"
                   style={{
+                    position: "absolute",
+                    inset: 0,
                     width: "100%",
                     height: "100%",
                     objectFit: "cover",
                     display: "block",
+                    zIndex: 1,
                   }}
                   onError={(e) => {
                     const target = e.currentTarget as HTMLImageElement;
                     if (target.src !== esriSatelliteUrl) {
                       target.src = esriSatelliteUrl;
+                    } else {
+                      target.style.display = "none";
                     }
-                  }}
-                />
-                {/* Fallback styling in case image is loading or offline */}
-                <div
-                  style={{
-                    position: "absolute",
-                    inset: 0,
-                    backgroundImage: "radial-gradient(#334155 1.5px, transparent 1.5px), radial-gradient(#1e293b 1.5px, #0f172a 1.5px)",
-                    backgroundSize: "16px 16px",
-                    backgroundPosition: "0 0, 8px 8px",
-                    zIndex: 0,
-                    pointerEvents: "none",
                   }}
                 />
 
@@ -1532,8 +1538,8 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
         </div>
 
         {/* LAYER 1 (TOP): SIANG (12:00 WIB) */}
-        <div style={{ marginBottom: 5 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: "#fef3c7", border: "1px solid #fcd34d", borderRadius: "3px 3px 0 0", padding: "2.5px 7px" }}>
+        <div style={{ marginBottom: 6 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: "#fef3c7", border: "1px solid #fcd34d", borderRadius: "3px 3px 0 0", padding: "3px 7px" }}>
             <span style={{ fontSize: 8.5, fontWeight: 800, color: "#b45309", display: "flex", alignItems: "center", gap: 4 }}>
               ☀️ 1. LAYER ATAS: KONDISI SIANG (12:00 WIB - Puncak Surya & Radiasi)
             </span>
@@ -1541,7 +1547,7 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
               Elevasi: 78.1° (Zenit) · Azimuth: 18.5° · Klirens Bayangan &lt; 0.5m · Bebas Shading
             </span>
           </div>
-          <div style={{ height: 135, width: "100%", borderRadius: "0 0 3px 3px", overflow: "hidden", border: "1.5px solid #0f172a", borderTop: "none", background: "#080f1a" }}>
+          <div style={{ height: 215, width: "100%", borderRadius: "0 0 3px 3px", overflow: "hidden", border: "1.5px solid #0f172a", borderTop: "none", background: "#080f1a" }}>
             <Report3DViewport
               panels={panels}
               obstacles={obstacles}
@@ -1553,7 +1559,7 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
               siteCorners={siteCorners}
               theme="dark"
               interactive={true}
-              height={135}
+              height={215}
               defaultHour={12.0}
               coords={coords}
               hideTimeControls={true}
@@ -1563,8 +1569,8 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
         </div>
 
         {/* LAYER 2 (BOTTOM): MALAM (24:00 WIB) */}
-        <div style={{ marginBottom: 5 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: "#e0e7ff", border: "1px solid #c7d2fe", borderRadius: "3px 3px 0 0", padding: "2.5px 7px" }}>
+        <div style={{ marginBottom: 6 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: "#e0e7ff", border: "1px solid #c7d2fe", borderRadius: "3px 3px 0 0", padding: "3px 7px" }}>
             <span style={{ fontSize: 8.5, fontWeight: 800, color: "#4338ca", display: "flex", alignItems: "center", gap: 4 }}>
               🌙 2. LAYER BAWAH: KONDISI MALAM (24:00 WIB - Simulasi Nokturnal & Standby)
             </span>
@@ -1572,7 +1578,7 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
               Elevasi: -78.0° (Nadir) · Irradiansi: 0 W/m² · Standby Isolation (IEC 62109) · Beacon Aktif
             </span>
           </div>
-          <div style={{ height: 135, width: "100%", borderRadius: "0 0 3px 3px", overflow: "hidden", border: "1.5px solid #0f172a", borderTop: "none", background: "#080f1a" }}>
+          <div style={{ height: 215, width: "100%", borderRadius: "0 0 3px 3px", overflow: "hidden", border: "1.5px solid #0f172a", borderTop: "none", background: "#080f1a" }}>
             <Report3DViewport
               panels={panels}
               obstacles={obstacles}
@@ -1584,7 +1590,7 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
               siteCorners={siteCorners}
               theme="dark"
               interactive={true}
-              height={135}
+              height={215}
               defaultHour={24.0}
               coords={coords}
               hideTimeControls={true}
