@@ -6,7 +6,7 @@ import { RotateCcw, RefreshCw, Sun, Mountain } from "lucide-react";
 
 type Panel = { id: number; x: number; y: number; w: number; h: number };
 type Obstacle = { id: number; x: number; y: number; w: number; h: number; label?: string; heightM?: number };
-type Site = { coordinates: { lat: number; lng: number }; address?: string };
+type Site = { coordinates: { lat: number; lng: number }; address?: string; polygonCorners?: Array<{ x: number; y: number }> };
 type DemGrid = { rows: number; cols: number; elevations: number[]; min: number; max: number; source: string; fetchedAt: string };
 type SavedLayout = {
   projectId?: string | null;
@@ -188,6 +188,19 @@ export default function PVLayout3D({ lang = "en", userId = "anonymous", projectI
       put(legIM, i * 2, -w * 0.35, -supportHeight / 2 - 0.06, 0, 0.055, supportHeight, 0.055); put(legIM, i * 2 + 1, w * 0.35, -supportHeight / 2 - 0.06, 0, 0.055, supportHeight, 0.055);
     });
     for (const im of [panelIM, railIM, legIM]) { im.instanceMatrix.needsUpdate = true; im.computeBoundingSphere(); scene.add(im); }
+    if (site?.polygonCorners && Array.isArray(site.polygonCorners) && site.polygonCorners.length >= 3) {
+      const linePts = site.polygonCorners.map(pt => {
+        const lx = (pt.x / 1000) - centerX;
+        const lz = (pt.y / 1000) - centerZ;
+        const ly = surfaceY(lx, lz) + (mode.startsWith("roof-") ? 0.08 : 0.06);
+        return new THREE.Vector3(lx, ly, lz);
+      });
+      linePts.push(linePts[0].clone());
+      const lineGeom = new THREE.BufferGeometry().setFromPoints(linePts);
+      const lineMat = new THREE.LineBasicMaterial({ color: 0xb8f36b, linewidth: 2 });
+      const borderLine = new THREE.Line(lineGeom, lineMat);
+      scene.add(borderLine);
+    }
     obstacles.forEach(o=>{const w=Math.max(0.1,(Number(o.w)||1000)/1000),h=Math.max(0.1,(Number(o.h)||1000)/1000),x=(Number(o.x)||0)/1000-centerX+w/2,z=(Number(o.y)||0)/1000-centerZ+h/2,height=Math.max(0.5,Number(o.heightM)||2.5);const mesh=new THREE.Mesh(new THREE.BoxGeometry(w,height,h),new THREE.MeshStandardMaterial({color:0xef4444,transparent:true,opacity:0.82}));mesh.position.set(x,surfaceY(x,z)+height/2,z);mesh.castShadow=true;mesh.receiveShadow=true;scene.add(mesh);});
     if(!panels.length){const label=document.createElement("div");label.textContent=id?"Belum ada panel tersimpan — buat layout di PV Layout 2D lalu klik Muat Ulang.":"No saved panels — create a layout in PV Layout 2D, then click Reload.";label.style.cssText="position:absolute;left:16px;bottom:16px;padding:10px 12px;background:#111827dd;color:#e5e7eb;border:1px solid #334155;border-radius:8px;font:12px system-ui;pointer-events:none";host.appendChild(label);}
     const controls=new OrbitControls(camera,renderer.domElement);controls.enableDamping=true;controls.target.set(0,mode.startsWith("roof-")?baseRoofY:0,0);controls.maxPolarAngle=Math.PI*0.49;controls.minDistance=2;controls.maxDistance=viewDist*3;controls.update();

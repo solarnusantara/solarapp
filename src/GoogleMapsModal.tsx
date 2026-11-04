@@ -27,6 +27,7 @@ interface GoogleMapsModalProps {
     coordinates: { lat: number; lng: number };
     address: string;
     polygonPoints?: Array<{ lat: number; lng: number }>;
+    polygonCornersMm?: Array<{ x: number; y: number }>;
     rotationDeg?: number;
     pitchDegrees?: number;
     azimuthDegrees?: number;
@@ -34,6 +35,7 @@ interface GoogleMapsModalProps {
   }) => void;
   initialWidthMm?: number;
   initialHeightMm?: number;
+  initialPolygonPoints?: Array<{ lat: number; lng: number }>;
 }
 
 const DEFAULT_API_KEY = "AIzaSyC6TAjg7EBuCmkaWRwl-ih0PQ_Be07rc3o";
@@ -67,6 +69,7 @@ export default function GoogleMapsModal({
   onApply,
   initialWidthMm = 24000,
   initialHeightMm = 12000,
+  initialPolygonPoints,
 }: GoogleMapsModalProps) {
   const mapRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -194,8 +197,12 @@ export default function GoogleMapsModal({
 
     setMapInstance(map);
 
-    // Initial 4-point polygon setup
-    createOrUpdatePolygon(map, { lat: defaultLat, lng: defaultLng }, widthM, heightM, 0);
+    // Initial polygon setup: restore previous polygon if available, else setup default box
+    if (initialPolygonPoints && initialPolygonPoints.length >= 3) {
+      createOrUpdatePolygonFromPoints(map, initialPolygonPoints);
+    } else {
+      createOrUpdatePolygon(map, { lat: defaultLat, lng: defaultLng }, widthM, heightM, 0);
+    }
 
     // Setup Places Autocomplete
     if (searchInputRef.current && win.google.maps.places?.Autocomplete) {
@@ -548,6 +555,46 @@ export default function GoogleMapsModal({
     }
   }
 
+  function createOrUpdatePolygonFromPoints(map: any, points: Array<{ lat: number; lng: number }>) {
+    const win = window as any;
+    if (!win.google?.maps || !points || points.length < 3) return;
+
+    let sumLat = 0, sumLng = 0;
+    points.forEach(p => { sumLat += p.lat; sumLng += p.lng; });
+    const center = { lat: sumLat / points.length, lng: sumLng / points.length };
+    setCenterCoords(center);
+
+    const coords = points.map(p => new win.google.maps.LatLng(p.lat, p.lng));
+
+    if (polygon) {
+      polygon.setPath(coords);
+      polygon.setMap(map);
+      updateMetricsFromPolygonPath(polygon);
+    } else {
+      const poly = new win.google.maps.Polygon({
+        paths: coords,
+        editable: true,
+        draggable: true,
+        strokeColor: "#b8f36b",
+        strokeOpacity: 0.95,
+        strokeWeight: 2,
+        fillColor: "#14221a",
+        fillOpacity: 0.35,
+        map: map,
+      });
+
+      const path = poly.getPath();
+      path.addListener("set_at", () => updateMetricsFromPolygonPath(poly));
+      path.addListener("insert_at", () => updateMetricsFromPolygonPath(poly));
+      path.addListener("remove_at", () => updateMetricsFromPolygonPath(poly));
+      poly.addListener("dragend", () => updateMetricsFromPolygonPath(poly));
+
+      setPolygon(poly);
+      updateMetricsFromPolygonPath(poly);
+    }
+    map.setCenter(center);
+  }
+
   /**
    * Rotate polygon vertices around its centroid by deltaDegrees
    */
@@ -714,6 +761,84 @@ export default function GoogleMapsModal({
     return pts;
   }
 
+  /**
+   * Computes polygon corners projected into local millimeter coordinates [0..widthMm, 0..heightMm].
+   * The coordinates are un-rotated by the polygon orientation so that the shape sits aligned
+   * with the 2D CAD canvas axes, with (0,0) as top-left of the bounding box.
+   */
+  function computeLocalCornersMm(): {
+    corners: Array<{ x: number; y: number }>;
+    widthMm: number;
+    heightMm: number;
+  } {
+    if (!polygon) {
+      const w = Math.round(widthM * 1000);
+      const h = Math.round(heightM * 1000);
+      return {
+        corners: [
+          { x: 0, y: 0 },
+          { x: w, y: 0 },
+          { x: w, y: h },
+          { x: 0, y: h },
+        ],
+        widthMm: w,
+        heightMm: h,
+      };
+    }
+    const path = polygon.getPath();
+    const len = path.getLength();
+    if (len < 3) {
+      const w = Math.round(widthM * 1000);
+      const h = Math.round(heightM * 1000);
+      return {
+        corners: [
+          { x: 0, y: 0 },
+          { x: w, y: 0 },
+          { x: w, y: h },
+          { x: 0, y: h },
+        ],
+        widthMm: w,
+        heightMm: h,
+      };
+    }
+
+    const rad = (rotationAngle * Math.PI) / 180;
+    const cosA = Math.cos(rad);
+    const sinA = Math.sin(rad);
+    const cosLat = Math.cos((centerCoords.lat * Math.PI) / 180);
+
+    const localPoints: Array<{ x: number; y: number }> = [];
+    let minX = Infinity, maxX = -Infinity;
+    let minY = Infinity, maxY = -Infinity;
+
+    for (let i = 0; i < len; i++) {
+      const pt = path.getAt(i);
+      const dEast = (pt.lng() - centerCoords.lng) * 111111 * cosLat;
+      const dNorth = (pt.lat() - centerCoords.lat) * 111111;
+
+      // Inverse rotate to align with principal axis
+      const lx = dEast * cosA + dNorth * sinA;
+      const ly = -dEast * sinA + dNorth * cosA;
+
+      localPoints.push({ x: lx, y: ly });
+      if (lx < minX) minX = lx;
+      if (lx > maxX) maxX = lx;
+      if (ly < minY) minY = ly;
+      if (ly > maxY) maxY = ly;
+    }
+
+    const wMm = Math.max(1000, Math.round((maxX - minX) * 1000));
+    const hMm = Math.max(1000, Math.round((maxY - minY) * 1000));
+
+    // Map to canvas mm coordinates where (0,0) is top-left, X is right, Y is down
+    const corners = localPoints.map(p => ({
+      x: Math.round((p.x - minX) * 1000),
+      y: Math.round((maxY - p.y) * 1000),
+    }));
+
+    return { corners, widthMm: wMm, heightMm: hMm };
+  }
+
   async function handleApply() {
     setApplying(true);
     setErrorMsg("");
@@ -721,8 +846,11 @@ export default function GoogleMapsModal({
     try {
       const lat = centerCoords.lat;
       const lng = centerCoords.lng;
-      const wM = widthM;
-      const hM = heightM;
+      const local = computeLocalCornersMm();
+      const wMm = local.widthMm;
+      const hMm = local.heightMm;
+      const wM = wMm / 1000;
+      const hM = hMm / 1000;
 
       // Kalkulasi optimal zoom untuk Static Map (maks 1100px dari 1280px)
       const maxDim = Math.max(wM, hM);
@@ -770,12 +898,13 @@ export default function GoogleMapsModal({
       }
 
       onApply({
-        widthMm: Math.round(wM * 1000),
-        heightMm: Math.round(hM * 1000),
+        widthMm: wMm,
+        heightMm: hMm,
         imageSrc: croppedDataUrl,
         coordinates: { lat, lng },
         address: searchAddress || `Koordinat (${lat.toFixed(4)}, ${lng.toFixed(4)})`,
         polygonPoints: getCurrentPolygonPoints(),
+        polygonCornersMm: local.corners,
         rotationDeg: Math.round(rotationAngle),
         pitchDegrees: solarInsights?.pitchDegrees,
         azimuthDegrees: solarInsights?.azimuthDegrees,
@@ -792,13 +921,15 @@ export default function GoogleMapsModal({
   }
 
   function handleApplyDimensionsOnly() {
+    const local = computeLocalCornersMm();
     onApply({
-      widthMm: Math.round(widthM * 1000),
-      heightMm: Math.round(heightM * 1000),
+      widthMm: local.widthMm,
+      heightMm: local.heightMm,
       imageSrc: "",
       coordinates: centerCoords,
       address: searchAddress || `Koordinat (${centerCoords.lat.toFixed(4)}, ${centerCoords.lng.toFixed(4)})`,
       polygonPoints: getCurrentPolygonPoints(),
+      polygonCornersMm: local.corners,
       rotationDeg: Math.round(rotationAngle),
       pitchDegrees: solarInsights?.pitchDegrees,
       azimuthDegrees: solarInsights?.azimuthDegrees,

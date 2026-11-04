@@ -8,6 +8,16 @@ type Lang = "en" | "id";
 type Panel = { id: number; x: number; y: number; w: number; h: number };
 type SystemType = "Rooftop" | "Ground-mounted";
 type Obstacle = { id: number; x: number; y: number; w: number; h: number; label: string };
+type Site = {
+  coordinates: { lat: number; lng: number };
+  address: string;
+  polygonPoints?: Array<{ lat: number; lng: number }>;
+  polygonCorners?: Array<{ x: number; y: number }>;
+  rotationDeg?: number;
+  pitchDegrees?: number;
+  azimuthDegrees?: number;
+  googleSolarData?: any;
+};
 
 const STORAGE_KEY = "solar-apps-pv-layout-v1";
 const defaults = {
@@ -29,7 +39,103 @@ const defaults = {
 
 function storageKey(userId: string, projectId: string | null) { return `${STORAGE_KEY}:${userId}:${projectId ?? "unassigned"}`; }
 
-function loadSaved(userId: string, projectId: string | null): { settings: typeof defaults; panels: Panel[]; obstacles?: Obstacle[]; backgroundImage?: string; backgroundOpacity?: number; site?: { coordinates: { lat: number; lng: number }; address: string } } | null {
+/**
+ * Insets a polygon by setback distance. Works for convex quadrilaterals (trapezoids,
+ * parallelograms, rectangles) in screen coordinates (where Y grows downwards).
+ */
+function computeInsetPolygon(
+  corners: Array<{ x: number; y: number }>,
+  setback: number
+): Array<{ x: number; y: number }> {
+  if (!corners || corners.length < 3 || setback <= 0) return corners;
+  const n = corners.length;
+
+  let signedArea = 0;
+  for (let i = 0; i < n; i++) {
+    const j = (i + 1) % n;
+    signedArea += corners[i].x * corners[j].y - corners[j].x * corners[i].y;
+  }
+  const isClockwiseScreen = signedArea > 0;
+
+  type Line = { a: number; b: number; c: number };
+  const offsetLines: Line[] = [];
+
+  for (let i = 0; i < n; i++) {
+    const p1 = corners[i];
+    const p2 = corners[(i + 1) % n];
+    const dx = p2.x - p1.x;
+    const dy = p2.y - p1.y;
+    const len = Math.hypot(dx, dy);
+    if (len === 0) continue;
+
+    const nx = isClockwiseScreen ? -dy / len : dy / len;
+    const ny = isClockwiseScreen ? dx / len : -dx / len;
+
+    const px = p1.x + setback * nx;
+    const py = p1.y + setback * ny;
+
+    offsetLines.push({
+      a: nx,
+      b: ny,
+      c: -(nx * px + ny * py),
+    });
+  }
+
+  const insetVertices: Array<{ x: number; y: number }> = [];
+  const m = offsetLines.length;
+  for (let i = 0; i < m; i++) {
+    const l1 = offsetLines[(i - 1 + m) % m];
+    const l2 = offsetLines[i];
+    const det = l1.a * l2.b - l1.b * l2.a;
+    if (Math.abs(det) < 1e-6) {
+      insetVertices.push(corners[i]);
+    } else {
+      const x = (-l1.c * l2.b - l1.b * (-l2.c)) / det;
+      const y = (l1.a * (-l2.c) - (-l1.c) * l2.a) / det;
+      insetVertices.push({ x: Math.round(x), y: Math.round(y) });
+    }
+  }
+
+  return insetVertices;
+}
+
+/**
+ * Standard ray-casting point-in-polygon algorithm
+ */
+function isPointInPolygon(px: number, py: number, poly: Array<{ x: number; y: number }>): boolean {
+  let inside = false;
+  const n = poly.length;
+  for (let i = 0, j = n - 1; i < n; j = i++) {
+    const xi = poly[i].x, yi = poly[i].y;
+    const xj = poly[j].x, yj = poly[j].y;
+    const intersect = ((yi > py) !== (yj > py)) &&
+      (px < ((xj - xi) * (py - yi)) / (yj - yi) + xi);
+    if (intersect) inside = !inside;
+  }
+  return inside;
+}
+
+function isPanelInsidePolygon(
+  p: Pick<Panel, "x" | "y" | "w" | "h">,
+  poly: Array<{ x: number; y: number }>
+): boolean {
+  const corners = [
+    { x: p.x, y: p.y },
+    { x: p.x + p.w, y: p.y },
+    { x: p.x + p.w, y: p.y + p.h },
+    { x: p.x, y: p.y + p.h },
+  ];
+  return corners.every(c => isPointInPolygon(c.x, c.y, poly));
+}
+
+function loadSaved(userId: string, projectId: string | null): {
+  settings: typeof defaults;
+  panels: Panel[];
+  obstacles?: Obstacle[];
+  backgroundImage?: string;
+  backgroundOpacity?: number;
+  site?: Site | null;
+} | null {
   try {
     const raw = localStorage.getItem(storageKey(userId, projectId));
     if (raw) {
@@ -49,7 +155,7 @@ export default function PVLayout({ lang, userId, projectId = null, projectName =
   const [obstacles, setObstacles] = useState<Obstacle[]>(saved?.obstacles ?? []);
   const [backgroundImage, setBackgroundImage] = useState<string>(saved?.backgroundImage ?? "");
   const [backgroundOpacity, setBackgroundOpacity] = useState<number>(saved?.backgroundOpacity ?? 0.8);
-  const [site, setSite] = useState(saved?.site ?? null);
+  const [site, setSite] = useState<Site | null>(saved?.site ?? null);
   const imageInputRef = useRef<HTMLInputElement>(null);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [selectedObstacleId, setSelectedObstacleId] = useState<number | null>(null);
@@ -90,22 +196,41 @@ export default function PVLayout({ lang, userId, projectId = null, projectName =
   const moduleH = settings.orientation === "landscape" ? settings.moduleHeight : settings.moduleWidth;
   const capacity = panels.length * settings.watts / 1000;
   const moduleArea = panels.reduce((sum, p) => sum + p.w * p.h, 0) / 1_000_000;
-  const overflow = panels.some(p =>
-    p.x < settings.setback || p.y < settings.setback ||
-    p.x + p.w > settings.areaWidth - settings.setback ||
-    p.y + p.h > settings.areaHeight - settings.setback ||
-    obstacles.some(o => p.x < o.x + o.w && p.x + p.w > o.x && p.y < o.y + o.h && p.y + p.h > o.y)
-  );
+
+  // Active polygon corners in mm: use custom polygon if available (e.g. Trapezoid from Google Maps Satellite Scanner)
+  const activeCorners = useMemo<Array<{ x: number; y: number }>>(() => {
+    if (site?.polygonCorners && Array.isArray(site.polygonCorners) && site.polygonCorners.length >= 3) {
+      return site.polygonCorners;
+    }
+    return [
+      { x: 0, y: 0 },
+      { x: settings.areaWidth, y: 0 },
+      { x: settings.areaWidth, y: settings.areaHeight },
+      { x: 0, y: settings.areaHeight },
+    ];
+  }, [site?.polygonCorners, settings.areaWidth, settings.areaHeight]);
+
+  const setbackPolygon = useMemo<Array<{ x: number; y: number }>>(() => {
+    return computeInsetPolygon(activeCorners, settings.setback);
+  }, [activeCorners, settings.setback]);
+
+  const isCustomPolygon = Boolean(site?.polygonCorners && Array.isArray(site.polygonCorners) && site.polygonCorners.length >= 3);
+
   const selected = panels.find(p => p.id === selectedId) ?? null;
   const selectedObstacle = obstacles.find(o => o.id === selectedObstacleId) ?? null;
-  const withinSetback = (p: Pick<Panel, "x" | "y" | "w" | "h">) =>
-    p.x >= settings.setback && p.y >= settings.setback &&
-    p.x + p.w <= settings.areaWidth - settings.setback &&
-    p.y + p.h <= settings.areaHeight - settings.setback;
+
+  const withinSetback = (p: Pick<Panel, "x" | "y" | "w" | "h">) => {
+    const boundary = setbackPolygon.length >= 3 ? setbackPolygon : activeCorners;
+    return isPanelInsidePolygon(p, boundary);
+  };
+
   const intersectsObstacle = (p: Pick<Panel, "x" | "y" | "w" | "h">, o: Obstacle) =>
     p.x < o.x + o.w && p.x + p.w > o.x && p.y < o.y + o.h && p.y + p.h > o.y;
+
   const isPlacementValid = (p: Pick<Panel, "x" | "y" | "w" | "h">, list: Obstacle[] = obstacles) =>
     withinSetback(p) && !list.some(o => intersectsObstacle(p, o));
+
+  const overflow = panels.some(p => !isPlacementValid(p, obstacles));
 
   function handleGoogleMapsApply(data: {
     widthMm: number;
@@ -114,6 +239,7 @@ export default function PVLayout({ lang, userId, projectId = null, projectName =
     coordinates: { lat: number; lng: number };
     address: string;
     polygonPoints?: Array<{ lat: number; lng: number }>;
+    polygonCornersMm?: Array<{ x: number; y: number }>;
     rotationDeg?: number;
     pitchDegrees?: number;
     azimuthDegrees?: number;
@@ -124,6 +250,7 @@ export default function PVLayout({ lang, userId, projectId = null, projectName =
       coordinates: data.coordinates,
       address: data.address,
       polygonPoints: data.polygonPoints,
+      polygonCorners: data.polygonCornersMm,
       rotationDeg: data.rotationDeg,
       pitchDegrees: data.pitchDegrees,
       azimuthDegrees: data.azimuthDegrees,
@@ -139,7 +266,8 @@ export default function PVLayout({ lang, userId, projectId = null, projectName =
     saveDraft(safePanels, nextSettings, obstacles, nextSite);
     const solarInfo = data.pitchDegrees !== undefined ? ` [Google Solar Pitch: ${data.pitchDegrees}°, Azimuth: ${data.azimuthDegrees}°]` : "";
     const rotInfo = data.rotationDeg ? ` [Rotasi: ${data.rotationDeg}°]` : "";
-    setNotice(id ? `Dimensi & batas area diperbarui: ${data.widthMm.toLocaleString()} × ${data.heightMm.toLocaleString()} mm.${rotInfo}${solarInfo}` : `Area dimensions & boundary updated: ${data.widthMm.toLocaleString()} × ${data.heightMm.toLocaleString()} mm.${rotInfo}${solarInfo}`);
+    const polyInfo = data.polygonCornersMm && data.polygonCornersMm.length >= 3 ? " [Bentuk Trapesium/Poligon Kustom Diterapkan]" : "";
+    setNotice(id ? `Dimensi & batas area diperbarui: ${data.widthMm.toLocaleString()} × ${data.heightMm.toLocaleString()} mm.${polyInfo}${rotInfo}${solarInfo}` : `Area dimensions & boundary updated: ${data.widthMm.toLocaleString()} × ${data.heightMm.toLocaleString()} mm.${polyInfo}${rotInfo}${solarInfo}`);
   }
 
   function handleBackgroundUpload(file?: File) {
@@ -240,6 +368,14 @@ export default function PVLayout({ lang, userId, projectId = null, projectName =
   const originX = (1000 - settings.areaWidth * scale) / 2;
   const originY = (600 - settings.areaHeight * scale) / 2;
 
+  const svgPolygonPoints = useMemo(() => {
+    return activeCorners.map(p => `${originX + p.x * scale},${originY + p.y * scale}`).join(" ");
+  }, [activeCorners, originX, originY, scale]);
+
+  const svgSetbackPolygonPoints = useMemo(() => {
+    return setbackPolygon.map(p => `${originX + p.x * scale},${originY + p.y * scale}`).join(" ");
+  }, [setbackPolygon, originX, originY, scale]);
+
   function canvasPointerDown(event: React.PointerEvent<SVGSVGElement>) {
     if ((event.target as Element).closest("[data-panel]") ) return;
     const p = pointFromEvent(event);
@@ -303,7 +439,16 @@ export default function PVLayout({ lang, userId, projectId = null, projectName =
       addLine(x, y + h, x, y, layer);
     };
     // Site boundary, origin at lower-left (0,0).
-    addRect(0, 0, settings.areaWidth, settings.areaHeight, "SITE_BOUNDARY");
+    if (activeCorners && activeCorners.length >= 3) {
+      for (let i = 0; i < activeCorners.length; i++) {
+        const nextI = (i + 1) % activeCorners.length;
+        const p1 = activeCorners[i];
+        const p2 = activeCorners[nextI];
+        addLine(p1.x, settings.areaHeight - p1.y, p2.x, settings.areaHeight - p2.y, "SITE_BOUNDARY");
+      }
+    } else {
+      addRect(0, 0, settings.areaWidth, settings.areaHeight, "SITE_BOUNDARY");
+    }
     obstacles.forEach(obstacle => {
       const y = settings.areaHeight - obstacle.y - obstacle.h;
       addRect(obstacle.x, y, obstacle.w, obstacle.h, "OBSTACLES");
@@ -355,6 +500,37 @@ export default function PVLayout({ lang, userId, projectId = null, projectName =
         <select value={settings.system} onChange={e => update("system", e.target.value as SystemType)}><option value="Rooftop">{copy.roof}</option><option value="Ground-mounted">{copy.ground}</option></select>
         <div className="pv-section-title"><strong>{copy.area}</strong></div>
         <div className="pv-input-grid"><NumberField label={copy.width} value={settings.areaWidth} min={1000} step={100} onChange={v => update("areaWidth", v)} /><NumberField label={copy.height} value={settings.areaHeight} min={1000} step={100} onChange={v => update("areaHeight", v)} /><NumberField label={copy.setback} value={settings.setback} min={0} step={50} onChange={v => update("setback", v)} /></div>
+        {isCustomPolygon && (
+          <div style={{
+            background: "#16251b",
+            border: "1px solid #2e4a36",
+            borderRadius: 6,
+            padding: "8px 10px",
+            fontSize: 11,
+            color: "#b8f36b",
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            marginTop: 6,
+            marginBottom: 8,
+          }}>
+            <span>📐 Bentuk: Trapesium / Poligon 4-Sudut</span>
+            <button
+              type="button"
+              className="secondary-button"
+              style={{ fontSize: 10, padding: "3px 8px", height: "auto" }}
+              onClick={() => {
+                if (!site) return;
+                const nextSite: Site = { ...site, polygonCorners: undefined };
+                setSite(nextSite);
+                saveDraft(panels, settings, obstacles, nextSite);
+                setNotice(id ? "Bentuk atap dikembalikan ke persegi panjang standar." : "Roof shape reset to standard rectangle.");
+              }}
+            >
+              {id ? "Reset Kotak" : "Reset Rect"}
+            </button>
+          </div>
+        )}
         <div className="pv-section-title"><ImagePlus size={16} /><strong>{copy.satellite}</strong></div>
         <button className="primary-button" type="button" style={{ width: "100%", marginBottom: 8, background: "linear-gradient(135deg, #1b3821 0%, #112617 100%)", border: "1px solid #3d6e44" }} onClick={() => setIsMapsModalOpen(true)}>
           <Globe size={15} /> {id ? "🛰️ Cari di Peta Satelit Google" : "🛰️ Scan with Google Maps"}
@@ -381,22 +557,37 @@ export default function PVLayout({ lang, userId, projectId = null, projectName =
       <div className="panel pv-canvas-panel">
         <div className="pv-canvas-toolbar"><div><MousePointer2 size={15} /><strong>{copy.canvas}</strong><span className="pv-units">{copy.snap}</span></div><span>{settings.areaWidth.toLocaleString()} × {settings.areaHeight.toLocaleString()} mm</span></div>
         <div className="pv-canvas-wrap"><svg className="pv-canvas" viewBox="0 0 1000 600" role="img" aria-label="Interactive photovoltaic panel layout canvas" onPointerDown={canvasPointerDown} onPointerMove={canvasPointerMove} onPointerUp={finishDrag} onPointerLeave={finishDrag}>
-          <defs><pattern id="pv-grid-small" width="20" height="20" patternUnits="userSpaceOnUse"><path d="M 20 0 L 0 0 0 20" fill="none" stroke="#25322b" strokeWidth="0.7" /></pattern><pattern id="pv-grid-large" width="100" height="100" patternUnits="userSpaceOnUse"><rect width="100" height="100" fill="url(#pv-grid-small)"/><path d="M 100 0 L 0 0 0 100" fill="none" stroke="#34463a" strokeWidth="1" /></pattern></defs>
+          <defs>
+            <pattern id="pv-grid-small" width="20" height="20" patternUnits="userSpaceOnUse"><path d="M 20 0 L 0 0 0 20" fill="none" stroke="#25322b" strokeWidth="0.7" /></pattern>
+            <pattern id="pv-grid-large" width="100" height="100" patternUnits="userSpaceOnUse"><rect width="100" height="100" fill="url(#pv-grid-small)"/><path d="M 100 0 L 0 0 0 100" fill="none" stroke="#34463a" strokeWidth="1" /></pattern>
+            <clipPath id="polygon-boundary-clip">
+              <polygon points={svgPolygonPoints} />
+            </clipPath>
+          </defs>
           <rect width="1000" height="600" fill="url(#pv-grid-large)" />
-          {backgroundImage && <image href={backgroundImage} x={originX} y={originY} width={settings.areaWidth * scale} height={settings.areaHeight * scale} preserveAspectRatio="none" opacity={backgroundOpacity} pointerEvents="none" />}
-          <rect x={originX} y={originY} width={settings.areaWidth * scale} height={settings.areaHeight * scale} fill={backgroundImage ? "#14221a" : "#14221a"} fillOpacity={backgroundImage ? ".08" : ".65"} stroke="#b8f36b" strokeWidth="2" strokeDasharray="8 4" />
+          {backgroundImage && (
+            <g clipPath="url(#polygon-boundary-clip)">
+              <image href={backgroundImage} x={originX} y={originY} width={settings.areaWidth * scale} height={settings.areaHeight * scale} preserveAspectRatio="none" opacity={backgroundOpacity} pointerEvents="none" />
+            </g>
+          )}
+          {/* Site boundary polygon (Trapezoid / Custom Quad / Rect) */}
+          <polygon points={svgPolygonPoints} fill="#14221a" fillOpacity={backgroundImage ? ".15" : ".65"} stroke="#b8f36b" strokeWidth="2" strokeDasharray="8 4" />
           {obstacles.map(obstacle => <g key={obstacle.id} onPointerDown={e => { e.stopPropagation(); setSelectedObstacleId(obstacle.id); setSelectedId(null); setDraggingObstacleId(obstacle.id); (e.currentTarget as SVGGElement).ownerSVGElement?.setPointerCapture(e.pointerId); }} style={{ cursor: "move" }}>
             <rect x={originX + obstacle.x * scale} y={originY + obstacle.y * scale} width={Math.max(1, obstacle.w * scale)} height={Math.max(1, obstacle.h * scale)} fill={selectedObstacleId === obstacle.id ? "#ff9f9f" : "#d45d5d"} fillOpacity=".38" stroke={selectedObstacleId === obstacle.id ? "#ffd0d0" : "#ff7777"} strokeWidth="2" strokeDasharray="5 3" />
             <text x={originX + (obstacle.x + obstacle.w / 2) * scale} y={originY + (obstacle.y + obstacle.h / 2) * scale} textAnchor="middle" dominantBaseline="middle" fill="#ffe2e2" fontSize="11">{obstacle.label}</text>
           </g>)}
-          <rect x={originX + settings.setback * scale} y={originY + settings.setback * scale} width={Math.max(0, (settings.areaWidth - 2 * settings.setback) * scale)} height={Math.max(0, (settings.areaHeight - 2 * settings.setback) * scale)} fill="none" stroke="#e8b86b" strokeWidth="1.5" strokeDasharray="3 5" />
+          {/* Inset setback boundary polygon */}
+          <polygon points={svgSetbackPolygonPoints} fill="none" stroke="#e8b86b" strokeWidth="1.5" strokeDasharray="3 5" />
+          {isCustomPolygon && activeCorners.map((pt, idx) => (
+            <circle key={idx} cx={originX + pt.x * scale} cy={originY + pt.y * scale} r="4" fill="#b8f36b" stroke="#111713" strokeWidth="1.5" />
+          ))}
           {panels.map((panel, index) => <g key={panel.id} data-panel="true" onPointerDown={e => { e.stopPropagation(); setSelectedId(panel.id); setDraggingId(panel.id); (e.currentTarget as SVGGElement).ownerSVGElement?.setPointerCapture(e.pointerId); }} style={{ cursor: "move" }}>
             <rect x={originX + panel.x * scale} y={originY + panel.y * scale} width={Math.max(1, panel.w * scale)} height={Math.max(1, panel.h * scale)} rx="2" fill={selectedId === panel.id ? "#c8ff8d" : "#438c64"} fillOpacity={selectedId === panel.id ? ".95" : ".88"} stroke={selectedId === panel.id ? "#efffd8" : "#8bd7a5"} strokeWidth={selectedId === panel.id ? 2 : 1} />
             <path d={`M ${originX + panel.x * scale + panel.w * scale / 2} ${originY + panel.y * scale} V ${originY + (panel.y + panel.h) * scale}`} stroke="#173b2a" strokeWidth="1" />
             <path d={`M ${originX + panel.x * scale} ${originY + panel.y * scale + panel.h * scale / 2} H ${originX + (panel.x + panel.w) * scale}`} stroke="#173b2a" strokeWidth="1" />
             {panel.w * scale > 30 && panel.h * scale > 18 && <text x={originX + (panel.x + panel.w / 2) * scale} y={originY + (panel.y + panel.h / 2) * scale + 3} textAnchor="middle" fontSize="10" fill="#102217" fontWeight="700">{String(index + 1).padStart(2, "0")}</text>}
           </g>)}
-          <text x={originX} y={Math.max(18, originY - 12)} fill="#b8f36b" fontSize="12">SITE BOUNDARY · {settings.system.toUpperCase()}</text>
+          <text x={originX} y={Math.max(18, originY - 12)} fill="#b8f36b" fontSize="12">SITE BOUNDARY · {settings.system.toUpperCase()}{isCustomPolygon ? " (TRAPEZIUM / POLIGON)" : ""}</text>
         </svg></div>
         <div className="pv-canvas-footer"><span><i className="pv-legend-dot" /> {panels.length} modules</span><span>{copy.hint}</span></div>
         {notice && <div className="pv-notice">{notice}</div>}
@@ -410,6 +601,7 @@ export default function PVLayout({ lang, userId, projectId = null, projectName =
       onApply={handleGoogleMapsApply}
       initialWidthMm={settings.areaWidth}
       initialHeightMm={settings.areaHeight}
+      initialPolygonPoints={site?.polygonPoints}
     />
   </section>;
 }
