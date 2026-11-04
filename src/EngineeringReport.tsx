@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import {
@@ -100,6 +100,8 @@ function Report3DViewport({
   onHourChange,
   hideTimeControls = false,
   titleBadge,
+  cameraTransform,
+  onCameraChange,
 }: {
   panels: any[];
   obstacles: any[];
@@ -117,8 +119,12 @@ function Report3DViewport({
   onHourChange?: (h: number) => void;
   hideTimeControls?: boolean;
   titleBadge?: string;
+  cameraTransform?: { position: [number, number, number]; target: [number, number, number] } | null;
+  onCameraChange?: (cam: { position: [number, number, number]; target: [number, number, number] }) => void;
 }) {
   const mountRef = useRef<HTMLDivElement>(null);
+  const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
+  const controlsRef = useRef<OrbitControls | null>(null);
   const [hour, setHour] = useState(defaultHour);
   const [cameraPreset, setCameraPreset] = useState<"iso" | "top">("iso");
 
@@ -153,15 +159,8 @@ function Report3DViewport({
 
     // Perspective Camera with wider FOV to comfortably encompass the sky arc and the ground array
     const camera = new THREE.PerspectiveCamera(42, width / heightPx, 0.5, span * 15);
+    cameraRef.current = camera;
     const viewDist = span * 1.25 + 6;
-
-    if (cameraPreset === "top") {
-      camera.position.set(0, viewDist * 1.4, 0.01);
-      camera.lookAt(0, 0, 0);
-    } else {
-      camera.position.set(viewDist * 0.62, viewDist * 0.70, viewDist * 0.82);
-      camera.lookAt(0, buildingHeight * 0.5, 0);
-    }
 
     // High quality renderer
     const renderer = new THREE.WebGLRenderer({
@@ -180,11 +179,54 @@ function Report3DViewport({
     scene.background = isNight ? new THREE.Color("#080f1a") : new THREE.Color("#e0f2fe");
 
     const controls = new OrbitControls(camera, renderer.domElement);
+    controlsRef.current = controls;
     controls.enableDamping = true;
     controls.dampingFactor = 0.08;
-    controls.target.set(0, cameraPreset === "top" ? 0 : buildingHeight * 0.5, 0);
     controls.maxPolarAngle = Math.PI / 2 - 0.02;
     controls.enabled = interactive;
+
+    // Apply synchronized camera transform, top preset, or calibrated front perspective (matching user preview)
+    if (cameraPreset === "top") {
+      const topDist = Math.max(areaWM, areaHM) * 1.35;
+      camera.position.set(0, topDist, 0.01);
+      controls.target.set(0, 0, 0);
+      camera.lookAt(0, 0, 0);
+    } else if (cameraTransform) {
+      camera.position.set(...cameraTransform.position);
+      controls.target.set(...cameraTransform.target);
+      camera.lookAt(...cameraTransform.target);
+    } else {
+      // Calibrated Front-Perspective framing (matching Image 1 preview)
+      const targetCoverage = areaWM * 1.32;
+      const aspect = Math.max(1.5, width / heightPx);
+      const fovRad = (42 * Math.PI) / 180;
+      const idealDist = (targetCoverage / aspect / 2) / Math.tan(fovRad / 2);
+      const elevAngle = (26 * Math.PI) / 180;
+      const camZ = Math.max(areaHM * 0.68 + 20, idealDist * Math.cos(elevAngle));
+      const camY = Math.max(15, camZ * Math.tan(elevAngle) + buildingHeight);
+      const camX = 0; // centered in front, looking north
+
+      camera.position.set(camX, camY, camZ);
+      controls.target.set(0, buildingHeight * 0.5, 0);
+      camera.lookAt(0, buildingHeight * 0.5, 0);
+    }
+    controls.update();
+
+    // Listen to user interaction and synchronize camera with other viewports
+    let debounceTimer: any = null;
+    const handleControlsChange = () => {
+      if (!interactive) return;
+      if (onCameraChange) {
+        if (debounceTimer) clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(() => {
+          onCameraChange({
+            position: [camera.position.x, camera.position.y, camera.position.z],
+            target: [controls.target.x, controls.target.y, controls.target.z],
+          });
+        }, 120);
+      }
+    };
+    controls.addEventListener("change", handleControlsChange);
 
     // =========================================================================
     // LIGHTING & ATMOSPHERE (SIANG 12:00 vs MALAM 24:00)
@@ -536,15 +578,39 @@ function Report3DViewport({
     window.addEventListener("resize", handleResize);
 
     return () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      controls.removeEventListener("change", handleControlsChange);
       window.removeEventListener("resize", handleResize);
       cancelAnimationFrame(animId);
       controls.dispose();
       renderer.dispose();
+      cameraRef.current = null;
+      controlsRef.current = null;
       if (mount.contains(renderer.domElement)) {
         mount.removeChild(renderer.domElement);
       }
     };
   }, [panels, obstacles, areaW, areaH, moduleW, moduleH, tilt, siteCorners, theme, interactive, height, sunPos, cameraPreset, hour]);
+
+  // Synchronize camera smoothly across mounted viewports when shared camera state updates
+  useEffect(() => {
+    if (!cameraTransform || !cameraRef.current || !controlsRef.current || cameraPreset === "top") return;
+    const c = cameraRef.current;
+    const ctrl = controlsRef.current;
+    const curP = c.position;
+    const newP = cameraTransform.position;
+    const curT = ctrl.target;
+    const newT = cameraTransform.target;
+
+    const pDist = Math.hypot(curP.x - newP[0], curP.y - newP[1], curP.z - newP[2]);
+    const tDist = Math.hypot(curT.x - newT[0], curT.y - newT[1], curT.z - newT[2]);
+
+    if (pDist > 0.5 || tDist > 0.5) {
+      c.position.set(newP[0], newP[1], newP[2]);
+      ctrl.target.set(newT[0], newT[1], newT[2]);
+      ctrl.update();
+    }
+  }, [cameraTransform, cameraPreset]);
 
   return (
     <div style={{ position: "relative", width: "100%", height, overflow: "hidden", background: isNight ? "#080f1a" : "#e0f2fe" }}>
@@ -630,7 +696,29 @@ function Report3DViewport({
         <div style={{ display: "flex", gap: 4, background: isNight ? "rgba(11,19,32,0.92)" : "rgba(255,255,255,0.95)", padding: "3px 5px", borderRadius: 5, border: isNight ? "1px solid #1e293b" : "1px solid #cbd5e1", pointerEvents: "auto", boxShadow: isNight ? "0 2px 8px rgba(0,0,0,0.4)" : "0 2px 8px rgba(0,0,0,0.12)" }}>
           <button
             type="button"
-            onClick={() => setCameraPreset("iso")}
+            onClick={() => {
+              setCameraPreset("iso");
+              if (cameraRef.current && controlsRef.current) {
+                const width = mountRef.current?.clientWidth || 800;
+                const heightPx = typeof height === "number" ? height : (mountRef.current?.clientHeight || 220);
+                const targetCoverage = areaWM * 1.32;
+                const aspect = Math.max(1.5, width / heightPx);
+                const fovRad = (42 * Math.PI) / 180;
+                const idealDist = (targetCoverage / aspect / 2) / Math.tan(fovRad / 2);
+                const elevAngle = (26 * Math.PI) / 180;
+                const camZ = Math.max(areaHM * 0.68 + 20, idealDist * Math.cos(elevAngle));
+                const camY = Math.max(15, camZ * Math.tan(elevAngle) + buildingHeight);
+                cameraRef.current.position.set(0, camY, camZ);
+                controlsRef.current.target.set(0, buildingHeight * 0.5, 0);
+                controlsRef.current.update();
+                if (onCameraChange) {
+                  onCameraChange({
+                    position: [0, camY, camZ],
+                    target: [0, buildingHeight * 0.5, 0],
+                  });
+                }
+              }
+            }}
             style={{
               padding: "3px 8px",
               fontSize: 9.5,
@@ -646,7 +734,21 @@ function Report3DViewport({
           </button>
           <button
             type="button"
-            onClick={() => setCameraPreset("top")}
+            onClick={() => {
+              setCameraPreset("top");
+              if (cameraRef.current && controlsRef.current) {
+                const topDist = Math.max(areaWM, areaHM) * 1.35;
+                cameraRef.current.position.set(0, topDist, 0.01);
+                controlsRef.current.target.set(0, 0, 0);
+                controlsRef.current.update();
+                if (onCameraChange) {
+                  onCameraChange({
+                    position: [0, topDist, 0.01],
+                    target: [0, 0, 0],
+                  });
+                }
+              }
+            }}
             style={{
               padding: "3px 8px",
               fontSize: 9.5,
@@ -763,6 +865,42 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
   const [previewTab, setPreviewTab] = useState<1 | 2 | 3>(1);
   const [viewMode, setViewMode] = useState<"screen" | "a4-light">("screen");
   const [active3DHour, setActive3DHour] = useState<number>(12.0);
+
+  // Synchronized 3D Camera State across all viewports (Screen Dashboard, PDF Page 3 Siang, PDF Page 3 Malam)
+  const [sharedCamera, setSharedCamera] = useState<{
+    position: [number, number, number];
+    target: [number, number, number];
+  } | null>(() => {
+    try {
+      const targetId = activeProj?.id ?? projectId ?? "default";
+      const raw = localStorage.getItem(`solar-apps-3d-cam:${targetId}`);
+      if (raw) return JSON.parse(raw);
+    } catch {}
+    return null;
+  });
+
+  useEffect(() => {
+    try {
+      const targetId = activeProj?.id ?? projectId ?? "default";
+      const raw = localStorage.getItem(`solar-apps-3d-cam:${targetId}`);
+      if (raw) {
+        setSharedCamera(JSON.parse(raw));
+      } else {
+        setSharedCamera(null);
+      }
+    } catch {}
+  }, [activeProj?.id, projectId]);
+
+  const handleCameraChange = useCallback(
+    (cam: { position: [number, number, number]; target: [number, number, number] }) => {
+      setSharedCamera(cam);
+      try {
+        const targetId = activeProj?.id ?? projectId ?? "default";
+        localStorage.setItem(`solar-apps-3d-cam:${targetId}`, JSON.stringify(cam));
+      } catch {}
+    },
+    [activeProj?.id, projectId]
+  );
 
   // GIS Solar Irradiance & Yield State
   const [yieldData, setYieldData] = useState<SolarYieldResult | null>(null);
@@ -1640,6 +1778,8 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
               coords={coords}
               hideTimeControls={true}
               titleBadge="☀️ 12:00 WIB - Puncak Surya & Klirens Bayangan"
+              cameraTransform={sharedCamera}
+              onCameraChange={handleCameraChange}
             />
           </div>
         </div>
@@ -1671,6 +1811,8 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
               coords={coords}
               hideTimeControls={true}
               titleBadge="🌙 24:00 WIB - Standby Isolation Mode (IEC 62109)"
+              cameraTransform={sharedCamera}
+              onCameraChange={handleCameraChange}
             />
           </div>
         </div>
@@ -2038,6 +2180,8 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
                 defaultHour={active3DHour}
                 coords={coords}
                 onHourChange={setActive3DHour}
+                cameraTransform={sharedCamera}
+                onCameraChange={handleCameraChange}
               />
             </div>
           </div>
