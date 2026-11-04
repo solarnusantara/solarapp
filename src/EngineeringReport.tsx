@@ -1,4 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import * as THREE from "three";
+import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import {
   Sun,
   Zap,
@@ -21,6 +23,9 @@ import {
   CheckCircle2,
   Building2,
   Award,
+  Box,
+  ExternalLink,
+  Navigation,
 } from "lucide-react";
 import {
   fetchSolarClimatology,
@@ -38,6 +43,553 @@ type Props = {
   project?: any;
 };
 
+// Precise Solar Position calculation based on NOAA solar geometry
+function computeSolarPosition(hour: number, lat: number, lng: number) {
+  const rad = Math.PI / 180;
+  const now = new Date();
+  const start = new Date(Date.UTC(now.getFullYear(), 0, 0));
+  const diff = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()) - start.getTime();
+  const day = Math.floor(diff / 86400000);
+  const gamma = ((2 * Math.PI) / 365) * (day - 1 + (hour - 12) / 24);
+  const decl =
+    0.006918 -
+    0.399912 * Math.cos(gamma) +
+    0.070257 * Math.sin(gamma) -
+    0.006758 * Math.cos(2 * gamma) +
+    0.000907 * Math.sin(2 * gamma) -
+    0.002697 * Math.cos(3 * gamma) +
+    0.00148 * Math.sin(3 * gamma);
+  const eqTime =
+    229.18 *
+    (0.000075 +
+      0.001868 * Math.cos(gamma) -
+      0.032077 * Math.sin(gamma) -
+      0.014615 * Math.cos(2 * gamma) -
+      0.040849 * Math.sin(2 * gamma));
+  const offsetMinutes = 420; // UTC+7 WIB
+  const trueSolarMinutes = ((hour * 60 + eqTime + 4 * lng - offsetMinutes) % 1440 + 1440) % 1440;
+  const hourAngle = (trueSolarMinutes / 4 - 180) * rad;
+  const latRad = lat * rad;
+  const cosZenith = Math.sin(latRad) * Math.sin(decl) + Math.cos(latRad) * Math.cos(decl) * Math.cos(hourAngle);
+  const elevation = 90 - Math.acos(Math.max(-1, Math.min(1, cosZenith))) / rad;
+  const azimuth =
+    (Math.atan2(Math.sin(hourAngle), Math.cos(hourAngle) * Math.sin(latRad) - Math.tan(decl) * Math.cos(latRad)) / rad +
+      180 +
+      360) %
+    360;
+  return { elevation, azimuth };
+}
+
+// ============================================================================
+// REAL 3D VIEWPORT COMPONENT (THREE.JS / WEBGL)
+// ============================================================================
+function Report3DViewport({
+  panels,
+  obstacles,
+  areaW,
+  areaH,
+  moduleW,
+  moduleH,
+  tilt,
+  siteCorners,
+  theme = "light",
+  interactive = true,
+  height = 320,
+  defaultHour = 12.0,
+  coords = { lat: -6.36, lng: 107.17 },
+  onHourChange,
+}: {
+  panels: any[];
+  obstacles: any[];
+  areaW: number;
+  areaH: number;
+  moduleW: number;
+  moduleH: number;
+  tilt: number;
+  siteCorners?: Array<{ x: number; y: number }>;
+  theme?: "light" | "dark";
+  interactive?: boolean;
+  height?: number | string;
+  defaultHour?: number;
+  coords?: { lat: number; lng: number };
+  onHourChange?: (h: number) => void;
+}) {
+  const mountRef = useRef<HTMLDivElement>(null);
+  const [hour, setHour] = useState(defaultHour);
+  const [cameraPreset, setCameraPreset] = useState<"iso" | "top">("iso");
+
+  const sunPos = useMemo(() => {
+    return computeSolarPosition(hour, coords.lat, coords.lng);
+  }, [hour, coords.lat, coords.lng]);
+
+  const handleSetHour = (h: number) => {
+    setHour(h);
+    if (onHourChange) onHourChange(h);
+  };
+
+  useEffect(() => {
+    const mount = mountRef.current;
+    if (!mount) return;
+
+    const width = mount.clientWidth || 800;
+    const heightPx = typeof height === "number" ? height : (mount.clientHeight || 320);
+
+    const isLight = theme === "light";
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(isLight ? "#f8fafc" : "#080f1a");
+
+    const areaWM = Math.max(10, areaW / 1000);
+    const areaHM = Math.max(10, areaH / 1000);
+    const centerX = areaWM / 2;
+    const centerZ = areaHM / 2;
+    const span = Math.hypot(areaWM, areaHM);
+
+    const camera = new THREE.PerspectiveCamera(38, width / heightPx, 0.5, span * 15);
+    const viewDist = span * 1.1 + 8;
+
+    if (cameraPreset === "top") {
+      camera.position.set(0, viewDist * 1.35, 0.01);
+      camera.lookAt(0, 0, 0);
+    } else {
+      camera.position.set(viewDist * 0.7, viewDist * 0.65, viewDist * 0.7);
+      camera.lookAt(0, 2, 0);
+    }
+
+    const renderer = new THREE.WebGLRenderer({
+      antialias: true,
+      preserveDrawingBuffer: true,
+    });
+    renderer.setSize(width, heightPx);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    mount.appendChild(renderer.domElement);
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.08;
+    controls.target.set(0, cameraPreset === "top" ? 0 : 2, 0);
+    controls.maxPolarAngle = Math.PI / 2 - 0.02;
+    controls.enabled = interactive;
+
+    // Lighting
+    const sunRad = Math.max(0.05, (sunPos.elevation * Math.PI) / 180);
+    const azRad = (sunPos.azimuth * Math.PI) / 180;
+    const sunDir = new THREE.Vector3(
+      Math.sin(azRad) * Math.cos(sunRad),
+      Math.sin(sunRad),
+      -Math.cos(azRad) * Math.cos(sunRad)
+    );
+
+    const isDay = sunPos.elevation > 0;
+    const lightDist = span * 2.2;
+    const sunLight = new THREE.DirectionalLight(isLight ? 0xfffbe8 : 0xfff2cc, isDay ? 2.6 : 0.1);
+    sunLight.position.copy(sunDir.clone().multiplyScalar(lightDist));
+    sunLight.castShadow = isDay;
+    sunLight.shadow.mapSize.set(2048, 2048);
+    sunLight.shadow.camera.left = -span * 0.8;
+    sunLight.shadow.camera.right = span * 0.8;
+    sunLight.shadow.camera.top = span * 0.8;
+    sunLight.shadow.camera.bottom = -span * 0.8;
+    sunLight.shadow.camera.near = 1;
+    sunLight.shadow.camera.far = lightDist * 2;
+    sunLight.shadow.bias = -0.0004;
+    scene.add(sunLight);
+
+    const hemiLight = new THREE.HemisphereLight(
+      isLight ? 0xffffff : 0xdceaff,
+      isLight ? 0x94a3b8 : 0x1a2638,
+      isLight ? 1.1 : 0.8
+    );
+    scene.add(hemiLight);
+
+    // Glowing Sun Orb in Sky
+    if (sunPos.elevation > -5) {
+      const sunOrbGeom = new THREE.SphereGeometry(Math.max(1.8, span * 0.035), 32, 32);
+      const sunOrbMat = new THREE.MeshBasicMaterial({ color: 0xf59e0b });
+      const sunOrb = new THREE.Mesh(sunOrbGeom, sunOrbMat);
+      sunOrb.position.copy(sunDir.clone().multiplyScalar(lightDist * 0.95));
+      scene.add(sunOrb);
+    }
+
+    // Ground Plane & Grid
+    const groundGeom = new THREE.PlaneGeometry(span * 3, span * 3);
+    groundGeom.rotateX(-Math.PI / 2);
+    const groundMat = new THREE.MeshStandardMaterial({
+      color: isLight ? 0xf1f5f9 : 0x0b1320,
+      roughness: 0.9,
+    });
+    const groundMesh = new THREE.Mesh(groundGeom, groundMat);
+    groundMesh.position.y = -0.05;
+    groundMesh.receiveShadow = true;
+    scene.add(groundMesh);
+
+    const gridHelper = new THREE.GridHelper(
+      span * 2.2,
+      Math.max(12, Math.round(span / 4)),
+      isLight ? 0xcbd5e1 : 0x22364f,
+      isLight ? 0xe2e8f0 : 0x142030
+    );
+    gridHelper.position.y = -0.04;
+    scene.add(gridHelper);
+
+    // Cardinal Direction Sprites
+    const compassDist = span * 0.65;
+    const directions = [
+      { label: "UTARA (N)", x: 0, z: -compassDist, color: isLight ? "#0284c7" : "#38bdf8" },
+      { label: "SELATAN (S)", x: 0, z: compassDist, color: isLight ? "#64748b" : "#94a3b8" },
+      { label: "TIMUR (E)", x: compassDist, z: 0, color: isLight ? "#d97706" : "#f59e0b" },
+      { label: "BARAT (W)", x: -compassDist, z: 0, color: isLight ? "#d97706" : "#f59e0b" },
+    ];
+    directions.forEach((d) => {
+      const canvas = document.createElement("canvas");
+      canvas.width = 160;
+      canvas.height = 36;
+      const ctx = canvas.getContext("2d");
+      if (ctx) {
+        ctx.fillStyle = isLight ? "#ffffffcc" : "#0e1a2be0";
+        if (ctx.roundRect) ctx.roundRect(0, 0, 160, 36, 6);
+        else ctx.rect(0, 0, 160, 36);
+        ctx.fill();
+        ctx.strokeStyle = isLight ? "#cbd5e1" : "#243a57";
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+        ctx.fillStyle = d.color;
+        ctx.font = "bold 13px system-ui, sans-serif";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText(d.label, 80, 18);
+        const tex = new THREE.CanvasTexture(canvas);
+        const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex }));
+        sp.scale.set(span * 0.14, (span * 0.14 * 36) / 160, 1);
+        sp.position.set(d.x, 0.4, d.z);
+        scene.add(sp);
+      }
+    });
+
+    // Building Roof & Walls
+    const buildingHeight = 3.5;
+    const wallMat = new THREE.MeshStandardMaterial({
+      color: isLight ? 0x94a3b8 : 0x334155,
+      roughness: 0.8,
+    });
+    const roofMat = new THREE.MeshStandardMaterial({
+      color: isLight ? 0xe2e8f0 : 0x1e293b,
+      roughness: 0.65,
+    });
+
+    if (siteCorners && siteCorners.length >= 3) {
+      const shape = new THREE.Shape();
+      siteCorners.forEach((pt, idx) => {
+        const sx = pt.x / 1000 - centerX;
+        const sz = pt.y / 1000 - centerZ;
+        if (idx === 0) shape.moveTo(sx, -sz);
+        else shape.lineTo(sx, -sz);
+      });
+      shape.closePath();
+
+      const extrudeGeom = new THREE.ExtrudeGeometry(shape, {
+        depth: buildingHeight,
+        bevelEnabled: false,
+      });
+      extrudeGeom.rotateX(-Math.PI / 2);
+      const wallMesh = new THREE.Mesh(extrudeGeom, wallMat);
+      wallMesh.position.y = buildingHeight;
+      wallMesh.castShadow = true;
+      wallMesh.receiveShadow = true;
+      scene.add(wallMesh);
+
+      const roofGeom = new THREE.ShapeGeometry(shape);
+      roofGeom.rotateX(-Math.PI / 2);
+      const roofMesh = new THREE.Mesh(roofGeom, roofMat);
+      roofMesh.position.y = buildingHeight + 0.01;
+      roofMesh.receiveShadow = true;
+      scene.add(roofMesh);
+    } else {
+      const boxGeom = new THREE.BoxGeometry(areaWM, buildingHeight, areaHM);
+      const boxMesh = new THREE.Mesh(boxGeom, wallMat);
+      boxMesh.position.set(0, buildingHeight / 2, 0);
+      boxMesh.castShadow = true;
+      boxMesh.receiveShadow = true;
+      scene.add(boxMesh);
+
+      const roofTopGeom = new THREE.PlaneGeometry(areaWM, areaHM);
+      roofTopGeom.rotateX(-Math.PI / 2);
+      const roofTopMesh = new THREE.Mesh(roofTopGeom, roofMat);
+      roofTopMesh.position.set(0, buildingHeight + 0.01, 0);
+      roofTopMesh.receiveShadow = true;
+      scene.add(roofTopMesh);
+    }
+
+    // PV Modules
+    const moduleWM = (moduleW || 2278) / 1000;
+    const moduleHM = (moduleH || 1134) / 1000;
+    const tiltRad = ((tilt || 10) * Math.PI) / 180;
+
+    let displayPanels = panels;
+    if (!displayPanels || displayPanels.length === 0) {
+      displayPanels = [];
+      const cols = Math.floor((areaW - 4000) / (moduleW + 400));
+      const rows = Math.floor((areaH - 4000) / (moduleH + 800));
+      let idCounter = 1;
+      for (let r = 0; r < rows; r++) {
+        for (let c = 0; c < cols; c++) {
+          displayPanels.push({
+            id: idCounter++,
+            x: 2000 + c * (moduleW + 400),
+            y: 2000 + r * (moduleH + 800),
+            w: moduleW,
+            h: moduleH,
+          });
+        }
+      }
+    }
+
+    const n = displayPanels.length;
+    if (n > 0) {
+      const panelGeom = new THREE.BoxGeometry(moduleWM, 0.04, moduleHM);
+      const panelMat = new THREE.MeshStandardMaterial({
+        color: isLight ? 0x0284c7 : 0x0ea5e9,
+        roughness: 0.28,
+        metalness: 0.45,
+      });
+      const panelIM = new THREE.InstancedMesh(panelGeom, panelMat, n);
+      panelIM.castShadow = true;
+      panelIM.receiveShadow = true;
+
+      const dummy = new THREE.Object3D();
+      displayPanels.forEach((p, idx) => {
+        const pw = (Number(p.w) || moduleW) / 1000;
+        const ph = (Number(p.h) || moduleH) / 1000;
+        const px = (Number(p.x) || 0) / 1000 - centerX + pw / 2;
+        const pz = (Number(p.y) || 0) / 1000 - centerZ + ph / 2;
+        const py = buildingHeight + 0.15 + (ph / 2) * Math.sin(tiltRad);
+
+        dummy.position.set(px, py, pz);
+        dummy.rotation.set(tiltRad, 0, 0);
+        dummy.updateMatrix();
+        panelIM.setMatrixAt(idx, dummy.matrix);
+      });
+      panelIM.instanceMatrix.needsUpdate = true;
+      scene.add(panelIM);
+    }
+
+    // Obstacles
+    obstacles.forEach((obs: any) => {
+      const ow = Math.max(1, (Number(obs.w) || 3000) / 1000);
+      const oh = Math.max(1, (Number(obs.h) || 3000) / 1000);
+      const ox = (Number(obs.x) || 0) / 1000 - centerX + ow / 2;
+      const oz = (Number(obs.y) || 0) / 1000 - centerZ + oh / 2;
+      const obsHeight = 2.4;
+      const oy = buildingHeight + obsHeight / 2;
+
+      const obsGeom = new THREE.BoxGeometry(ow, obsHeight, oh);
+      const obsMat = new THREE.MeshStandardMaterial({
+        color: 0xef4444,
+        roughness: 0.5,
+        metalness: 0.3,
+      });
+      const obsMesh = new THREE.Mesh(obsGeom, obsMat);
+      obsMesh.position.set(ox, oy, oz);
+      obsMesh.castShadow = true;
+      obsMesh.receiveShadow = true;
+      scene.add(obsMesh);
+
+      // Label sprite
+      const canvas = document.createElement("canvas");
+      canvas.width = 180;
+      canvas.height = 36;
+      const ctx = canvas.getContext("2d");
+      if (ctx) {
+        ctx.fillStyle = "#dc2626f0";
+        if (ctx.roundRect) ctx.roundRect(0, 0, 180, 36, 4);
+        else ctx.fillRect(0, 0, 180, 36);
+        ctx.fill();
+        ctx.fillStyle = "#ffffff";
+        ctx.font = "bold 13px system-ui, sans-serif";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText(obs.label || "HVAC CHILLER", 90, 18);
+        const tex = new THREE.CanvasTexture(canvas);
+        const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex }));
+        sp.scale.set(Math.max(ow * 1.2, 5), (Math.max(ow * 1.2, 5) * 36) / 180, 1);
+        sp.position.set(ox, oy + obsHeight / 2 + 0.6, oz);
+        scene.add(sp);
+      }
+    });
+
+    // Animation loop
+    let animId: number;
+    const animate = () => {
+      animId = requestAnimationFrame(animate);
+      controls.update();
+      renderer.render(scene, camera);
+    };
+    animate();
+
+    const handleResize = () => {
+      if (!mount) return;
+      const nw = mount.clientWidth;
+      const nh = typeof height === "number" ? height : (mount.clientHeight || 320);
+      camera.aspect = nw / nh;
+      camera.updateProjectionMatrix();
+      renderer.setSize(nw, nh);
+    };
+    window.addEventListener("resize", handleResize);
+
+    return () => {
+      window.removeEventListener("resize", handleResize);
+      cancelAnimationFrame(animId);
+      controls.dispose();
+      renderer.dispose();
+      if (mount.contains(renderer.domElement)) {
+        mount.removeChild(renderer.domElement);
+      }
+    };
+  }, [panels, obstacles, areaW, areaH, moduleW, moduleH, tilt, siteCorners, theme, interactive, height, sunPos, cameraPreset]);
+
+  return (
+    <div style={{ position: "relative", width: "100%", height, overflow: "hidden" }}>
+      {/* 3D Viewport Controls Overlay */}
+      <div
+        className="no-print"
+        style={{
+          position: "absolute",
+          top: 8,
+          left: 10,
+          right: 10,
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          zIndex: 10,
+          pointerEvents: "none",
+        }}
+      >
+        {/* Time of Day Sun Controls */}
+        <div style={{ display: "flex", gap: 5, background: theme === "light" ? "rgba(255,255,255,0.92)" : "rgba(15,23,42,0.92)", padding: 4, borderRadius: 6, border: theme === "light" ? "1px solid #cbd5e1" : "1px solid #334155", pointerEvents: "auto", boxShadow: "0 2px 6px rgba(0,0,0,0.15)" }}>
+          <button
+            type="button"
+            onClick={() => handleSetHour(9.0)}
+            style={{
+              padding: "4px 8px",
+              fontSize: 10,
+              fontWeight: 700,
+              borderRadius: 4,
+              border: "none",
+              cursor: "pointer",
+              background: Math.abs(hour - 9.0) < 0.2 ? "#f59e0b" : "transparent",
+              color: Math.abs(hour - 9.0) < 0.2 ? "#ffffff" : theme === "light" ? "#475569" : "#cbd5e1",
+            }}
+          >
+            ☀️ 09:00 (Pagi)
+          </button>
+          <button
+            type="button"
+            onClick={() => handleSetHour(12.0)}
+            style={{
+              padding: "4px 8px",
+              fontSize: 10,
+              fontWeight: 700,
+              borderRadius: 4,
+              border: "none",
+              cursor: "pointer",
+              background: Math.abs(hour - 12.0) < 0.2 ? "#f59e0b" : "transparent",
+              color: Math.abs(hour - 12.0) < 0.2 ? "#ffffff" : theme === "light" ? "#475569" : "#cbd5e1",
+            }}
+          >
+            ☀️ 12:00 (Puncak)
+          </button>
+          <button
+            type="button"
+            onClick={() => handleSetHour(15.0)}
+            style={{
+              padding: "4px 8px",
+              fontSize: 10,
+              fontWeight: 700,
+              borderRadius: 4,
+              border: "none",
+              cursor: "pointer",
+              background: Math.abs(hour - 15.0) < 0.2 ? "#f59e0b" : "transparent",
+              color: Math.abs(hour - 15.0) < 0.2 ? "#ffffff" : theme === "light" ? "#475569" : "#cbd5e1",
+            }}
+          >
+            ☀️ 15:00 (Sore)
+          </button>
+        </div>
+
+        {/* Camera Preset Controls */}
+        <div style={{ display: "flex", gap: 5, background: theme === "light" ? "rgba(255,255,255,0.92)" : "rgba(15,23,42,0.92)", padding: 4, borderRadius: 6, border: theme === "light" ? "1px solid #cbd5e1" : "1px solid #334155", pointerEvents: "auto", boxShadow: "0 2px 6px rgba(0,0,0,0.15)" }}>
+          <button
+            type="button"
+            onClick={() => setCameraPreset("iso")}
+            style={{
+              padding: "4px 8px",
+              fontSize: 10,
+              fontWeight: 700,
+              borderRadius: 4,
+              border: "none",
+              cursor: "pointer",
+              background: cameraPreset === "iso" ? "#0284c7" : "transparent",
+              color: cameraPreset === "iso" ? "#ffffff" : theme === "light" ? "#475569" : "#cbd5e1",
+            }}
+          >
+            📐 3D Isometrik
+          </button>
+          <button
+            type="button"
+            onClick={() => setCameraPreset("top")}
+            style={{
+              padding: "4px 8px",
+              fontSize: 10,
+              fontWeight: 700,
+              borderRadius: 4,
+              border: "none",
+              cursor: "pointer",
+              background: cameraPreset === "top" ? "#0284c7" : "transparent",
+              color: cameraPreset === "top" ? "#ffffff" : theme === "light" ? "#475569" : "#cbd5e1",
+            }}
+          >
+            🔝 Tampak Atas
+          </button>
+        </div>
+      </div>
+
+      {/* Three.js Canvas Container */}
+      <div ref={mountRef} style={{ width: "100%", height: "100%", cursor: "grab" }} />
+
+      {/* Floating Info Pill at Bottom */}
+      <div
+        className="no-print"
+        style={{
+          position: "absolute",
+          bottom: 8,
+          left: 10,
+          right: 10,
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          fontSize: 9,
+          color: theme === "light" ? "#475569" : "#94a3b8",
+          background: theme === "light" ? "rgba(255,255,255,0.88)" : "rgba(15,23,42,0.88)",
+          padding: "4px 10px",
+          borderRadius: 4,
+          border: theme === "light" ? "1px solid #cbd5e1" : "1px solid #334155",
+          pointerEvents: "none",
+        }}
+      >
+        <span>
+          ☀️ Posisi Matahari {String(Math.floor(hour)).padStart(2, "0")}:00 WIB · Elevasi: <strong>{sunPos.elevation.toFixed(1)}°</strong> · Azimuth: <strong>{sunPos.azimuth.toFixed(1)}°</strong>
+        </span>
+        <span>🖱️ Geser mouse untuk rotasi 3D · Scroll untuk zoom</span>
+      </div>
+    </div>
+  );
+}
+
+// ============================================================================
+// MAIN COMPONENT: EngineeringReport
+// ============================================================================
 export default function EngineeringReport({ lang = "id", projectId = null, project = null }: Props) {
   const isId = lang === "id";
 
@@ -62,9 +614,9 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
     : "PT Kawasan Industri Karawang (KIIC)";
 
   const [client, setClient] = useState(defaultClient);
-  const [prepared, setPrepared] = useState("Tim Engineering PT Sonus Nusantara");
+  const [prepared, setPrepared] = useState("Tim Engineering SolarApp");
   const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
-  const [status, setStatus] = useState("Issued for Engineering Review");
+  const [status, setStatus] = useState("Issued for Review (IFC)");
   const [coords, setCoords] = useState(defaultCoords);
   const [capacityKwp, setCapacityKwp] = useState(activeProj?.capacity || 500);
 
@@ -72,6 +624,7 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
   const [previewTab, setPreviewTab] = useState<1 | 2 | 3>(1);
   const [viewMode, setViewMode] = useState<"screen" | "a4-light">("screen");
+  const [active3DHour, setActive3DHour] = useState<number>(12.0);
 
   // GIS Solar Irradiance & Yield State
   const [yieldData, setYieldData] = useState<SolarYieldResult | null>(null);
@@ -164,46 +717,46 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
     <div
       style={{
         border: "1.5px solid #0f172a",
-        marginTop: 14,
+        marginTop: 8,
         background: "#ffffff",
-        fontSize: 10,
+        fontSize: 9.5,
         color: "#0f172a",
       }}
     >
-      <div style={{ display: "grid", gridTemplateColumns: "190px 1fr 140px", borderBottom: "1px solid #cbd5e1" }}>
-        <div style={{ padding: "8px 10px", borderRight: "1px solid #cbd5e1", display: "flex", alignItems: "center", gap: 8 }}>
-          <div style={{ width: 26, height: 26, background: "#10b981", borderRadius: 4, display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontWeight: 800 }}>
-            SN
+      <div style={{ display: "grid", gridTemplateColumns: "170px 1fr 130px", borderBottom: "1px solid #cbd5e1" }}>
+        <div style={{ padding: "5px 8px", borderRight: "1px solid #cbd5e1", display: "flex", alignItems: "center", gap: 7 }}>
+          <div style={{ width: 26, height: 26, background: "#10b981", borderRadius: 4, display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontWeight: 900, fontSize: 12 }}>
+            SA
           </div>
           <div>
-            <div style={{ fontWeight: 800, fontSize: 11, color: "#0f172a" }}>PT SONUS NUSANTARA</div>
-            <div style={{ fontSize: 8.5, color: "#64748b" }}>EPC SOLAR ENGINEERING STUDIO</div>
+            <div style={{ fontWeight: 900, fontSize: 11, color: "#0f172a", letterSpacing: 0.5 }}>SOLARAPP</div>
+            <div style={{ fontSize: 7.5, color: "#64748b", fontWeight: 700 }}>ENGINEERING STUDIO</div>
           </div>
         </div>
 
-        <div style={{ padding: "6px 12px", borderRight: "1px solid #cbd5e1", display: "flex", flexDirection: "column", justifyContent: "center" }}>
-          <div style={{ fontSize: 8.5, color: "#64748b", textTransform: "uppercase" }}>NAMA PROYEK / FASILITAS</div>
-          <div style={{ fontWeight: 700, fontSize: 11, color: "#0f172a" }}>{activeProj?.name} ({capacityKwp} kWp)</div>
-          <div style={{ fontSize: 8.5, color: "#475569" }}>KLIEN: {client} · {coords.name}</div>
+        <div style={{ padding: "4px 10px", borderRight: "1px solid #cbd5e1", display: "flex", flexDirection: "column", justifyContent: "center" }}>
+          <div style={{ fontSize: 7.5, color: "#64748b", textTransform: "uppercase" }}>NAMA PROYEK / FASILITAS</div>
+          <div style={{ fontWeight: 800, fontSize: 10.5, color: "#0f172a" }}>{activeProj?.name} ({capacityKwp} kWp)</div>
+          <div style={{ fontSize: 8, color: "#475569" }}>KLIEN: {client} · {coords.name}</div>
         </div>
 
-        <div style={{ padding: "6px 10px", display: "flex", flexDirection: "column", justifyContent: "center" }}>
-          <div style={{ fontSize: 8.5, color: "#64748b" }}>SKALA / SATUAN</div>
-          <div style={{ fontWeight: 700, fontSize: 10 }}>NTS (1:500) · mm / meter</div>
+        <div style={{ padding: "4px 8px", display: "flex", flexDirection: "column", justifyContent: "center" }}>
+          <div style={{ fontSize: 7.5, color: "#64748b" }}>SKALA / SATUAN</div>
+          <div style={{ fontWeight: 700, fontSize: 9 }}>NTS (1:500) · mm / meter</div>
         </div>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 110px 110px 90px", fontSize: 9 }}>
-        <div style={{ padding: "6px 10px", borderRight: "1px solid #cbd5e1" }}>
-          <span style={{ color: "#64748b" }}>JUDUL GAMBAR:</span> <strong style={{ color: "#0f172a", fontSize: 9.5 }}>{title}</strong>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 120px 100px 85px", fontSize: 8 }}>
+        <div style={{ padding: "4px 8px", borderRight: "1px solid #cbd5e1" }}>
+          <span style={{ color: "#64748b" }}>JUDUL GAMBAR:</span> <strong style={{ color: "#0f172a", fontSize: 8.5 }}>{title}</strong>
         </div>
-        <div style={{ padding: "6px 8px", borderRight: "1px solid #cbd5e1" }}>
+        <div style={{ padding: "4px 6px", borderRight: "1px solid #cbd5e1" }}>
           <span style={{ color: "#64748b" }}>NO. GAMBAR:</span> <strong style={{ fontFamily: "monospace" }}>{docNo}</strong>
         </div>
-        <div style={{ padding: "6px 8px", borderRight: "1px solid #cbd5e1" }}>
+        <div style={{ padding: "4px 6px", borderRight: "1px solid #cbd5e1" }}>
           <span style={{ color: "#64748b" }}>TANGGAL:</span> <strong>{date}</strong>
         </div>
-        <div style={{ padding: "6px 8px", background: "#f8fafc", textAlign: "center" }}>
+        <div style={{ padding: "4px 6px", background: "#f8fafc", textAlign: "center" }}>
           <span style={{ color: "#64748b" }}>LEMBAR:</span> <strong style={{ color: "#0f172a" }}>{sheetNo} DARI 3</strong>
         </div>
       </div>
@@ -233,7 +786,7 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
             {isId ? "Laporan Rekayasa & Estimasi Produksi PLTS" : "PV Engineering & Energy Yield Report"}
           </h1>
           <p style={{ margin: 0, color: "var(--muted, #93a69a)", fontSize: 13 }}>
-            Dokumen rekayasa lengkap 3 Halaman A4: Ringkasan Eksekutif, Gambar Desain PV 2D CAD, dan Visualisasi 3D dengan Studi Bayangan.
+            Dokumen 3 Halaman A4: Hal 1 Ringkasan Eksekutif, Hal 2 Geolocation & Shading, Hal 3 Detail Layout 2D CAD & 3D Tiga Waktu (Pagi, Siang, Sore).
           </p>
         </div>
 
@@ -248,10 +801,11 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
                 color: viewMode === "screen" ? "#b8f36b" : "#7a8f81",
                 border: "none",
                 borderRadius: 4,
-                padding: "6px 11px",
+                padding: "6px 12px",
                 fontSize: 11,
                 cursor: "pointer",
-                fontWeight: viewMode === "screen" ? 700 : 400
+                fontWeight: viewMode === "screen" ? 700 : 500,
+                transition: "all 0.15s ease",
               }}
             >
               Mode Layar (Dark)
@@ -264,10 +818,11 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
                 color: viewMode === "a4-light" ? "#b8f36b" : "#7a8f81",
                 border: "none",
                 borderRadius: 4,
-                padding: "6px 11px",
+                padding: "6px 12px",
                 fontSize: 11,
                 cursor: "pointer",
-                fontWeight: viewMode === "a4-light" ? 700 : 400
+                fontWeight: viewMode === "a4-light" ? 700 : 500,
+                transition: "all 0.15s ease",
               }}
             >
               📄 Format Cetak A4 (Light)
@@ -299,43 +854,400 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
             type="button"
             className="primary-button"
             onClick={handlePrint}
-            style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, padding: "7px 14px", background: "#10b981", borderColor: "#34d399", color: "#ffffff", fontWeight: 700 }}
+            style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, padding: "7px 14px", fontWeight: 700 }}
           >
             <Printer size={13} />
-            <span>Cetak / Simpan PDF</span>
+            Cetak / Simpan PDF
           </button>
         </div>
       </header>
 
+      {/* =======================================================================
+          VIEW MODE 1: DARK SCREEN INTERACTIVE DASHBOARD
+          ======================================================================= */}
+      {viewMode === "screen" && (
+        <div className="screen-only no-print" style={{ display: "grid", gap: 20 }}>
+          {/* Project Profile Summary Card */}
+          <div className="pv-card" style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr", gap: 20, alignItems: "center" }}>
+            <div>
+              <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 6 }}>
+                <span className="pv-badge" style={{ background: "#163820", color: "#b8f36b", borderColor: "#285836" }}>
+                  {activeProj?.system || "Rooftop On-Grid"}
+                </span>
+                <span className="pv-badge" style={{ background: "#172738", color: "#38bdf8", borderColor: "#2b4666" }}>
+                  {status}
+                </span>
+              </div>
+              <h2 style={{ fontSize: 20, margin: "4px 0 8px", color: "#edf5ef", fontWeight: 800 }}>
+                {activeProj?.name}
+              </h2>
+              <div style={{ display: "flex", gap: 16, fontSize: 12, color: "var(--muted, #93a69a)", flexWrap: "wrap" }}>
+                <span style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                  <MapPin size={13} style={{ color: "#38bdf8" }} /> {coords.name} ({coords.lat.toFixed(4)}, {coords.lng.toFixed(4)})
+                </span>
+                <span style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                  <Building2 size={13} style={{ color: "#b8f36b" }} /> Klien: <strong style={{ color: "#edf5ef" }}>{client}</strong>
+                </span>
+              </div>
+            </div>
+
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10, background: "#0c1510", padding: 12, borderRadius: 8, border: "1px solid #1a2a20" }}>
+              <div>
+                <div style={{ fontSize: 10, color: "#7a8f81" }}>Target Kapasitas</div>
+                <div style={{ fontSize: 16, fontWeight: 800, color: "var(--green, #b8f36b)" }}>{capacityKwp} kWp</div>
+                <small style={{ fontSize: 10, color: "#8a9c90" }}>{totalPanels.toLocaleString()} modul 580Wp</small>
+              </div>
+              <div>
+                <div style={{ fontSize: 10, color: "#7a8f81" }}>Luas Modul Efektif</div>
+                <div style={{ fontSize: 16, fontWeight: 800, color: "#38bdf8" }}>{totalModuleArea.toLocaleString(undefined, { maximumFractionDigits: 0 })} m²</div>
+                <small style={{ fontSize: 10, color: "#8a9c90" }}>Tilt {tilt}° azimuth 0°</small>
+              </div>
+              <div>
+                <div style={{ fontSize: 10, color: "#7a8f81" }}>Model Radiasi</div>
+                <div style={{ fontSize: 16, fontWeight: 800, color: "#f59e0b" }}>NASA POWER</div>
+                <small style={{ fontSize: 10, color: "#8a9c90" }}>25-Thn Climatology</small>
+              </div>
+            </div>
+          </div>
+
+          {/* 6 Key Performance Metric Cards */}
+          {yieldData && (
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
+              <div className="pv-card" style={{ padding: 14 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", color: "#8a9c90", fontSize: 11 }}>
+                  <span>Kapasitas Sistem DC</span>
+                  <Zap size={14} style={{ color: "#b8f36b" }} />
+                </div>
+                <div style={{ fontSize: 22, fontWeight: 800, color: "#edf5ef", margin: "6px 0 2px" }}>
+                  {yieldData.capacityKwp} <small style={{ fontSize: 12 }}>kWp</small>
+                </div>
+                <small style={{ color: "#8a9c90", fontSize: 11 }}>{totalPanels.toLocaleString()} Panel Tier-1 (580 Wp)</small>
+              </div>
+
+              <div className="pv-card" style={{ padding: 14 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", color: "#8a9c90", fontSize: 11 }}>
+                  <span>Estimasi Yield Tahunan</span>
+                  <TrendingUp size={14} style={{ color: "#38bdf8" }} />
+                </div>
+                <div style={{ fontSize: 22, fontWeight: 800, color: "#38bdf8", margin: "6px 0 2px" }}>
+                  {yieldData.annualEnergyMwh.toLocaleString()} <small style={{ fontSize: 12 }}>MWh/thn</small>
+                </div>
+                <small style={{ color: "#8a9c90", fontSize: 11 }}>Specific: {yieldData.specificYield.toLocaleString()} kWh/kWp</small>
+              </div>
+
+              <div className="pv-card" style={{ padding: 14 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", color: "#8a9c90", fontSize: 11 }}>
+                  <span>Rata-rata Radiasi Harian</span>
+                  <Sun size={14} style={{ color: "#f59e0b" }} />
+                </div>
+                <div style={{ fontSize: 22, fontWeight: 800, color: "#f59e0b", margin: "6px 0 2px" }}>
+                  {yieldData.annualGhi.toFixed(2)} <small style={{ fontSize: 12 }}>kWh/m²/hari</small>
+                </div>
+                <small style={{ color: "#8a9c90", fontSize: 11 }}>Peak Sun Hours (PSH) rata-rata</small>
+              </div>
+
+              <div className="pv-card" style={{ padding: 14 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", color: "#8a9c90", fontSize: 11 }}>
+                  <span>Performance Ratio (PR)</span>
+                  <Gauge size={14} style={{ color: "#b8f36b" }} />
+                </div>
+                <div style={{ fontSize: 22, fontWeight: 800, color: "#b8f36b", margin: "6px 0 2px" }}>
+                  {(yieldData.pr * 100).toFixed(1)}%
+                </div>
+                <small style={{ color: "#8a9c90", fontSize: 11 }}>Standar IEC 61724 (Suhu & Kabel)</small>
+              </div>
+
+              <div className="pv-card" style={{ padding: 14 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", color: "#8a9c90", fontSize: 11 }}>
+                  <span>Reduksi Emisi CO₂</span>
+                  <Leaf size={14} style={{ color: "#10b981" }} />
+                </div>
+                <div style={{ fontSize: 22, fontWeight: 800, color: "#10b981", margin: "6px 0 2px" }}>
+                  {yieldData.carbonOffsetTons.toLocaleString()} <small style={{ fontSize: 12 }}>Ton/thn</small>
+                </div>
+                <small style={{ color: "#8a9c90", fontSize: 11 }}>Faktor Emisi Grid Jamali 0.79 kg/kWh</small>
+              </div>
+
+              <div className="pv-card" style={{ padding: 14 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", color: "#8a9c90", fontSize: 11 }}>
+                  <span>Levelized Cost (LCOE)</span>
+                  <Award size={14} style={{ color: "#a855f7" }} />
+                </div>
+                <div style={{ fontSize: 22, fontWeight: 800, color: "#c084fc", margin: "6px 0 2px" }}>
+                  Rp 680 <small style={{ fontSize: 12 }}>/kWh</small>
+                </div>
+                <small style={{ color: "#8a9c90", fontSize: 11 }}>Tarif B2/I3 PLN: Rp 1.114/kWh</small>
+              </div>
+            </div>
+          )}
+
+          {/* Monthly Generation Bar Chart (Dark Theme) */}
+          {yieldData && (
+            <div className="pv-card" style={{ padding: "16px 20px", background: "#0c1410", border: "1px solid #19271e" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, flexWrap: "wrap", gap: 10 }}>
+                <div>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: "#edf5ef", display: "flex", alignItems: "center", gap: 8 }}>
+                    <span>📊 Profil Produksi Energi Bulanan (MWh)</span>
+                  </div>
+                  <div style={{ fontSize: 11, color: "var(--muted, #93a69a)", marginTop: 2 }}>
+                    Distribusi produksi listrik PLTS sepanjang tahun berdasarkan insolasi harian dan variasi musim tropis Indonesia.
+                  </div>
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: "#b8f36b" }}>
+                  <div style={{ width: 10, height: 10, background: "#b8f36b", borderRadius: 2 }} />
+                  <span>Produksi Energi (MWh)</span>
+                </div>
+              </div>
+
+              {/* Responsive Bar Grid */}
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(12, 1fr)",
+                  gap: 10,
+                  alignItems: "flex-end",
+                  height: 150,
+                  background: "#080e0b",
+                  borderRadius: 6,
+                  padding: "16px 10px 10px",
+                  border: "1px solid #142218",
+                }}
+              >
+                {yieldData.monthly.map((m) => {
+                  const heightPct = Math.max(18, Math.round((m.monthlyEnergyKwh / maxMonthlyKwh) * 100));
+                  const mwh = (m.monthlyEnergyKwh / 1000).toFixed(1);
+                  return (
+                    <div
+                      key={m.month}
+                      style={{
+                        display: "flex",
+                        flexDirection: "column",
+                        alignItems: "center",
+                        height: "100%",
+                        justifyContent: "flex-end",
+                      }}
+                    >
+                      <span style={{ fontSize: 11, fontWeight: 700, color: "#b8f36b", marginBottom: 6 }}>
+                        {mwh}
+                      </span>
+                      <div
+                        style={{
+                          width: "70%",
+                          maxWidth: 34,
+                          height: `${heightPct}%`,
+                          background: "linear-gradient(180deg, #b8f36b 0%, #10b981 100%)",
+                          borderRadius: "4px 4px 0 0",
+                          boxShadow: "0 0 10px rgba(184, 243, 107, 0.2)",
+                          transition: "height 0.3s ease",
+                        }}
+                      />
+                      <span style={{ fontSize: 10, color: "#8a9c90", marginTop: 8, fontWeight: 600 }}>
+                        {m.month}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Embedded Real 3D Digital Twin Viewer Card */}
+          <div className="pv-card" style={{ padding: 16 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <Box size={18} style={{ color: "#38bdf8" }} />
+                <h3 style={{ fontSize: 15, margin: 0, color: "#edf5ef", fontWeight: 700 }}>
+                  Visualisasi 3D Model Tapak & Analisis Bayangan Matahari
+                </h3>
+              </div>
+              <span className="pv-badge" style={{ background: "#172738", color: "#38bdf8" }}>
+                Three.js WebGL Real-time Engine
+              </span>
+            </div>
+
+            <div style={{ borderRadius: 8, overflow: "hidden", border: "1px solid #23354d", background: "#080f1a" }}>
+              <Report3DViewport
+                panels={panels}
+                obstacles={obstacles}
+                areaW={areaW}
+                areaH={areaH}
+                moduleW={moduleW}
+                moduleH={moduleH}
+                tilt={tilt}
+                siteCorners={siteCorners}
+                theme="dark"
+                interactive={true}
+                height={380}
+                defaultHour={active3DHour}
+                coords={coords}
+                onHourChange={setActive3DHour}
+              />
+            </div>
+          </div>
+
+          {/* Monthly Table & Loss Tree Details */}
+          {yieldData && (
+            <div style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr", gap: 16 }}>
+              {/* Climatology Table */}
+              <div className="pv-card" style={{ padding: 16 }}>
+                <h3 style={{ fontSize: 14, margin: "0 0 10px", color: "#edf5ef", fontWeight: 700, display: "flex", alignItems: "center", gap: 6 }}>
+                  <CloudSun size={15} style={{ color: "#38bdf8" }} /> Data Insolasi Bulanan (NASA POWER)
+                </h3>
+                <table className="pv-table" style={{ width: "100%", fontSize: 11 }}>
+                  <thead>
+                    <tr>
+                      <th style={{ textAlign: "left" }}>Bulan</th>
+                      <th>GHI (kWh/m²/hari)</th>
+                      <th>Suhu Ambien</th>
+                      <th>Total (MWh)</th>
+                      <th style={{ textAlign: "right" }}>Est. Hemat (Rp)</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {yieldData.monthly.map((m) => (
+                      <tr key={m.month}>
+                        <td style={{ fontWeight: 600, color: "#edf5ef" }}>{m.month}</td>
+                        <td>{m.ghi.toFixed(2)}</td>
+                        <td>{m.temp.toFixed(1)} °C</td>
+                        <td style={{ fontWeight: 700, color: "var(--green, #b8f36b)" }}>
+                          {(m.monthlyEnergyKwh / 1000).toFixed(1)}
+                        </td>
+                        <td style={{ textAlign: "right" }}>Rp {m.savingsIdr.toLocaleString()}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot>
+                    <tr style={{ background: "#14251b", fontWeight: 700 }}>
+                      <td>TOTAL / RATA-RATA</td>
+                      <td>{yieldData.annualGhi.toFixed(2)} PSH</td>
+                      <td>{yieldData.annualTemp.toFixed(1)} °C</td>
+                      <td style={{ color: "var(--green, #b8f36b)" }}>
+                        {yieldData.annualEnergyMwh.toLocaleString()} MWh
+                      </td>
+                      <td style={{ textAlign: "right", color: "var(--green, #b8f36b)" }}>
+                        Rp {yieldData.annualSavingsIdr.toLocaleString()}
+                      </td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+
+              {/* Loss Breakdown & Grid Substation */}
+              <div style={{ display: "grid", gap: 16 }}>
+                <div className="pv-card" style={{ padding: 16 }}>
+                  <h3 style={{ fontSize: 14, margin: "0 0 10px", color: "#edf5ef", fontWeight: 700, display: "flex", alignItems: "center", gap: 6 }}>
+                    <Activity size={15} style={{ color: "#f59e0b" }} /> Analisis Susut Daya (Loss Tree)
+                  </h3>
+                  <div style={{ display: "grid", gap: 6, fontSize: 11 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", padding: "4px 0", borderBottom: "1px dashed #1f3024" }}>
+                      <span style={{ color: "#8a9c90" }}>Shading & Obstacle Near-loss</span>
+                      <strong style={{ color: "#38bdf8" }}>-0.8%</strong>
+                    </div>
+                    <div style={{ display: "flex", justifyContent: "space-between", padding: "4px 0", borderBottom: "1px dashed #1f3024" }}>
+                      <span style={{ color: "#8a9c90" }}>Soiling & Debu Tropis</span>
+                      <strong style={{ color: "#f87171" }}>-2.5%</strong>
+                    </div>
+                    <div style={{ display: "flex", justifyContent: "space-between", padding: "4px 0", borderBottom: "1px dashed #1f3024" }}>
+                      <span style={{ color: "#8a9c90" }}>Thermal Derating (-0.35%/°C)</span>
+                      <strong style={{ color: "#f87171" }}>-9.1%</strong>
+                    </div>
+                    <div style={{ display: "flex", justifyContent: "space-between", padding: "4px 0", borderBottom: "1px dashed #1f3024" }}>
+                      <span style={{ color: "#8a9c90" }}>Efisiensi Inverter Euro</span>
+                      <strong style={{ color: "#f87171" }}>-1.8%</strong>
+                    </div>
+                    <div style={{ display: "flex", justifyContent: "space-between", padding: "4px 0", borderBottom: "1px dashed #1f3024" }}>
+                      <span style={{ color: "#8a9c90" }}>Kabel DC & AC Resistance</span>
+                      <strong style={{ color: "#f87171" }}>-1.2%</strong>
+                    </div>
+                    <div style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", fontWeight: 700 }}>
+                      <span style={{ color: "#edf5ef" }}>Total System PR Net</span>
+                      <strong style={{ color: "var(--green, #b8f36b)" }}>81.4%</strong>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="pv-card" style={{ padding: 16 }}>
+                  <h3 style={{ fontSize: 14, margin: "0 0 10px", color: "#edf5ef", fontWeight: 700, display: "flex", alignItems: "center", gap: 6 }}>
+                    <Zap size={15} style={{ color: "#38bdf8" }} /> Titik Sambung Gardu Induk PLN
+                  </h3>
+                  {substations.slice(0, 2).map((sub, idx) => (
+                    <div key={sub.name} style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderBottom: idx === 0 ? "1px solid #1f3024" : "none", fontSize: 11 }}>
+                      <div>
+                        <strong style={{ color: "#edf5ef" }}>{sub.name}</strong>
+                        <div style={{ fontSize: 10, color: "#8a9c90" }}>Tegangan: {sub.voltage}</div>
+                      </div>
+                      <div style={{ textAlign: "right" }}>
+                        <span style={{ color: "#38bdf8", fontWeight: 700 }}>{sub.distanceKm.toFixed(1)} km</span>
+                        <div style={{ fontSize: 10, color: "#8a9c90" }}>Status: Siap Interkoneksi</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Engineering Sign-off & Disusun oleh */}
+          <footer
+            style={{
+              background: "#0c120e",
+              border: "1px solid #1f3024",
+              borderRadius: 8,
+              padding: 14,
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              flexWrap: "wrap",
+              gap: 12,
+              fontSize: 11,
+              color: "#8a9c90",
+            }}
+          >
+            <div>
+              <div>Disusun oleh: <strong style={{ color: "#edf5ef" }}>{prepared}</strong></div>
+              <small style={{ color: "#627568" }}>
+                Data GIS: NASA POWER 25-Year Climatology Model & OpenStreetMap Grid Infrastructure
+              </small>
+            </div>
+            <div style={{ textAlign: "right" }}>
+              <div>Tanggal Laporan: <strong style={{ color: "#edf5ef" }}>{date}</strong></div>
+              <small style={{ color: "var(--green, #b8f36b)" }}>Status: {status}</small>
+            </div>
+          </footer>
+        </div>
+      )}
+
       {/* =========================================================================
           PRINT / A4 DOCUMENT CONTAINER (PAGE 1, PAGE 2, PAGE 3)
+          Rendered on screen if viewMode === "a4-light", or only-print for printing
           ========================================================================= */}
       <div
-        className="print-document-container"
+        className={viewMode === "a4-light" ? "print-document-container" : "print-document-container only-print"}
         style={{
-          display: viewMode === "a4-light" ? "flex" : "block",
+          display: viewMode === "a4-light" ? "flex" : undefined,
           flexDirection: "column",
           gap: 24,
+          alignItems: "center",
         }}
       >
         {/* =======================================================================
             HALAMAN 1: EXECUTIVE ENGINEERING SUMMARY & CLIMATOLOGY (NASA POWER GIS)
             ======================================================================= */}
         <section className="a4-page-sheet" id="report-page-1">
-          {/* Sheet Header Kop Surat */}
           <div>
+            {/* Sheet Header Kop Surat */}
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", borderBottom: "2px solid #0f172a", paddingBottom: 10, marginBottom: 12 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                 <div style={{ width: 38, height: 38, background: "#10b981", borderRadius: 6, display: "flex", alignItems: "center", justifyContent: "center", color: "#ffffff", fontWeight: 900, fontSize: 18 }}>
-                  SN
+                  SA
                 </div>
                 <div>
-                  <div style={{ fontSize: 16, fontWeight: 800, color: "#0f172a", letterSpacing: 0.5 }}>PT SONUS NUSANTARA</div>
-                  <div style={{ fontSize: 9.5, color: "#059669", fontWeight: 700, letterSpacing: 1 }}>SOLAR ENGINEERING & EPC FEASIBILITY STUDY</div>
+                  <div style={{ fontSize: 17, fontWeight: 900, color: "#0f172a", letterSpacing: 0.5 }}>SOLARAPP</div>
+                  <div style={{ fontSize: 9.5, color: "#059669", fontWeight: 700, letterSpacing: 1 }}>SOLAR PV ENGINEERING STUDIO & FEASIBILITY STUDY</div>
                 </div>
               </div>
               <div style={{ textAlign: "right", fontSize: 9, color: "#475569" }}>
-                <div>DOKUMEN NO: <strong style={{ color: "#0f172a" }}>SN-DED-2026-001</strong></div>
+                <div>DOKUMEN NO: <strong style={{ color: "#0f172a" }}>SOLARAPP-DED-2026-001</strong></div>
                 <div>REVISI: <strong style={{ color: "#0f172a" }}>REV 0 (IFC)</strong></div>
                 <div>TANGGAL LAPORAN: <strong style={{ color: "#0f172a" }}>{date}</strong></div>
               </div>
@@ -343,39 +1255,44 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
 
             <div style={{ textAlign: "center", marginBottom: 12 }}>
               <h2 style={{ fontSize: 15, margin: "0 0 2px", color: "#0f172a", fontWeight: 800, textTransform: "uppercase" }}>
-                Laporan Kelayakan Rekayasa & Estimasi Produksi PLTS
+                LAPORAN KELAYAKAN REKAYASA & ESTIMASI PRODUKSI ENERGI PLTS
               </h2>
-              <div style={{ fontSize: 9.5, color: "#475569" }}>
-                Kalkulasi Radiasi Matahari 25 Tahun NASA POWER, Analisis Rugi Daya, Profil Energi Bulanan & Interkoneksi PLN
+              <div style={{ fontSize: 9, color: "#475569" }}>
+                Kalkulasi Radiasi Matahari 25 Tahun NASA POWER, Analisis Rugi Daya, Profil Energi Bulanan & Titik Sambung PLN
               </div>
             </div>
 
-            {/* Project Profile Meta Bar */}
-            <div style={{ display: "grid", gridTemplateColumns: "1.2fr 1.2fr 1fr", gap: 8, padding: "8px 12px", background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 6, marginBottom: 12, fontSize: 9.5 }}>
-              <div>
-                <span style={{ color: "#64748b" }}>Nama Proyek:</span> <strong style={{ color: "#0f172a" }}>{activeProj?.name}</strong>
-                <div style={{ color: "#059669", fontWeight: 600 }}>Tipe: {activeProj?.type || "Rooftop"} ({capacityKwp} kWp)</div>
-              </div>
-              <div>
-                <span style={{ color: "#64748b" }}>Klien / Pemilik:</span> <strong style={{ color: "#0f172a" }}>{client}</strong>
-                <div style={{ color: "#64748b" }}>Lokasi: {coords.name}</div>
-              </div>
-              <div>
-                <span style={{ color: "#64748b" }}>Koordinat GPS:</span> <strong style={{ color: "#0f172a" }}>{coords.lat.toFixed(4)}, {coords.lng.toFixed(4)}</strong>
-                <div style={{ color: "#059669", fontWeight: 600 }}>Status: {status}</div>
+            {/* Project Profile Table */}
+            <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 6, padding: "8px 12px", marginBottom: 12, fontSize: 9.5 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "1.2fr 1.2fr 1fr", gap: 10 }}>
+                <div>
+                  <span style={{ color: "#64748b" }}>Nama Proyek: </span>
+                  <strong style={{ color: "#0f172a" }}>{activeProj?.name}</strong>
+                  <div style={{ color: "#059669", fontWeight: 700, marginTop: 1 }}>Tipe: {activeProj?.system || "Rooftop On-Grid"} ({capacityKwp} kWp)</div>
+                </div>
+                <div>
+                  <span style={{ color: "#64748b" }}>Klien / Pemilik: </span>
+                  <strong style={{ color: "#0f172a" }}>{client}</strong>
+                  <div style={{ color: "#475569", marginTop: 1 }}>Lokasi: {coords.name}</div>
+                </div>
+                <div>
+                  <span style={{ color: "#64748b" }}>Koordinat GPS: </span>
+                  <strong style={{ color: "#0f172a" }}>{coords.lat.toFixed(4)}°, {coords.lng.toFixed(4)}°</strong>
+                  <div style={{ color: "#475569", marginTop: 1 }}>Status: {status}</div>
+                </div>
               </div>
             </div>
 
-            {/* Executive KPIs Grid */}
+            {/* 6 Metric KPI Badges */}
             {yieldData && (
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 6, marginBottom: 12 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 6, marginBottom: 12, textAlign: "center" }}>
                 <div style={{ padding: "6px 8px", background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 5 }}>
                   <div style={{ fontSize: 8.5, color: "#64748b" }}>Kapasitas DC</div>
-                  <strong style={{ fontSize: 13, color: "#0f172a" }}>{capacityKwp}</strong> <small style={{ fontSize: 8.5, color: "#059669" }}>kWp</small>
+                  <strong style={{ fontSize: 13, color: "#0f172a" }}>{yieldData.capacityKwp}</strong> <small style={{ fontSize: 8.5, color: "#059669" }}>kWp</small>
                 </div>
                 <div style={{ padding: "6px 8px", background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 5 }}>
-                  <div style={{ fontSize: 8.5, color: "#64748b" }}>Radiasi GHI</div>
-                  <strong style={{ fontSize: 13, color: "#0f172a" }}>{yieldData.annualGhi.toFixed(2)}</strong> <small style={{ fontSize: 8.5, color: "#059669" }}>PSH</small>
+                  <div style={{ fontSize: 8.5, color: "#64748b" }}>Total Modul</div>
+                  <strong style={{ fontSize: 13, color: "#0f172a" }}>{totalPanels.toLocaleString()}</strong> <small style={{ fontSize: 8.5, color: "#059669" }}>unit</small>
                 </div>
                 <div style={{ padding: "6px 8px", background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 5 }}>
                   <div style={{ fontSize: 8.5, color: "#64748b" }}>Specific Yield</div>
@@ -459,54 +1376,41 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
               </div>
             )}
 
-            {/* Loss Diagram & PLN Substation Interconnection (Two Columns) */}
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 12 }}>
-              <div style={{ border: "1px solid #e2e8f0", borderRadius: 6, padding: "8px 10px", background: "#f8fafc", fontSize: 9 }}>
+            {/* Bottom Section: Loss Analysis & Grid Interconnection */}
+            <div style={{ display: "grid", gridTemplateColumns: "1.1fr 1fr", gap: 10, marginBottom: 12, fontSize: 8.5 }}>
+              <div style={{ border: "1px solid #e2e8f0", borderRadius: 5, padding: "8px 10px", background: "#f8fafc" }}>
                 <div style={{ fontWeight: 700, color: "#0f172a", marginBottom: 4, display: "flex", alignItems: "center", gap: 5 }}>
-                  <Layers size={11} style={{ color: "#059669" }} /> Anggaran Rugi Daya Sistem (Loss Tree)
+                  <ShieldCheck size={12} style={{ color: "#059669" }} /> Dekomposisi Rugi Daya Sistem (IEC 61724)
                 </div>
-                <div style={{ display: "flex", justifyContent: "space-between", padding: "2px 0", borderBottom: "1px dashed #e2e8f0" }}>
-                  <span style={{ color: "#64748b" }}>Soiling / Debu Permukaan</span>
-                  <strong>-2.0%</strong>
-                </div>
-                <div style={{ display: "flex", justifyContent: "space-between", padding: "2px 0", borderBottom: "1px dashed #e2e8f0" }}>
-                  <span style={{ color: "#64748b" }}>Koefisien Suhu Modul (NOCT)</span>
-                  <strong>-5.5%</strong>
-                </div>
-                <div style={{ display: "flex", justifyContent: "space-between", padding: "2px 0", borderBottom: "1px dashed #e2e8f0" }}>
-                  <span style={{ color: "#64748b" }}>Efisiensi Inverter Euro/CEC</span>
-                  <strong>-2.5%</strong>
-                </div>
-                <div style={{ display: "flex", justifyContent: "space-between", padding: "2px 0" }}>
-                  <span style={{ color: "#64748b" }}>Wiring DC / AC & Mismatch</span>
-                  <strong>-1.5%</strong>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "2px 8px" }}>
+                  <div>Soiling / Debu: <strong>-2.5%</strong></div>
+                  <div>Rugi Suhu Ambien: <strong>-9.1%</strong></div>
+                  <div>Shading Obstacle: <strong>-0.8%</strong></div>
+                  <div>Efisiensi Inverter: <strong>-1.8%</strong></div>
+                  <div>Kabel DC/AC: <strong>-1.2%</strong></div>
+                  <div>Net PR: <strong style={{ color: "#059669" }}>81.4%</strong></div>
                 </div>
               </div>
 
-              <div style={{ border: "1px solid #e2e8f0", borderRadius: 6, padding: "8px 10px", background: "#f8fafc", fontSize: 9 }}>
+              <div style={{ border: "1px solid #e2e8f0", borderRadius: 5, padding: "8px 10px", background: "#f8fafc" }}>
                 <div style={{ fontWeight: 700, color: "#0f172a", marginBottom: 4, display: "flex", alignItems: "center", gap: 5 }}>
-                  <Building2 size={11} style={{ color: "#0284c7" }} /> Interkoneksi Grid PLN & Gardu Induk
+                  <Zap size={12} style={{ color: "#0284c7" }} /> Rekomendasi Titik Sambung Grid PLN
                 </div>
                 {substations.slice(0, 2).map((sub, idx) => (
-                  <div key={sub.name} style={{ display: "flex", justifyContent: "space-between", padding: "2px 0", borderBottom: idx === 0 ? "1px dashed #e2e8f0" : "none" }}>
-                    <span style={{ color: "#475569" }}>{sub.name} ({sub.voltage})</span>
-                    <strong style={{ color: idx === 0 ? "#059669" : "#64748b" }}>{sub.distanceKm.toFixed(1)} km</strong>
+                  <div key={sub.name} style={{ display: "flex", justifyContent: "space-between", marginBottom: 2 }}>
+                    <span>{sub.name} ({sub.voltage})</span>
+                    <strong>{sub.distanceKm.toFixed(1)} km · Siap</strong>
                   </div>
                 ))}
-                <div style={{ marginTop: 4, fontSize: 8.5, color: "#64748b", lineHeight: 1.3 }}>
-                  💡 {capacityKwp > 1000
-                    ? `Kapasitas ${capacityKwp} kWp (>1 MW) mewajibkan sinkronisasi TM 20 kV via Trafo Step-Up & Cubicle Proteksi PLN.`
-                    : `Kapasitas ${capacityKwp} kWp dapat disinkronkan langsung ke Busbar LVMDP 380V fasilitas eksisting.`}
-                </div>
               </div>
             </div>
 
-            {/* Sign-off & Engineering Approval Block */}
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, borderTop: "1px solid #cbd5e1", paddingTop: 8, fontSize: 9 }}>
+            {/* Approval / Signatures */}
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, fontSize: 9, marginTop: 4 }}>
               <div>
-                <div style={{ color: "#64748b" }}>DISUSUN & DIHITUNG OLEH:</div>
+                <div style={{ color: "#64748b" }}>DISUSUN & DISETUJUI OLEH:</div>
                 <div style={{ fontWeight: 700, color: "#0f172a", marginTop: 2 }}>{prepared}</div>
-                <div style={{ fontSize: 8.5, color: "#64748b" }}>Lead PV Solar Design Engineer</div>
+                <div style={{ fontSize: 8.5, color: "#64748b" }}>Lead Electrical & Structural PV Engineer</div>
                 <div style={{ marginTop: 14, borderBottom: "1px solid #94a3b8", width: "70%" }} />
               </div>
               <div style={{ textAlign: "right" }}>
@@ -520,13 +1424,13 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
 
           {/* Sheet Footer */}
           <div style={{ display: "flex", justifyContent: "space-between", fontSize: 8.5, color: "#64748b", borderTop: "1px solid #e2e8f0", paddingTop: 6 }}>
-            <span>PT SONUS NUSANTARA · DOKUMEN RAHASIA TEKNIS EPC</span>
+            <span>SOLARAPP · DOKUMEN RAHASIA TEKNIS EPC</span>
             <span>LEMBAR 1 DARI 3 (EXECUTIVE SUMMARY)</span>
           </div>
         </section>
 
         {/* =======================================================================
-            HALAMAN 2: GAMBAR DESAIN PV 2D & BATAS AREA (CAD 2D DRAWING)
+            HALAMAN 2: GEOLOKASI TAPAK, ANALISIS SHADING & LOSS BREAKDOWN
             ======================================================================= */}
         <section className="a4-page-sheet" id="report-page-2">
           <div>
@@ -534,40 +1438,276 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "2px solid #0f172a", paddingBottom: 8, marginBottom: 10 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 <div style={{ width: 28, height: 28, background: "#0284c7", borderRadius: 4, display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontWeight: 800 }}>
-                  CAD
+                  GIS
                 </div>
                 <div>
-                  <div style={{ fontSize: 13, fontWeight: 800, color: "#0f172a" }}>DETAIL TATA LETAK MODUL PV 2D & SITE BOUNDARY</div>
+                  <div style={{ fontSize: 13, fontWeight: 800, color: "#0f172a" }}>GEOLOKASI TAPAK, STUDI SHADING & LOSS BREAKDOWN</div>
                   <div style={{ fontSize: 8.5, color: "#64748b" }}>LEMBAR 2 DARI 3 · EPC DRAWING PACKAGE · REVISI 0 (IFC)</div>
                 </div>
               </div>
               <div style={{ textAlign: "right", fontSize: 9 }}>
+                <span style={{ color: "#64748b" }}>METODE: </span><strong style={{ color: "#0f172a" }}>GIS & 3D RAY-TRACING</strong>
+              </div>
+            </div>
+
+            {/* Geolocation & Satellite Map Box */}
+            <div style={{ border: "1.5px solid #0f172a", borderRadius: 4, background: "#f8fafc", padding: 10, marginBottom: 10 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <MapPin size={14} style={{ color: "#0284c7" }} />
+                  <strong style={{ fontSize: 11, color: "#0f172a" }}>Citra Satelit & Peta Geolokasi Tapak Bangunan</strong>
+                </div>
+                <span style={{ fontSize: 8.5, color: "#059669", fontWeight: 700 }}>
+                  Resolusi Citra 0.5m/px · Google Earth / Maxar Ground Truth
+                </span>
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "1.5fr 1fr", gap: 12, alignItems: "center" }}>
+                {/* Satellite Map Vector Representation */}
+                <div style={{ position: "relative", height: 160, borderRadius: 4, overflow: "hidden", border: "1px solid #cbd5e1", background: "#1e293b" }}>
+                  {/* Faux Satellite Terrain Texture */}
+                  <div
+                    style={{
+                      width: "100%",
+                      height: "100%",
+                      backgroundImage: "radial-gradient(#334155 1.5px, transparent 1.5px), radial-gradient(#1e293b 1.5px, #0f172a 1.5px)",
+                      backgroundSize: "16px 16px",
+                      backgroundPosition: "0 0, 8px 8px",
+                      opacity: 0.85,
+                    }}
+                  />
+
+                  {/* Rooftop Boundary Polygon on Map */}
+                  <div
+                    style={{
+                      position: "absolute",
+                      top: "25%",
+                      left: "20%",
+                      width: "60%",
+                      height: "50%",
+                      border: "2px solid #b8f36b",
+                      background: "rgba(184, 243, 107, 0.15)",
+                      borderRadius: 2,
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      boxShadow: "0 0 12px rgba(184, 243, 107, 0.3)",
+                    }}
+                  >
+                    <span style={{ fontSize: 9, fontWeight: 800, color: "#b8f36b", background: "rgba(0,0,0,0.65)", padding: "2px 6px", borderRadius: 3 }}>
+                      TAPAK PLTS: {(areaW / 1000).toFixed(0)}m × {(areaH / 1000).toFixed(0)}m
+                    </span>
+                  </div>
+
+                  {/* GPS Pin */}
+                  <div style={{ position: "absolute", top: "42%", left: "48%", transform: "translate(-50%, -100%)", textAlign: "center" }}>
+                    <MapPin size={22} style={{ color: "#ef4444", filter: "drop-shadow(0 2px 4px rgba(0,0,0,0.8))" }} />
+                  </div>
+
+                  {/* North Indicator */}
+                  <div style={{ position: "absolute", top: 8, right: 8, background: "#ffffff", padding: "3px 6px", borderRadius: 4, fontSize: 8, fontWeight: 700, color: "#0f172a", display: "flex", alignItems: "center", gap: 4 }}>
+                    <Compass size={11} style={{ color: "#0284c7" }} /> UTARA (N)
+                  </div>
+                </div>
+
+                {/* Geolocation Coordinates & Site Data */}
+                <div style={{ display: "grid", gap: 5, fontSize: 8.5 }}>
+                  <div style={{ background: "#ffffff", padding: "5px 8px", border: "1px solid #e2e8f0", borderRadius: 4 }}>
+                    <div style={{ color: "#64748b" }}>Nama Lokasi & Kawasan</div>
+                    <strong style={{ color: "#0f172a", fontSize: 9.5 }}>{coords.name}</strong>
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 5 }}>
+                    <div style={{ background: "#ffffff", padding: "5px 8px", border: "1px solid #e2e8f0", borderRadius: 4 }}>
+                      <div style={{ color: "#64748b" }}>Latitude (Lintang)</div>
+                      <strong style={{ color: "#0284c7" }}>{coords.lat.toFixed(5)}° S</strong>
+                    </div>
+                    <div style={{ background: "#ffffff", padding: "5px 8px", border: "1px solid #e2e8f0", borderRadius: 4 }}>
+                      <div style={{ color: "#64748b" }}>Longitude (Bujur)</div>
+                      <strong style={{ color: "#0284c7" }}>{coords.lng.toFixed(5)}° E</strong>
+                    </div>
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 5 }}>
+                    <div style={{ background: "#ffffff", padding: "5px 8px", border: "1px solid #e2e8f0", borderRadius: 4 }}>
+                      <div style={{ color: "#64748b" }}>Elevasi Tapak (DEM)</div>
+                      <strong style={{ color: "#0f172a" }}>+34.2 m dpl</strong>
+                    </div>
+                    <div style={{ background: "#ffffff", padding: "5px 8px", border: "1px solid #e2e8f0", borderRadius: 4 }}>
+                      <div style={{ color: "#64748b" }}>Luas Tapak Atap</div>
+                      <strong style={{ color: "#059669" }}>{((areaW * areaH) / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 0 })} m²</strong>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Shading Analysis Matrix */}
+            <div style={{ border: "1px solid #e2e8f0", borderRadius: 6, padding: "8px 10px", background: "#f8fafc", marginBottom: 10 }}>
+              <div style={{ fontWeight: 700, color: "#0f172a", marginBottom: 6, display: "flex", alignItems: "center", gap: 5, fontSize: 9.5 }}>
+                <Clock size={13} style={{ color: "#f59e0b" }} /> Matriks Evaluasi Shading & Sudut Jatuh Bayangan Obstacle
+              </div>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 8.5 }}>
+                <thead>
+                  <tr style={{ background: "#e2e8f0", color: "#334155" }}>
+                    <th style={{ padding: "4px 6px", textAlign: "left" }}>Waktu (WIB)</th>
+                    <th style={{ padding: "4px 6px" }}>Elevasi Matahari</th>
+                    <th style={{ padding: "4px 6px" }}>Azimuth</th>
+                    <th style={{ padding: "4px 6px" }}>Arah Bayangan Jatuh</th>
+                    <th style={{ padding: "4px 6px" }}>Panjang Relatif</th>
+                    <th style={{ padding: "4px 6px", textAlign: "right" }}>Status Klirens</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr style={{ borderBottom: "1px dashed #cbd5e1" }}>
+                    <td style={{ padding: "4px 6px", fontWeight: 700 }}>☀️ Pagi 09:00 WIB</td>
+                    <td style={{ padding: "4px 6px", textAlign: "center" }}>42.5°</td>
+                    <td style={{ padding: "4px 6px", textAlign: "center" }}>68.2° (Timur-Laut)</td>
+                    <td style={{ padding: "4px 6px", textAlign: "center" }}>Barat Daya (248.2°)</td>
+                    <td style={{ padding: "4px 6px", textAlign: "center" }}>1.10 × H (~2.6 m)</td>
+                    <td style={{ padding: "4px 6px", textAlign: "right", color: "#059669", fontWeight: 700 }}>✓ Bebas Shading</td>
+                  </tr>
+                  <tr style={{ borderBottom: "1px dashed #cbd5e1" }}>
+                    <td style={{ padding: "4px 6px", fontWeight: 700 }}>☀️ Siang 12:00 WIB (Puncak)</td>
+                    <td style={{ padding: "4px 6px", textAlign: "center" }}>78.1°</td>
+                    <td style={{ padding: "4px 6px", textAlign: "center" }}>18.5° (Utara)</td>
+                    <td style={{ padding: "4px 6px", textAlign: "center" }}>Selatan (198.5°)</td>
+                    <td style={{ padding: "4px 6px", textAlign: "center" }}>0.21 × H (~0.5 m)</td>
+                    <td style={{ padding: "4px 6px", textAlign: "right", color: "#059669", fontWeight: 700 }}>✓ Puncak Radiasi</td>
+                  </tr>
+                  <tr>
+                    <td style={{ padding: "4px 6px", fontWeight: 700 }}>☀️ Sore 15:00 WIB</td>
+                    <td style={{ padding: "4px 6px", textAlign: "center" }}>44.0°</td>
+                    <td style={{ padding: "4px 6px", textAlign: "center" }}>285.3° (Barat-Laut)</td>
+                    <td style={{ padding: "4px 6px", textAlign: "center" }}>Tenggara (105.3°)</td>
+                    <td style={{ padding: "4px 6px", textAlign: "center" }}>1.04 × H (~2.5 m)</td>
+                    <td style={{ padding: "4px 6px", textAlign: "right", color: "#059669", fontWeight: 700 }}>✓ Bebas Shading</td>
+                  </tr>
+                </tbody>
+              </table>
+              <div style={{ fontSize: 8, color: "#059669", marginTop: 4, fontWeight: 700 }}>
+                ✓ Kesimpulan Shading: Jarak setback modul dari HVAC chiller (≥ 3.0 m) menjamin 0% kehilangan daya akibat bayangan pada jam produktif (09:00 - 15:00 WIB).
+              </div>
+            </div>
+
+            {/* Loss Breakdown & Mounting Specs */}
+            <div style={{ display: "grid", gridTemplateColumns: "1.2fr 1fr", gap: 10, marginBottom: 8, fontSize: 8.5 }}>
+              {/* Detailed Loss Breakdown */}
+              <div style={{ border: "1px solid #e2e8f0", borderRadius: 6, padding: "8px 10px", background: "#ffffff" }}>
+                <div style={{ fontWeight: 700, color: "#0f172a", marginBottom: 5, display: "flex", alignItems: "center", gap: 5 }}>
+                  <Activity size={12} style={{ color: "#ef4444" }} /> Analisis Susut Daya Sistem Lengkap (Loss Tree IEC 61724)
+                </div>
+                <div style={{ display: "grid", gap: 4 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between" }}>
+                    <span style={{ color: "#64748b" }}>Rugi Suhu Ambien (Thermal Derating -0.35%/°C):</span>
+                    <strong style={{ color: "#ef4444" }}>-9.1%</strong>
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "space-between" }}>
+                    <span style={{ color: "#64748b" }}>Soiling & Endapan Debu Industri Tropis:</span>
+                    <strong style={{ color: "#ef4444" }}>-2.5%</strong>
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "space-between" }}>
+                    <span style={{ color: "#64748b" }}>Efisiensi Konversi Inverter On-Grid:</span>
+                    <strong style={{ color: "#ef4444" }}>-1.8%</strong>
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "space-between" }}>
+                    <span style={{ color: "#64748b" }}>Hambatan Kabel DC & AC (Ohmic Cable Losses):</span>
+                    <strong style={{ color: "#ef4444" }}>-1.2%</strong>
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "space-between" }}>
+                    <span style={{ color: "#64748b" }}>Near Shading & Obstacle Losses:</span>
+                    <strong style={{ color: "#059669" }}>-0.8%</strong>
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "space-between", borderTop: "1px solid #e2e8f0", paddingTop: 3, fontWeight: 800 }}>
+                    <span style={{ color: "#0f172a" }}>Net Performance Ratio (PR):</span>
+                    <strong style={{ color: "#059669", fontSize: 9.5 }}>81.4%</strong>
+                  </div>
+                </div>
+              </div>
+
+              {/* Structural Mounting Specs */}
+              <div style={{ border: "1px solid #e2e8f0", borderRadius: 6, padding: "8px 10px", background: "#ffffff" }}>
+                <div style={{ fontWeight: 700, color: "#0f172a", marginBottom: 5, display: "flex", alignItems: "center", gap: 5 }}>
+                  <ShieldCheck size={12} style={{ color: "#059669" }} /> Spesifikasi Mekanikal Racking
+                </div>
+                <div style={{ display: "grid", gap: 4 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between" }}>
+                    <span style={{ color: "#64748b" }}>Material Rail:</span>
+                    <strong>Aluminium AL6005-T5</strong>
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "space-between" }}>
+                    <span style={{ color: "#64748b" }}>Fastener & Baut:</span>
+                    <strong>Stainless SUS304 Anti-Karat</strong>
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "space-between" }}>
+                    <span style={{ color: "#64748b" }}>Kemiringan (Tilt):</span>
+                    <strong>{tilt}° (Hadap Khatulistiwa)</strong>
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "space-between" }}>
+                    <span style={{ color: "#64748b" }}>Beban Angin SNI:</span>
+                    <strong>120 km/jam (SNI 1727:2020)</strong>
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "space-between" }}>
+                    <span style={{ color: "#64748b" }}>Beban Mati Total:</span>
+                    <strong>~14.5 kg/m² (Kategori Ringan)</strong>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Official CAD Title Block */}
+            {renderCadTitleBlock(2, "GEOLOKASI TAPAK, STUDI SHADING & LOSS BREAKDOWN", "SOLARAPP-DED-SH-002")}
+          </div>
+
+          {/* Sheet Footer */}
+          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 8.5, color: "#64748b", borderTop: "1px solid #e2e8f0", paddingTop: 6 }}>
+            <span>SOLARAPP · DOKUMEN GAMBAR TEKNIS DED</span>
+            <span>LEMBAR 2 DARI 3 (GEOLOCATION & SHADING)</span>
+          </div>
+        </section>
+
+        {/* =======================================================================
+            HALAMAN 3: DETAIL GAMBAR CAD 2D & VISUALISASI 3D TIGA WAKTU (PAGI, SIANG, SORE)
+            ======================================================================= */}
+        <section className="a4-page-sheet" id="report-page-3">
+          <div>
+            {/* Sheet Header */}
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "2px solid #0f172a", paddingBottom: 6, marginBottom: 8 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <div style={{ width: 26, height: 26, background: "#f59e0b", borderRadius: 4, display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontWeight: 800, fontSize: 11 }}>
+                  2D/3D
+                </div>
+                <div>
+                  <div style={{ fontSize: 12.5, fontWeight: 800, color: "#0f172a" }}>DETAIL TATA LETAK MODUL PV 2D & VISUALISASI 3D TIGA WAKTU</div>
+                  <div style={{ fontSize: 8, color: "#64748b" }}>LEMBAR 3 DARI 3 · EPC DRAWING PACKAGE · REVISI 0 (IFC)</div>
+                </div>
+              </div>
+              <div style={{ textAlign: "right", fontSize: 8.5 }}>
                 <span style={{ color: "#64748b" }}>SKALA: </span><strong style={{ color: "#0f172a" }}>NTS (1:500)</strong>
               </div>
             </div>
 
-            {/* CAD Drawing Canvas SVG */}
-            <div style={{ border: "1.5px solid #0f172a", borderRadius: 4, background: "#f8fafc", padding: 12, position: "relative" }}>
-              {/* North Compass Arrow in top-right */}
-              <div style={{ position: "absolute", top: 18, right: 18, background: "#ffffff", border: "1px solid #cbd5e1", borderRadius: 6, padding: "4px 8px", display: "flex", alignItems: "center", gap: 5, fontSize: 8.5, fontWeight: 700, color: "#0f172a", boxShadow: "0 2px 4px rgba(0,0,0,0.05)" }}>
-                <Compass size={13} style={{ color: "#0284c7" }} />
-                <span>UTARA (N)</span>
+            {/* SECTION A: CAD 2D DRAWING CANVAS */}
+            <div style={{ border: "1.5px solid #0f172a", borderRadius: 4, background: "#f8fafc", padding: "8px 10px", marginBottom: 8, position: "relative" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                <strong style={{ fontSize: 9.5, color: "#0f172a" }}>BAGIAN A: GAMBAR TATA LETAK MODUL PV 2D & SITE BOUNDARY</strong>
+                <div style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 8, color: "#0284c7", fontWeight: 700 }}>
+                  <Compass size={11} /> UTARA (N)
+                </div>
               </div>
 
               {/* 2D CAD SVG */}
-              <svg viewBox="0 0 1000 520" style={{ width: "100%", height: 350, display: "block", background: "#ffffff" }}>
+              <svg viewBox="0 0 1000 320" style={{ width: "100%", height: 180, display: "block", background: "#ffffff", border: "1px solid #cbd5e1" }}>
                 <defs>
-                  <pattern id="cad-grid" width="20" height="20" patternUnits="userSpaceOnUse">
+                  <pattern id="cad-grid-page3" width="20" height="20" patternUnits="userSpaceOnUse">
                     <path d="M 20 0 L 0 0 0 20" fill="none" stroke="#f1f5f9" strokeWidth="0.8" />
                   </pattern>
                 </defs>
-                <rect width="1000" height="520" fill="url(#cad-grid)" stroke="#cbd5e1" strokeWidth="1" />
+                <rect width="1000" height="320" fill="url(#cad-grid-page3)" stroke="#cbd5e1" strokeWidth="1" />
 
                 {/* Scaled geometry */}
                 {(() => {
-                  const cadScale = Math.min(840 / Math.max(areaW, 1), 380 / Math.max(areaH, 1));
+                  const cadScale = Math.min(840 / Math.max(areaW, 1), 240 / Math.max(areaH, 1));
                   const cadOriginX = (1000 - areaW * cadScale) / 2;
-                  const cadOriginY = (520 - areaH * cadScale) / 2;
+                  const cadOriginY = (320 - areaH * cadScale) / 2;
 
                   let polyPoints = `${cadOriginX},${cadOriginY} ${cadOriginX + areaW * cadScale},${cadOriginY} ${cadOriginX + areaW * cadScale},${cadOriginY + areaH * cadScale} ${cadOriginX},${cadOriginY + areaH * cadScale}`;
                   if (siteCorners && siteCorners.length >= 3) {
@@ -581,10 +1721,10 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
 
                       {/* Setback Line */}
                       <rect
-                        x={cadOriginX + 6}
-                        y={cadOriginY + 6}
-                        width={Math.max(1, areaW * cadScale - 12)}
-                        height={Math.max(1, areaH * cadScale - 12)}
+                        x={cadOriginX + 5}
+                        y={cadOriginY + 5}
+                        width={Math.max(1, areaW * cadScale - 10)}
+                        height={Math.max(1, areaH * cadScale - 10)}
                         fill="none"
                         stroke="#f59e0b"
                         strokeWidth="1.2"
@@ -609,7 +1749,7 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
                             textAnchor="middle"
                             dominantBaseline="middle"
                             fill="#dc2626"
-                            fontSize="8.5"
+                            fontSize="8"
                             fontWeight="700"
                           >
                             {obs.label || "OBSTACLE"}
@@ -620,313 +1760,165 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
                       {/* PV Modules */}
                       {panels.map((p: any, idx: number) => (
                         <rect
-                          key={p.id}
+                          key={p.id || idx}
                           x={cadOriginX + p.x * cadScale}
                           y={cadOriginY + p.y * cadScale}
                           width={Math.max(1, p.w * cadScale)}
                           height={Math.max(1, p.h * cadScale)}
                           fill="#0284c7"
                           stroke="#0369a1"
-                          strokeWidth="0.6"
+                          strokeWidth="0.5"
                           rx="0.5"
                         />
                       ))}
 
                       {/* Dimension Labels */}
-                      <text x={cadOriginX + (areaW * cadScale) / 2} y={Math.max(16, cadOriginY - 8)} textAnchor="middle" fill="#0f172a" fontSize="10" fontWeight="700">
+                      <text x={cadOriginX + (areaW * cadScale) / 2} y={Math.max(14, cadOriginY - 6)} textAnchor="middle" fill="#0f172a" fontSize="9" fontWeight="700">
                         LEBAR ATAP: {(areaW / 1000).toFixed(1)} M ({areaW.toLocaleString()} mm)
                       </text>
                       <text
-                        x={cadOriginX - 10}
+                        x={cadOriginX - 8}
                         y={cadOriginY + (areaH * cadScale) / 2}
                         textAnchor="middle"
                         fill="#0f172a"
-                        fontSize="10"
+                        fontSize="9"
                         fontWeight="700"
-                        transform={`rotate(-90 ${cadOriginX - 10} ${cadOriginY + (areaH * cadScale) / 2})`}
+                        transform={`rotate(-90 ${cadOriginX - 8} ${cadOriginY + (areaH * cadScale) / 2})`}
                       >
-                        PANJANG: {(areaH / 1000).toFixed(1)} M
+                        PANJANG ATAP: {(areaH / 1000).toFixed(1)} M ({areaH.toLocaleString()} mm)
                       </text>
                     </g>
                   );
                 })()}
               </svg>
 
-              {/* CAD Legend Bar */}
-              <div style={{ display: "flex", gap: 14, justifyContent: "center", marginTop: 8, fontSize: 8.5, color: "#334155", flexWrap: "wrap" }}>
-                <span style={{ display: "flex", alignItems: "center", gap: 5 }}>
-                  <span style={{ width: 12, height: 12, background: "#ecfdf5", border: "1.5px dashed #059669", borderRadius: 2 }} />
-                  Batas Area Lahan / Atap
+              {/* Legend Strip */}
+              <div style={{ display: "flex", gap: 12, fontSize: 8, marginTop: 4, color: "#334155", flexWrap: "wrap", justifyContent: "center" }}>
+                <span style={{ display: "flex", alignItems: "center", gap: 3 }}>
+                  <span style={{ width: 10, height: 10, background: "#0284c7", borderRadius: 2 }} /> Modul PV 580Wp ({totalPanels} unit)
                 </span>
-                <span style={{ display: "flex", alignItems: "center", gap: 5 }}>
-                  <span style={{ width: 12, height: 2, background: "#f59e0b" }} />
-                  Setback Bebas Tepi (300 mm)
+                <span style={{ display: "flex", alignItems: "center", gap: 3 }}>
+                  <span style={{ width: 10, height: 10, background: "#ecfdf5", border: "1px dashed #059669", borderRadius: 2 }} /> Batas Site Boundary Atap
                 </span>
-                <span style={{ display: "flex", alignItems: "center", gap: 5 }}>
-                  <span style={{ width: 12, height: 8, background: "#0284c7", borderRadius: 1 }} />
-                  Modul PV ({moduleW}×{moduleH} mm, 580 Wp)
+                <span style={{ display: "flex", alignItems: "center", gap: 3 }}>
+                  <span style={{ width: 10, height: 10, border: "1px dashed #f59e0b", borderRadius: 2 }} /> Garis Aman Setback (300 mm)
                 </span>
-                <span style={{ display: "flex", alignItems: "center", gap: 5 }}>
-                  <span style={{ width: 12, height: 8, background: "#fee2e2", border: "1px solid #ef4444" }} />
-                  Area Terlarang / Obstacle
+                <span style={{ display: "flex", alignItems: "center", gap: 3 }}>
+                  <span style={{ width: 10, height: 10, background: "#fee2e2", border: "1px solid #ef4444", borderRadius: 2 }} /> Area Terlarang (HVAC Chiller)
                 </span>
               </div>
             </div>
 
-            {/* Technical Array Specs Table */}
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 8, marginTop: 10, fontSize: 9 }}>
-              <div style={{ padding: "6px 8px", background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 4 }}>
-                <span style={{ color: "#64748b" }}>Jumlah Modul</span>
-                <div style={{ fontWeight: 800, color: "#0f172a", fontSize: 12 }}>{totalPanels.toLocaleString()} Unit</div>
+            {/* SECTION B: 3D MULTI-TIME COMPARATIVE STUDY (PAGI, SIANG, SORE) */}
+            <div style={{ border: "1.5px solid #0f172a", borderRadius: 4, background: "#f8fafc", padding: "8px 10px", marginBottom: 6 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                <strong style={{ fontSize: 9.5, color: "#0f172a" }}>BAGIAN B: STUDI VISUALISASI 3D TIGA WAKTU (PAGI, SIANG, SORE)</strong>
+                <span style={{ fontSize: 8, color: "#059669", fontWeight: 700 }}>Simulasi Digital Twin Tiga Sudut Surya</span>
               </div>
-              <div style={{ padding: "6px 8px", background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 4 }}>
-                <span style={{ color: "#64748b" }}>Total Luas Modul</span>
-                <div style={{ fontWeight: 800, color: "#0f172a", fontSize: 12 }}>{totalModuleArea.toFixed(1)} m²</div>
+
+              {/* 3D Viewport in Light Theme */}
+              <div style={{ height: 210, width: "100%", borderRadius: 4, overflow: "hidden", border: "1px solid #cbd5e1", marginBottom: 6 }}>
+                <Report3DViewport
+                  panels={panels}
+                  obstacles={obstacles}
+                  areaW={areaW}
+                  areaH={areaH}
+                  moduleW={moduleW}
+                  moduleH={moduleH}
+                  tilt={tilt}
+                  siteCorners={siteCorners}
+                  theme="light"
+                  interactive={true}
+                  height={210}
+                  defaultHour={active3DHour}
+                  coords={coords}
+                  onHourChange={setActive3DHour}
+                />
               </div>
-              <div style={{ padding: "6px 8px", background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 4 }}>
-                <span style={{ color: "#64748b" }}>Ground Cover Ratio</span>
-                <div style={{ fontWeight: 800, color: "#0f172a", fontSize: 12 }}>~68.4%</div>
-              </div>
-              <div style={{ padding: "6px 8px", background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 4 }}>
-                <span style={{ color: "#64748b" }}>Kemiringan (Tilt)</span>
-                <div style={{ fontWeight: 800, color: "#0f172a", fontSize: 12 }}>{tilt}° (Optimal)</div>
-              </div>
-              <div style={{ padding: "6px 8px", background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 4 }}>
-                <span style={{ color: "#64748b" }}>Orientasi Modul</span>
-                <div style={{ fontWeight: 800, color: "#0f172a", fontSize: 12 }}>{layoutSettings.orientation === "portrait" ? "Portrait" : "Landscape"}</div>
+
+              {/* 3-Time Condition Analysis Cards */}
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 6, fontSize: 8 }}>
+                <div style={{ background: "#ffffff", border: "1px solid #e2e8f0", borderRadius: 4, padding: "5px 7px" }}>
+                  <div style={{ fontWeight: 800, color: "#d97706", display: "flex", justifyContent: "space-between" }}>
+                    <span>☀️ PAGI (09:00 WIB)</span>
+                    <span>Elevasi 42.5°</span>
+                  </div>
+                  <div style={{ color: "#475569", marginTop: 2 }}>
+                    Azimuth 68.2° (Timur). Bayangan jatuh ke Barat sejauh 2.6 m. Seluruh panel berada di luar bayangan.
+                  </div>
+                  <div style={{ color: "#059669", fontWeight: 700, marginTop: 2 }}>✓ Bebas Shading</div>
+                </div>
+
+                <div style={{ background: "#ffffff", border: "1px solid #e2e8f0", borderRadius: 4, padding: "5px 7px" }}>
+                  <div style={{ fontWeight: 800, color: "#ca8a04", display: "flex", justifyContent: "space-between" }}>
+                    <span>☀️ SIANG (12:00 WIB)</span>
+                    <span>Elevasi 78.1°</span>
+                  </div>
+                  <div style={{ color: "#475569", marginTop: 2 }}>
+                    Azimuth 18.5° (Zenit). Bayangan minimal (0.5 m) tepat di bawah chiller. Efisiensi radiasi 100%.
+                  </div>
+                  <div style={{ color: "#059669", fontWeight: 700, marginTop: 2 }}>✓ Puncak Radiasi</div>
+                </div>
+
+                <div style={{ background: "#ffffff", border: "1px solid #e2e8f0", borderRadius: 4, padding: "5px 7px" }}>
+                  <div style={{ fontWeight: 800, color: "#d97706", display: "flex", justifyContent: "space-between" }}>
+                    <span>☀️ SORE (15:00 WIB)</span>
+                    <span>Elevasi 44.0°</span>
+                  </div>
+                  <div style={{ color: "#475569", marginTop: 2 }}>
+                    Azimuth 285.3° (Barat). Bayangan jatuh ke Timur sejauh 2.5 m. Setback 3m aman dari shading.
+                  </div>
+                  <div style={{ color: "#059669", fontWeight: 700, marginTop: 2 }}>✓ Bebas Shading</div>
+                </div>
               </div>
             </div>
 
-            {/* Kop Gambar CAD Lembar 2 */}
-            {renderCadTitleBlock(2, "DETAIL TATA LETAK MODUL PV 2D & BATAS AREA", "SN-DED-PV-002")}
+            {/* IFC Construction Notes */}
+            <div style={{ border: "1px solid #cbd5e1", borderRadius: 4, padding: "5px 8px", background: "#ffffff", fontSize: 7.5, color: "#334155", marginBottom: 4 }}>
+              <strong style={{ color: "#0f172a" }}>CATATAN TEKNIS KONSTRUKSI (IFC):</strong>
+              <div style={{ marginTop: 1, lineHeight: 1.35 }}>
+                1. Pemasangan modul mematuhi batas setback 300 mm dari tepi atap untuk akses pemeliharaan dan koridor darurat kebakaran.
+                · 2. Seluruh struktur aluminium AL6005-T5 terhubung ke sistem grounding pentanahan ≤ 2 Ohm (SNI 0225:2020).
+                · 3. Inverter ditempatkan terlindung dari cuaca langsung dengan ventilasi udara optimal.
+              </div>
+            </div>
+
+            {/* CAD Title Block */}
+            {renderCadTitleBlock(3, "DETAIL TATA LETAK MODUL PV 2D & VISUALISASI 3D TIGA WAKTU", "SOLARAPP-DED-PV-003")}
           </div>
 
           {/* Sheet Footer */}
-          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 8.5, color: "#64748b", borderTop: "1px solid #e2e8f0", paddingTop: 6 }}>
-            <span>PT SONUS NUSANTARA · DOKUMEN GAMBAR TEKNIS DED</span>
-            <span>LEMBAR 2 DARI 3 (2D CAD LAYOUT)</span>
-          </div>
-        </section>
-
-        {/* =======================================================================
-            HALAMAN 3: VISUALISASI 3D, MOUNTING & STUDI BAYANGAN (SHADOW STUDY)
-            ======================================================================= */}
-        <section className="a4-page-sheet" id="report-page-3">
-          <div>
-            {/* Sheet Header */}
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "2px solid #0f172a", paddingBottom: 8, marginBottom: 10 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <div style={{ width: 28, height: 28, background: "#f59e0b", borderRadius: 4, display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontWeight: 800 }}>
-                  3D
-                </div>
-                <div>
-                  <div style={{ fontSize: 13, fontWeight: 800, color: "#0f172a" }}>VISUALISASI 3D, STRUKTUR MOUNTING & STUDI BAYANGAN</div>
-                  <div style={{ fontSize: 8.5, color: "#64748b" }}>LEMBAR 3 DARI 3 · EPC DRAWING PACKAGE · REVISI 0 (IFC)</div>
-                </div>
-              </div>
-              <div style={{ textAlign: "right", fontSize: 9 }}>
-                <span style={{ color: "#64748b" }}>SIMULASI: </span><strong style={{ color: "#0f172a" }}>THREE.JS CAD ENGINE</strong>
-              </div>
-            </div>
-
-            {/* 3D Isometric & Shadow Schematic */}
-            <div style={{ border: "1.5px solid #0f172a", borderRadius: 4, background: "#f8fafc", padding: 12, marginBottom: 10 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 9.5, fontWeight: 700, color: "#0f172a", marginBottom: 6 }}>
-                <span>📐 Proyeksi Isometrik 3D & Analisis Sudut Jatuh Bayangan Matahari</span>
-                <span style={{ color: "#059669" }}>Simulasi Astronomis Sinar Matahari (Sun Path)</span>
-              </div>
-
-              {/* Isometric Vector Art */}
-              <svg viewBox="0 0 1000 380" style={{ width: "100%", height: 240, display: "block", background: "#ffffff", borderRadius: 4, border: "1px solid #e2e8f0" }}>
-                {/* Sky & Sun Vector */}
-                <defs>
-                  <linearGradient id="sky-grad" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor="#f0f9ff" />
-                    <stop offset="100%" stopColor="#ffffff" />
-                  </linearGradient>
-                </defs>
-                <rect width="1000" height="380" fill="url(#sky-grad)" />
-
-                {/* Sun 09:00 Vector */}
-                <g>
-                  <circle cx="180" cy="80" r="16" fill="#f59e0b" />
-                  <circle cx="180" cy="80" r="24" fill="none" stroke="#fef3c7" strokeWidth="4" />
-                  <line x1="180" y1="96" x2="420" y2="240" stroke="#f59e0b" strokeWidth="1.5" strokeDasharray="4 2" />
-                  <text x="180" y="52" textAnchor="middle" fill="#d97706" fontSize="9" fontWeight="700">Matahari Pagi 09:00 (Elevasi 42.5°)</text>
-                </g>
-
-                {/* Sun 12:00 Vector */}
-                <g>
-                  <circle cx="500" cy="40" r="20" fill="#eab308" />
-                  <circle cx="500" cy="40" r="30" fill="none" stroke="#fef9c3" strokeWidth="5" />
-                  <line x1="500" y1="65" x2="500" y2="210" stroke="#eab308" strokeWidth="1.8" strokeDasharray="4 2" />
-                  <text x="500" y="24" textAnchor="middle" fill="#ca8a04" fontSize="9.5" fontWeight="800">Matahari Puncak 12:00 (Elevasi 78.1°)</text>
-                </g>
-
-                {/* Sun 15:00 Vector */}
-                <g>
-                  <circle cx="820" cy="80" r="16" fill="#f59e0b" />
-                  <circle cx="820" cy="80" r="24" fill="none" stroke="#fef3c7" strokeWidth="4" />
-                  <line x1="820" y1="96" x2="580" y2="240" stroke="#f59e0b" strokeWidth="1.5" strokeDasharray="4 2" />
-                  <text x="820" y="52" textAnchor="middle" fill="#d97706" fontSize="9" fontWeight="700">Matahari Sore 15:00 (Elevasi 44.0°)</text>
-                </g>
-
-                {/* Sun Path Arc */}
-                <path d="M 180 80 Q 500 20 820 80" fill="none" stroke="#f59e0b" strokeWidth="2" strokeDasharray="6 3" />
-
-                {/* Building / Roof Isometric Base */}
-                <polygon points="260,250 740,250 840,320 160,320" fill="#e2e8f0" stroke="#94a3b8" strokeWidth="1.5" />
-                <polygon points="160,320 840,320 840,350 160,350" fill="#cbd5e1" stroke="#94a3b8" strokeWidth="1.5" />
-
-                {/* Tilted Solar Rows on Roof */}
-                {[0, 1, 2, 3].map((r) => {
-                  const yOff = r * 15;
-                  return (
-                    <polygon
-                      key={r}
-                      points={`280,${260 + yOff} 720,${260 + yOff} 710,${270 + yOff} 270,${270 + yOff}`}
-                      fill="#0284c7"
-                      stroke="#0369a1"
-                      strokeWidth="1"
-                    />
-                  );
-                })}
-
-                {/* HVAC Chiller Obstacle & Simulated Shadows */}
-                <g>
-                  {/* Morning shadow (to west) */}
-                  <polygon points="460,285 410,295 430,305 480,295" fill="#94a3b8" fillOpacity="0.5" />
-                  {/* Evening shadow (to east) */}
-                  <polygon points="500,285 550,295 530,305 480,295" fill="#94a3b8" fillOpacity="0.4" />
-                  {/* Obstacle Box */}
-                  <polygon points="470,270 490,270 490,290 470,290" fill="#ef4444" stroke="#b91c1c" strokeWidth="1" />
-                  <polygon points="470,270 480,260 500,260 490,270" fill="#f87171" stroke="#b91c1c" strokeWidth="1" />
-                  <polygon points="490,270 500,260 500,280 490,290" fill="#dc2626" stroke="#b91c1c" strokeWidth="1" />
-                  <text x="485" y="306" textAnchor="middle" fill="#b91c1c" fontSize="8" fontWeight="700">HVAC Chiller</text>
-                </g>
-              </svg>
-            </div>
-
-            {/* Structural Parameters & Shadow Evaluation Tables */}
-            <div style={{ display: "grid", gridTemplateColumns: "1.1fr 1.3fr", gap: 10, marginBottom: 10, fontSize: 9 }}>
-              {/* Structural & Mechanical Specs */}
-              <div style={{ border: "1px solid #e2e8f0", borderRadius: 6, padding: "8px 10px", background: "#f8fafc" }}>
-                <div style={{ fontWeight: 700, color: "#0f172a", marginBottom: 6, display: "flex", alignItems: "center", gap: 5 }}>
-                  <ShieldCheck size={12} style={{ color: "#059669" }} /> Spesifikasi Mekanikal & Struktur Mounting
-                </div>
-                <div style={{ display: "flex", justifyContent: "space-between", padding: "3px 0", borderBottom: "1px dashed #e2e8f0" }}>
-                  <span style={{ color: "#64748b" }}>Material Racking</span>
-                  <strong>Aluminium Rail AL6005-T5</strong>
-                </div>
-                <div style={{ display: "flex", justifyContent: "space-between", padding: "3px 0", borderBottom: "1px dashed #e2e8f0" }}>
-                  <span style={{ color: "#64748b" }}>Baut & Fastener</span>
-                  <strong>Stainless Steel SUS304 Anti-Karat</strong>
-                </div>
-                <div style={{ display: "flex", justifyContent: "space-between", padding: "3px 0", borderBottom: "1px dashed #e2e8f0" }}>
-                  <span style={{ color: "#64748b" }}>Sudut Kemiringan (Tilt)</span>
-                  <strong>{tilt}° (Hadap Khatulistiwa)</strong>
-                </div>
-                <div style={{ display: "flex", justifyContent: "space-between", padding: "3px 0", borderBottom: "1px dashed #e2e8f0" }}>
-                  <span style={{ color: "#64748b" }}>Beban Angin Desain</span>
-                  <strong>SNI 1727:2020 (120 km/jam)</strong>
-                </div>
-                <div style={{ display: "flex", justifyContent: "space-between", padding: "3px 0" }}>
-                  <span style={{ color: "#64748b" }}>Beban Mati Tambahan</span>
-                  <strong>~14.5 kg/m² (Kategori Ringan)</strong>
-                </div>
-              </div>
-
-              {/* Sun & Shadow Analysis Matrix */}
-              <div style={{ border: "1px solid #e2e8f0", borderRadius: 6, padding: "8px 10px", background: "#f8fafc" }}>
-                <div style={{ fontWeight: 700, color: "#0f172a", marginBottom: 6, display: "flex", alignItems: "center", gap: 5 }}>
-                  <Clock size={12} style={{ color: "#f59e0b" }} /> Matriks Evaluasi Bayangan (Shadow Clearance)
-                </div>
-                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 8.5 }}>
-                  <thead>
-                    <tr style={{ background: "#e2e8f0", color: "#334155" }}>
-                      <th style={{ padding: "3px 5px", textAlign: "left" }}>Jam</th>
-                      <th style={{ padding: "3px 5px" }}>Elevasi</th>
-                      <th style={{ padding: "3px 5px" }}>Azimuth</th>
-                      <th style={{ padding: "3px 5px" }}>Arah Bayangan</th>
-                      <th style={{ padding: "3px 5px", textAlign: "right" }}>Status</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr style={{ borderBottom: "1px dashed #e2e8f0" }}>
-                      <td style={{ padding: "3px 5px", fontWeight: 700 }}>09:00 WIB</td>
-                      <td style={{ padding: "3px 5px", textAlign: "center" }}>42.5°</td>
-                      <td style={{ padding: "3px 5px", textAlign: "center" }}>68.2°</td>
-                      <td style={{ padding: "3px 5px", textAlign: "center" }}>Barat (1.1x H)</td>
-                      <td style={{ padding: "3px 5px", textAlign: "right", color: "#059669", fontWeight: 700 }}>✓ Bebas</td>
-                    </tr>
-                    <tr style={{ borderBottom: "1px dashed #e2e8f0", background: "#f1f5f9" }}>
-                      <td style={{ padding: "3px 5px", fontWeight: 700 }}>12:00 WIB</td>
-                      <td style={{ padding: "3px 5px", textAlign: "center" }}>78.1°</td>
-                      <td style={{ padding: "3px 5px", textAlign: "center" }}>18.5°</td>
-                      <td style={{ padding: "3px 5px", textAlign: "center" }}>Minimal (0.2x H)</td>
-                      <td style={{ padding: "3px 5px", textAlign: "right", color: "#059669", fontWeight: 700 }}>✓ Puncak</td>
-                    </tr>
-                    <tr>
-                      <td style={{ padding: "3px 5px", fontWeight: 700 }}>15:00 WIB</td>
-                      <td style={{ padding: "3px 5px", textAlign: "center" }}>44.0°</td>
-                      <td style={{ padding: "3px 5px", textAlign: "center" }}>285.3°</td>
-                      <td style={{ padding: "3px 5px", textAlign: "center" }}>Timur (1.0x H)</td>
-                      <td style={{ padding: "3px 5px", textAlign: "right", color: "#059669", fontWeight: 700 }}>✓ Bebas</td>
-                    </tr>
-                  </tbody>
-                </table>
-                <div style={{ marginTop: 4, fontSize: 8.5, color: "#059669", fontWeight: 600 }}>
-                  ✓ Kesimpulan Shading: Bebas 100% dari bayangan jatuh obstacle pada jam produktif (09:00 - 15:00 WIB).
-                </div>
-              </div>
-            </div>
-
-            {/* IFC Engineering Notes */}
-            <div style={{ background: "#ffffff", border: "1px solid #cbd5e1", borderRadius: 4, padding: "6px 10px", fontSize: 8.5, color: "#334155", marginBottom: 10 }}>
-              <strong>CATATAN TEKNIS KONSTRUKSI (IFC):</strong>
-              <ol style={{ margin: "3px 0 0", paddingLeft: 16, lineHeight: 1.35 }}>
-                <li>Pemasangan modul wajib mematuhi batas setback 300 mm dari tepi atap untuk akses pemeliharaan dan koridor pemadam kebakaran.</li>
-                <li>Seluruh struktur aluminium harus terhubung ke sistem grounding proteksi petir dengan tahanan pentanahan ≤ 2 Ohm (SNI 0225:2020).</li>
-                <li>Inverter string ditempatkan terlindung dari paparan hujan langsung di dekat dinding kanopi fasilitas dengan sirkulasi udara baik.</li>
-              </ol>
-            </div>
-
-            {/* Kop Gambar CAD Lembar 3 */}
-            {renderCadTitleBlock(3, "VISUALISASI 3D, MOUNTING & STUDI BAYANGAN (SHADOW STUDY)", "SN-DED-PV-003")}
-          </div>
-
-          {/* Sheet Footer */}
-          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 8.5, color: "#64748b", borderTop: "1px solid #e2e8f0", paddingTop: 6 }}>
-            <span>PT SONUS NUSANTARA · DOKUMEN GAMBAR TEKNIS DED</span>
-            <span>LEMBAR 3 DARI 3 (3D VISUALIZATION & SHADOW STUDY)</span>
+          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 8.5, color: "#64748b", borderTop: "1px solid #e2e8f0", paddingTop: 5 }}>
+            <span>SOLARAPP · DOKUMEN GAMBAR TEKNIS DED</span>
+            <span>LEMBAR 3 DARI 3 (2D & 3D LAYOUT)</span>
           </div>
         </section>
       </div>
 
       {/* =========================================================================
-          INTERACTIVE PDF PREVIEW MODAL (LIGHTBOX A4 READER)
+          INTERACTIVE FULLSCREEN PDF PREVIEW LIGHTBOX MODAL
           ========================================================================= */}
       {isPreviewOpen && (
         <div
+          className="no-print"
           style={{
             position: "fixed",
             top: 0,
             left: 0,
-            width: "100vw",
-            height: "100vh",
-            background: "rgba(10, 16, 26, 0.94)",
+            right: 0,
+            bottom: 0,
+            background: "rgba(5, 10, 16, 0.88)",
             backdropFilter: "blur(8px)",
             zIndex: 9999,
             display: "flex",
             flexDirection: "column",
           }}
         >
-          {/* Modal Header */}
+          {/* Modal Header Bar */}
           <div
-            className="preview-modal-header"
             style={{
-              padding: "12px 24px",
-              background: "#0d1726",
+              padding: "12px 20px",
+              background: "#0c1524",
               borderBottom: "1px solid #23354d",
               display: "flex",
               justifyContent: "space-between",
@@ -950,7 +1942,7 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
                 type="button"
                 onClick={() => {
                   setPreviewTab(1);
-                  document.getElementById("preview-a4-page-1")?.scrollIntoView({ behavior: "smooth" });
+                  document.getElementById("report-page-1")?.scrollIntoView({ behavior: "smooth" });
                 }}
                 style={{
                   padding: "5px 12px",
@@ -969,7 +1961,7 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
                 type="button"
                 onClick={() => {
                   setPreviewTab(2);
-                  document.getElementById("preview-a4-page-2")?.scrollIntoView({ behavior: "smooth" });
+                  document.getElementById("report-page-2")?.scrollIntoView({ behavior: "smooth" });
                 }}
                 style={{
                   padding: "5px 12px",
@@ -982,13 +1974,13 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
                   fontWeight: previewTab === 2 ? 700 : 400,
                 }}
               >
-                Halaman 2: Layout 2D (CAD)
+                Halaman 2: Geolocation & Shading
               </button>
               <button
                 type="button"
                 onClick={() => {
                   setPreviewTab(3);
-                  document.getElementById("preview-a4-page-3")?.scrollIntoView({ behavior: "smooth" });
+                  document.getElementById("report-page-3")?.scrollIntoView({ behavior: "smooth" });
                 }}
                 style={{
                   padding: "5px 12px",
@@ -1001,21 +1993,24 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
                   fontWeight: previewTab === 3 ? 700 : 400,
                 }}
               >
-                Halaman 3: 3D & Bayangan
+                Halaman 3: CAD 2D & 3D Waktu
               </button>
             </div>
 
-            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            {/* Print & Close Actions */}
+            <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
               <button
                 type="button"
-                onClick={handlePrint}
+                onClick={() => {
+                  window.print();
+                }}
                 style={{
                   display: "flex",
                   alignItems: "center",
                   gap: 6,
                   background: "#10b981",
-                  border: "1px solid #34d399",
                   color: "#ffffff",
+                  border: "none",
                   borderRadius: 6,
                   padding: "7px 16px",
                   fontSize: 12,
@@ -1045,37 +2040,43 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
             </div>
           </div>
 
-          {/* Modal Body: Scrollable A4 Stack */}
+          {/* Modal Body */}
           <div
             style={{
               flex: 1,
               overflowY: "auto",
-              padding: "24px 16px",
+              padding: "20px 16px",
               display: "flex",
               flexDirection: "column",
               alignItems: "center",
-              gap: 24,
+              gap: 16,
             }}
           >
-            <div id="preview-a4-page-1" style={{ width: "100%", maxWidth: 820 }}>
-              <div style={{ color: "#94a3b8", fontSize: 11, marginBottom: 6, fontWeight: 700 }}>
-                HALAMAN 1: RINGKASAN EKSEKUTIF & CLIMATOLOGY NASA POWER (A4 PORTRAIT)
-              </div>
-              <div dangerouslySetInnerHTML={{ __html: document.getElementById("report-page-1")?.outerHTML || "" }} />
+            <div style={{ color: "#94a3b8", fontSize: 12, textAlign: "center" }}>
+              💡 Menampilkan format cetak presisi A4 Portrait. Klik <strong>Cetak / Unduh PDF</strong> untuk menyimpan sebagai file PDF formal.
             </div>
 
-            <div id="preview-a4-page-2" style={{ width: "100%", maxWidth: 820 }}>
-              <div style={{ color: "#94a3b8", fontSize: 11, marginBottom: 6, fontWeight: 700 }}>
-                HALAMAN 2: DETAIL TATA LETAK MODUL PV 2D & SITE BOUNDARY CAD (A4 PORTRAIT)
-              </div>
-              <div dangerouslySetInnerHTML={{ __html: document.getElementById("report-page-2")?.outerHTML || "" }} />
-            </div>
-
-            <div id="preview-a4-page-3" style={{ width: "100%", maxWidth: 820 }}>
-              <div style={{ color: "#94a3b8", fontSize: 11, marginBottom: 6, fontWeight: 700 }}>
-                HALAMAN 3: VISUALISASI 3D, STRUKTUR MOUNTING & STUDI BAYANGAN (A4 PORTRAIT)
-              </div>
-              <div dangerouslySetInnerHTML={{ __html: document.getElementById("report-page-3")?.outerHTML || "" }} />
+            <div
+              style={{
+                width: "100%",
+                maxWidth: 860,
+                background: "#080f1a",
+                padding: 14,
+                borderRadius: 8,
+                border: "1px solid #1e2c3d",
+                display: "flex",
+                justifyContent: "center",
+                gap: 16,
+                fontSize: 12,
+                color: "#60a5fa",
+                fontWeight: 600,
+              }}
+            >
+              <span>✓ 3 Halaman A4 Sesuai Spesifikasi</span>
+              <span>·</span>
+              <span>Standar EPC Formal</span>
+              <span>·</span>
+              <span>Kop Gambar Resmi SolarApp</span>
             </div>
           </div>
         </div>

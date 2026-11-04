@@ -248,6 +248,10 @@ body.ts-studio-fullscreen .solar-studio-app .main-area { height: 100vh !importan
   justify-content: space-between;
 }
 
+.only-print {
+  display: none !important;
+}
+
 @media print {
   @page {
     size: A4 portrait;
@@ -267,11 +271,15 @@ body.ts-studio-fullscreen .solar-studio-app .main-area { height: 100vh !importan
   header:not(.print-header),
   button,
   .no-print,
+  .screen-only,
   .app-sidebar,
   .app-header,
   .pv-heading-actions,
   .preview-modal-header {
     display: none !important;
+  }
+  .only-print {
+    display: block !important;
   }
   .app-shell, .app-main, .module-page {
     display: block !important;
