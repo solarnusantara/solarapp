@@ -377,7 +377,7 @@ export default function PVLayout({
     const safePanels = panels.filter(p => isPlacementValid(p, obstacles));
     setPanels(safePanels);
     pushHistory(safePanels, obstacles);
-    saveDraft(safePanels, nextSettings, obstacles, nextSite);
+    saveDraft(safePanels, nextSettings, obstacles, nextSite, data.imageSrc || backgroundImage);
     const solarInfo = data.pitchDegrees !== undefined ? ` [Google Solar Pitch: ${data.pitchDegrees}°, Azimuth: ${data.azimuthDegrees}°]` : "";
     const rotInfo = data.rotationDeg ? ` [Rotasi: ${data.rotationDeg}°]` : "";
     const polyInfo = data.polygonCornersMm && data.polygonCornersMm.length >= 3 ? " [Bentuk Trapesium/Poligon Kustom Diterapkan]" : "";
@@ -426,15 +426,22 @@ export default function PVLayout({
     saveDraft(panels, nextSettings, obstacles);
   }
 
-  function saveDraft(nextPanels = panels, nextSettings = settings, nextObstacles = obstacles, nextSite = site) {
+  function saveDraft(
+    nextPanels = panels,
+    nextSettings = settings,
+    nextObstacles = obstacles,
+    nextSite = site,
+    nextBgImage = backgroundImage,
+    nextBgOpacity = backgroundOpacity
+  ) {
     const payload = {
       projectId,
       settings: nextSettings,
       panels: nextPanels,
       obstacles: nextObstacles,
       site: nextSite,
-      backgroundImage,
-      backgroundOpacity,
+      backgroundImage: nextBgImage,
+      backgroundOpacity: nextBgOpacity,
     };
     try {
       localStorage.setItem(storageKey(userId, projectId), JSON.stringify(payload));

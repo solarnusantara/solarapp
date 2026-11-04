@@ -130,6 +130,15 @@ function Report3DViewport({
     return computeSolarPosition(hour, coords.lat, coords.lng);
   }, [hour, coords.lat, coords.lng]);
 
+  const isNight = hour >= 20 || hour <= 4 || hour === 24 || hour === 0;
+  const isGround = areaW > 150000 && areaH > 80000;
+  const buildingHeight = isGround ? 0.9 : 3.5;
+  const areaWM = Math.max(10, areaW / 1000);
+  const areaHM = Math.max(10, areaH / 1000);
+  const centerX = areaWM / 2;
+  const centerZ = areaHM / 2;
+  const span = Math.hypot(areaWM, areaHM);
+
   const handleSetHour = (h: number) => {
     setHour(h);
     if (onHourChange) onHourChange(h);
@@ -141,20 +150,6 @@ function Report3DViewport({
 
     const width = mount.clientWidth || 800;
     const heightPx = typeof height === "number" ? height : (mount.clientHeight || 220);
-
-    // Dark engineering high-contrast scene background for crystal clear lights and shadows
-    const scene = new THREE.Scene();
-    scene.background = new THREE.Color("#080f1a");
-
-    const areaWM = Math.max(10, areaW / 1000);
-    const areaHM = Math.max(10, areaH / 1000);
-    const centerX = areaWM / 2;
-    const centerZ = areaHM / 2;
-    const span = Math.hypot(areaWM, areaHM);
-
-    const isNight = hour >= 20 || hour <= 4 || hour === 24 || hour === 0;
-    const isGround = areaW > 150000 && areaH > 80000;
-    const buildingHeight = isGround ? 0.9 : 3.5;
 
     // Perspective Camera with wider FOV to comfortably encompass the sky arc and the ground array
     const camera = new THREE.PerspectiveCamera(42, width / heightPx, 0.5, span * 15);
@@ -168,6 +163,7 @@ function Report3DViewport({
       camera.lookAt(0, buildingHeight * 0.5, 0);
     }
 
+    // High quality renderer
     const renderer = new THREE.WebGLRenderer({
       antialias: true,
       preserveDrawingBuffer: true,
@@ -178,6 +174,10 @@ function Report3DViewport({
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     mount.appendChild(renderer.domElement);
+
+    // Scene setup with distinct daylight sky (Siang) vs nocturnal dark sky (Malam)
+    const scene = new THREE.Scene();
+    scene.background = isNight ? new THREE.Color("#080f1a") : new THREE.Color("#e0f2fe");
 
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
@@ -200,7 +200,7 @@ function Report3DViewport({
       );
 
       const lightDist = span * 2.2;
-      const sunLight = new THREE.DirectionalLight(0xfff5d0, 3.2);
+      const sunLight = new THREE.DirectionalLight(0xfffaed, 3.8);
       sunLight.position.copy(sunDir.clone().multiplyScalar(lightDist));
       sunLight.castShadow = true;
       sunLight.shadow.mapSize.set(2048, 2048);
@@ -213,7 +213,7 @@ function Report3DViewport({
       sunLight.shadow.bias = -0.0003;
       scene.add(sunLight);
 
-      const hemiLight = new THREE.HemisphereLight(0xdceaff, 0x142030, 0.95);
+      const hemiLight = new THREE.HemisphereLight(0xffffff, 0xb0c4de, 1.25);
       scene.add(hemiLight);
 
       // Sun Path Trajectory Arc across the sky
@@ -309,12 +309,12 @@ function Report3DViewport({
       });
     }
 
-    // Ground Plane & Engineering Grid
+    // Ground Plane & Engineering Grid (Bright clean terrain in Siang, dark nocturnal in Malam)
     const groundGeom = new THREE.PlaneGeometry(span * 3, span * 3);
     groundGeom.rotateX(-Math.PI / 2);
     const groundMat = new THREE.MeshStandardMaterial({
-      color: 0x0c1524,
-      roughness: 0.9,
+      color: isNight ? 0x0c1524 : 0xe2e8f0,
+      roughness: 0.85,
     });
     const groundMesh = new THREE.Mesh(groundGeom, groundMat);
     groundMesh.position.y = -0.05;
@@ -324,8 +324,8 @@ function Report3DViewport({
     const gridHelper = new THREE.GridHelper(
       span * 2.2,
       Math.max(12, Math.round(span / 4)),
-      0x22364f,
-      0x142030
+      isNight ? 0x22364f : 0x94a3b8,
+      isNight ? 0x142030 : 0xcbd5e1
     );
     gridHelper.position.y = -0.04;
     scene.add(gridHelper);
@@ -333,10 +333,10 @@ function Report3DViewport({
     // Cardinal Direction Sprites
     const compassDist = span * 0.65;
     const directions = [
-      { label: "UTARA (N)", x: 0, z: -compassDist, color: "#38bdf8" },
-      { label: "SELATAN (S)", x: 0, z: compassDist, color: "#94a3b8" },
-      { label: "TIMUR (E)", x: compassDist, z: 0, color: "#f59e0b" },
-      { label: "BARAT (W)", x: -compassDist, z: 0, color: "#f59e0b" },
+      { label: "UTARA (N)", x: 0, z: -compassDist, color: "#0284c7" },
+      { label: "SELATAN (S)", x: 0, z: compassDist, color: "#64748b" },
+      { label: "TIMUR (E)", x: compassDist, z: 0, color: "#d97706" },
+      { label: "BARAT (W)", x: -compassDist, z: 0, color: "#d97706" },
     ];
     directions.forEach((d) => {
       const canvas = document.createElement("canvas");
@@ -344,14 +344,14 @@ function Report3DViewport({
       canvas.height = 36;
       const ctx = canvas.getContext("2d");
       if (ctx) {
-        ctx.fillStyle = "#0e1a2be0";
+        ctx.fillStyle = isNight ? "#0e1a2be0" : "#ffffffea";
         if (ctx.roundRect) ctx.roundRect(0, 0, 160, 36, 6);
         else ctx.rect(0, 0, 160, 36);
         ctx.fill();
-        ctx.strokeStyle = "#243a57";
+        ctx.strokeStyle = isNight ? "#243a57" : "#cbd5e1";
         ctx.lineWidth = 1.5;
         ctx.stroke();
-        ctx.fillStyle = d.color;
+        ctx.fillStyle = isNight ? (d.color === "#0284c7" ? "#38bdf8" : d.color) : d.color;
         ctx.font = "bold 13px system-ui, sans-serif";
         ctx.textAlign = "center";
         ctx.textBaseline = "middle";
@@ -366,11 +366,11 @@ function Report3DViewport({
 
     // Building Roof & Walls
     const wallMat = new THREE.MeshStandardMaterial({
-      color: 0x223246,
+      color: isNight ? 0x223246 : 0x64748b,
       roughness: 0.8,
     });
     const roofMat = new THREE.MeshStandardMaterial({
-      color: 0x141f2e,
+      color: isNight ? 0x141f2e : 0x94a3b8,
       roughness: 0.65,
     });
 
@@ -547,7 +547,7 @@ function Report3DViewport({
   }, [panels, obstacles, areaW, areaH, moduleW, moduleH, tilt, siteCorners, theme, interactive, height, sunPos, cameraPreset, hour]);
 
   return (
-    <div style={{ position: "relative", width: "100%", height, overflow: "hidden", background: "#080f1a" }}>
+    <div style={{ position: "relative", width: "100%", height, overflow: "hidden", background: isNight ? "#080f1a" : "#e0f2fe" }}>
       {/* 3D Viewport Controls Overlay */}
       <div
         className="no-print"
@@ -570,21 +570,21 @@ function Report3DViewport({
               display: "flex",
               alignItems: "center",
               gap: 5,
-              background: "rgba(11,19,32,0.92)",
+              background: isNight ? "rgba(11,19,32,0.92)" : "rgba(255,255,255,0.95)",
               padding: "3px 8px",
               borderRadius: 4,
-              border: "1px solid #1e293b",
+              border: isNight ? "1px solid #1e293b" : "1px solid #cbd5e1",
               pointerEvents: "auto",
-              boxShadow: "0 2px 8px rgba(0,0,0,0.4)",
+              boxShadow: isNight ? "0 2px 8px rgba(0,0,0,0.4)" : "0 2px 8px rgba(0,0,0,0.12)",
               fontSize: 9,
               fontWeight: 700,
-              color: (hour >= 20 || hour <= 4 || hour === 24 || hour === 0) ? "#818cf8" : "#f59e0b",
+              color: isNight ? "#818cf8" : "#b45309",
             }}
           >
-            {titleBadge || ((hour >= 20 || hour <= 4 || hour === 24 || hour === 0) ? "🌙 24:00 WIB (Malam / Nokturnal)" : "☀️ 12:00 WIB (Siang / Puncak)")}
+            {titleBadge || (isNight ? "🌙 24:00 WIB (Malam / Nokturnal)" : "☀️ 12:00 WIB (Siang / Puncak)")}
           </div>
         ) : (
-          <div style={{ display: "flex", gap: 5, background: "rgba(11,19,32,0.92)", padding: "3px 5px", borderRadius: 5, border: "1px solid #1e293b", pointerEvents: "auto", boxShadow: "0 2px 8px rgba(0,0,0,0.4)" }}>
+          <div style={{ display: "flex", gap: 5, background: isNight ? "rgba(11,19,32,0.92)" : "rgba(255,255,255,0.95)", padding: "3px 5px", borderRadius: 5, border: isNight ? "1px solid #1e293b" : "1px solid #cbd5e1", pointerEvents: "auto", boxShadow: isNight ? "0 2px 8px rgba(0,0,0,0.4)" : "0 2px 8px rgba(0,0,0,0.12)" }}>
             <button
               type="button"
               onClick={() => handleSetHour(12.0)}
@@ -596,7 +596,7 @@ function Report3DViewport({
                 border: "none",
                 cursor: "pointer",
                 background: Math.abs(hour - 12.0) < 0.2 ? "#f59e0b" : "transparent",
-                color: Math.abs(hour - 12.0) < 0.2 ? "#ffffff" : "#94a3b8",
+                color: Math.abs(hour - 12.0) < 0.2 ? "#ffffff" : (isNight ? "#94a3b8" : "#475569"),
                 display: "flex",
                 alignItems: "center",
                 gap: 4,
@@ -615,7 +615,7 @@ function Report3DViewport({
                 border: "none",
                 cursor: "pointer",
                 background: (Math.abs(hour - 24.0) < 0.2 || Math.abs(hour - 0.0) < 0.2) ? "#6366f1" : "transparent",
-                color: (Math.abs(hour - 24.0) < 0.2 || Math.abs(hour - 0.0) < 0.2) ? "#ffffff" : "#94a3b8",
+                color: (Math.abs(hour - 24.0) < 0.2 || Math.abs(hour - 0.0) < 0.2) ? "#ffffff" : (isNight ? "#94a3b8" : "#475569"),
                 display: "flex",
                 alignItems: "center",
                 gap: 4,
@@ -627,7 +627,7 @@ function Report3DViewport({
         )}
 
         {/* Camera Preset Controls */}
-        <div style={{ display: "flex", gap: 4, background: "rgba(11,19,32,0.92)", padding: "3px 5px", borderRadius: 5, border: "1px solid #1e293b", pointerEvents: "auto", boxShadow: "0 2px 8px rgba(0,0,0,0.4)" }}>
+        <div style={{ display: "flex", gap: 4, background: isNight ? "rgba(11,19,32,0.92)" : "rgba(255,255,255,0.95)", padding: "3px 5px", borderRadius: 5, border: isNight ? "1px solid #1e293b" : "1px solid #cbd5e1", pointerEvents: "auto", boxShadow: isNight ? "0 2px 8px rgba(0,0,0,0.4)" : "0 2px 8px rgba(0,0,0,0.12)" }}>
           <button
             type="button"
             onClick={() => setCameraPreset("iso")}
@@ -639,7 +639,7 @@ function Report3DViewport({
               border: "none",
               cursor: "pointer",
               background: cameraPreset === "iso" ? "#0284c7" : "transparent",
-              color: cameraPreset === "iso" ? "#ffffff" : "#94a3b8",
+              color: cameraPreset === "iso" ? "#ffffff" : (isNight ? "#94a3b8" : "#475569"),
             }}
           >
             📐 3D Isometrik
@@ -655,7 +655,7 @@ function Report3DViewport({
               border: "none",
               cursor: "pointer",
               background: cameraPreset === "top" ? "#0284c7" : "transparent",
-              color: cameraPreset === "top" ? "#ffffff" : "#94a3b8",
+              color: cameraPreset === "top" ? "#ffffff" : (isNight ? "#94a3b8" : "#475569"),
             }}
           >
             🔭 Tampak Atap
@@ -678,18 +678,19 @@ function Report3DViewport({
           justifyContent: "space-between",
           alignItems: "center",
           fontSize: 8.5,
-          color: "#cbd5e1",
-          background: "rgba(11,19,32,0.90)",
+          color: isNight ? "#cbd5e1" : "#1e293b",
+          background: isNight ? "rgba(11,19,32,0.90)" : "rgba(255,255,255,0.94)",
           padding: "3px 9px",
           borderRadius: 4,
-          border: "1px solid #1e293b",
+          border: isNight ? "1px solid #1e293b" : "1px solid #cbd5e1",
           pointerEvents: "none",
+          boxShadow: isNight ? "0 2px 8px rgba(0,0,0,0.4)" : "0 2px 8px rgba(0,0,0,0.12)",
         }}
       >
         <span>
-          {hour === 24 || hour === 0 ? "🌙 24:00 WIB (Malam / Nokturnal)" : "☀️ 12:00 WIB (Siang / Puncak Surya)"} · Elevasi: <strong>{sunPos.elevation.toFixed(1)}°</strong> · Azimuth: <strong>{sunPos.azimuth.toFixed(1)}°</strong> · {hour === 24 || hour === 0 ? "Standby Isolation Proteksi Arus Balik Grid" : "Radiasi Puncak & Bebas Shading"}
+          {isNight ? "🌙 24:00 WIB (Malam / Nokturnal)" : "☀️ 12:00 WIB (Siang / Puncak Surya)"} · Elevasi: <strong>{sunPos.elevation.toFixed(1)}°</strong> · Azimuth: <strong>{sunPos.azimuth.toFixed(1)}°</strong> · {isNight ? "Standby Isolation Proteksi Arus Balik Grid" : "Radiasi Puncak & Bebas Shading"}
         </span>
-        <span>🖱️ Drag mouse untuk rotasi 3D · Scroll zoom</span>
+        <span style={{ color: isNight ? "#94a3b8" : "#64748b" }}>🖱️ Drag mouse untuk rotasi 3D · Scroll zoom</span>
       </div>
     </div>
   );
@@ -1114,15 +1115,24 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
       {(() => {
         const siteWidthM = areaW / 1000;
         const siteHeightM = areaH / 1000;
-        // Dynamic scale with ~55% padding around the parcel so surrounding access road and landmarks are clearly visible
-        const deltaLat = Math.max(0.0015, ((siteHeightM * 1.55) / 2) / 111000);
-        const deltaLng = Math.max(0.0022, ((siteWidthM * 1.55) / 2) / (111000 * Math.cos((coords.lat * Math.PI) / 180)));
+        // Exact 16:9 framing: parcel occupies ~72% width with ~14% margin on sides
+        const totalWidthM = Math.max(siteWidthM / 0.72, (siteHeightM / 0.68) * (800 / 450));
+        const totalHeightM = totalWidthM / (800 / 450); // 16:9 ratio (1.7778)
+
+        const deltaLng = (totalWidthM / 2) / (111000 * Math.cos((coords.lat * Math.PI) / 180));
+        const deltaLat = (totalHeightM / 2) / 111000;
         const minLng = (coords.lng - deltaLng).toFixed(5);
         const minLat = (coords.lat - deltaLat).toFixed(5);
         const maxLng = (coords.lng + deltaLng).toFixed(5);
         const maxLat = (coords.lat + deltaLat).toFixed(5);
         const esriSatelliteUrl = `https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/export?bbox=${minLng},${minLat},${maxLng},${maxLat}&bboxSR=4326&imageSR=4326&size=800,450&f=image`;
         const satelliteImgSrc = savedLayout?.backgroundImage || esriSatelliteUrl;
+
+        // Exact overlay bounding percentage matching the real site dimensions on the satellite map
+        const overlayWidthPct = Math.min(94, Math.max(15, (siteWidthM / totalWidthM) * 100)).toFixed(1);
+        const overlayHeightPct = Math.min(94, Math.max(15, (siteHeightM / totalHeightM) * 100)).toFixed(1);
+        const overlayLeftPct = ((100 - Number(overlayWidthPct)) / 2).toFixed(1);
+        const overlayTopPct = ((100 - Number(overlayHeightPct)) / 2).toFixed(1);
 
         return (
           <div style={{ border: "1.5px solid #0f172a", borderRadius: 4, background: "#f8fafc", padding: 8, marginBottom: 8 }}>
@@ -1179,26 +1189,26 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
                 <div
                   style={{
                     position: "absolute",
-                    top: "20%",
-                    left: "16%",
-                    width: "68%",
-                    height: "60%",
-                    border: "2.5px solid #4ade80",
-                    background: "rgba(74, 222, 128, 0.22)",
+                    top: `${overlayTopPct}%`,
+                    left: `${overlayLeftPct}%`,
+                    width: `${overlayWidthPct}%`,
+                    height: `${overlayHeightPct}%`,
+                    border: "2.5px solid #22c55e",
+                    background: "rgba(34, 197, 94, 0.18)",
                     borderRadius: 3,
                     display: "flex",
                     flexDirection: "column",
                     alignItems: "center",
                     justifyContent: "center",
-                    boxShadow: "0 0 14px rgba(74, 222, 128, 0.45)",
+                    boxShadow: "0 0 14px rgba(34, 197, 94, 0.45)",
                     zIndex: 2,
                     pointerEvents: "none",
                   }}
                 >
-                  <span style={{ fontSize: 9, fontWeight: 800, color: "#4ade80", background: "rgba(15,23,42,0.90)", padding: "2px 7px", borderRadius: 3, border: "1px solid #4ade80", boxShadow: "0 2px 5px rgba(0,0,0,0.6)" }}>
+                  <span style={{ fontSize: 9, fontWeight: 800, color: "#22c55e", background: "rgba(15,23,42,0.92)", padding: "2px 7px", borderRadius: 3, border: "1px solid #22c55e", boxShadow: "0 2px 5px rgba(0,0,0,0.6)" }}>
                     TAPAK PLTS: {(areaW / 1000).toFixed(0)}m × {(areaH / 1000).toFixed(0)}m
                   </span>
-                  <span style={{ fontSize: 7.5, color: "#ffffff", background: "rgba(0,0,0,0.72)", padding: "1.5px 5px", borderRadius: 2, marginTop: 3 }}>
+                  <span style={{ fontSize: 7.5, color: "#ffffff", background: "rgba(0,0,0,0.78)", padding: "1.5px 5px", borderRadius: 2, marginTop: 3 }}>
                     Luas Tapak: {((areaW * areaH) / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 0 })} m²
                   </span>
                 </div>
@@ -1570,7 +1580,7 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
               Elevasi: 78.1° (Zenit) · Azimuth: 18.5° · Klirens Bayangan &lt; 0.5m · Bebas Shading
             </span>
           </div>
-          <div style={{ height: 215, width: "100%", borderRadius: "0 0 3px 3px", overflow: "hidden", border: "1.5px solid #0f172a", borderTop: "none", background: "#080f1a" }}>
+          <div style={{ height: 215, width: "100%", borderRadius: "0 0 3px 3px", overflow: "hidden", border: "1.5px solid #0f172a", borderTop: "none", background: "#e0f2fe" }}>
             <Report3DViewport
               panels={panels}
               obstacles={obstacles}
@@ -1580,7 +1590,7 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
               moduleH={moduleH}
               tilt={tilt}
               siteCorners={siteCorners}
-              theme="dark"
+              theme="light"
               interactive={true}
               height={215}
               defaultHour={12.0}
