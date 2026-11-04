@@ -711,36 +711,7 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
     return REAL_PROJECTS[0]; // Default Cikarang 500 kWp
   }, [project, projectId]);
 
-  // Project defaults based on selection
-  const isCikarang = activeProj?.id === "proj-cikarang-500kwp";
-  const defaultCoords = isCikarang
-    ? { lat: -6.3625, lng: 107.1689, name: "GIIC Cikarang, Jawa Barat" }
-    : { lat: -6.3542, lng: 107.2847, name: "KIIC Karawang Barat, Jawa Barat" };
-
-  const defaultClient = isCikarang
-    ? "PT Cikarang Multi Industri Tbk (GIIC Cikarang)"
-    : "PT Kawasan Industri Karawang (KIIC)";
-
-  const [client, setClient] = useState(defaultClient);
-  const [prepared, setPrepared] = useState("Tim Engineering SolarApp");
-  const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
-  const [status, setStatus] = useState("Issued for Review (IFC)");
-  const [coords, setCoords] = useState(defaultCoords);
-  const [capacityKwp, setCapacityKwp] = useState(activeProj?.capacity || 500);
-
-  // View & Preview States
-  const [isPreviewOpen, setIsPreviewOpen] = useState(false);
-  const [previewTab, setPreviewTab] = useState<1 | 2 | 3>(1);
-  const [viewMode, setViewMode] = useState<"screen" | "a4-light">("screen");
-  const [active3DHour, setActive3DHour] = useState<number>(12.0);
-
-  // GIS Solar Irradiance & Yield State
-  const [yieldData, setYieldData] = useState<SolarYieldResult | null>(null);
-  const [loadingGis, setLoadingGis] = useState(false);
-  const [gisError, setGisError] = useState<string | null>(null);
-  const [substations, setSubstations] = useState<PlnSubstation[]>([]);
-
-  // Load layout data (panels, obstacles, settings, polygon)
+  // Load layout data (panels, obstacles, settings, polygon, site)
   const savedLayout = useMemo(() => {
     const targetId = activeProj?.id ?? projectId;
     if (!targetId) return null;
@@ -759,12 +730,61 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
     return getProjectDefaultLayout(targetId) || null;
   }, [activeProj?.id, projectId]);
 
-  // Update when project changes
+  // Project defaults based on selection and saved layout
+  const isCikarang = activeProj?.id === "proj-cikarang-500kwp";
+  const siteCoords = savedLayout?.site?.coordinates;
+  const siteAddress = savedLayout?.site?.address;
+  const defaultCoords = isCikarang
+    ? { lat: -6.3625, lng: 107.1689, name: "GIIC Cikarang, Jawa Barat" }
+    : { lat: -6.36838, lng: 107.19759, name: "Kawasan Industri KIIC Karawang (Lahan Ground-Mounted), Jawa Barat" };
+
+  const initialCoords = (siteCoords?.lat && siteCoords?.lng)
+    ? {
+        lat: Number(siteCoords.lat),
+        lng: Number(siteCoords.lng),
+        name: siteAddress || defaultCoords.name,
+      }
+    : defaultCoords;
+
+  const defaultClient = isCikarang
+    ? "PT Cikarang Multi Industri Tbk (GIIC Cikarang)"
+    : "PT Kawasan Industri Karawang (KIIC)";
+
+  const [client, setClient] = useState(defaultClient);
+  const [prepared, setPrepared] = useState("Tim Engineering SolarApp");
+  const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [status, setStatus] = useState("Issued for Review (IFC)");
+  const [coords, setCoords] = useState(initialCoords);
+  const [capacityKwp, setCapacityKwp] = useState(activeProj?.capacity || 500);
+
+  // View & Preview States
+  const [isPreviewOpen, setIsPreviewOpen] = useState(false);
+  const [previewTab, setPreviewTab] = useState<1 | 2 | 3>(1);
+  const [viewMode, setViewMode] = useState<"screen" | "a4-light">("screen");
+  const [active3DHour, setActive3DHour] = useState<number>(12.0);
+
+  // GIS Solar Irradiance & Yield State
+  const [yieldData, setYieldData] = useState<SolarYieldResult | null>(null);
+  const [loadingGis, setLoadingGis] = useState(false);
+  const [gisError, setGisError] = useState<string | null>(null);
+  const [substations, setSubstations] = useState<PlnSubstation[]>([]);
+
+  // Update when project or savedLayout changes
   useEffect(() => {
     const isCik = activeProj?.id === "proj-cikarang-500kwp";
-    const nextCoords = isCik
+    const curSiteCoords = savedLayout?.site?.coordinates;
+    const curSiteAddress = savedLayout?.site?.address;
+    const baseCoords = isCik
       ? { lat: -6.3625, lng: 107.1689, name: "GIIC Cikarang, Jawa Barat" }
-      : { lat: -6.3542, lng: 107.2847, name: "KIIC Karawang Barat, Jawa Barat" };
+      : { lat: -6.36838, lng: 107.19759, name: "Kawasan Industri KIIC Karawang (Lahan Ground-Mounted), Jawa Barat" };
+
+    const nextCoords = (curSiteCoords?.lat && curSiteCoords?.lng)
+      ? {
+          lat: Number(curSiteCoords.lat),
+          lng: Number(curSiteCoords.lng),
+          name: curSiteAddress || baseCoords.name,
+        }
+      : baseCoords;
 
     setCoords(nextCoords);
     setCapacityKwp(activeProj?.capacity || (isCik ? 500 : 2000));
@@ -773,7 +793,7 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
         ? "PT Cikarang Multi Industri Tbk (GIIC Cikarang)"
         : "PT Kawasan Industri Karawang (KIIC)"
     );
-  }, [activeProj]);
+  }, [activeProj, savedLayout]);
 
   // Fetch GIS Solar Climatology and Grid Substation Data
   async function loadGisData() {
@@ -1092,8 +1112,11 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
 
       {/* Geolocation & Satellite Map Box */}
       {(() => {
-        const deltaLat = 0.0032;
-        const deltaLng = 0.0032 / Math.cos((coords.lat * Math.PI) / 180);
+        const siteWidthM = areaW / 1000;
+        const siteHeightM = areaH / 1000;
+        // Dynamic scale with ~55% padding around the parcel so surrounding access road and landmarks are clearly visible
+        const deltaLat = Math.max(0.0015, ((siteHeightM * 1.55) / 2) / 111000);
+        const deltaLng = Math.max(0.0022, ((siteWidthM * 1.55) / 2) / (111000 * Math.cos((coords.lat * Math.PI) / 180)));
         const minLng = (coords.lng - deltaLng).toFixed(5);
         const minLat = (coords.lat - deltaLat).toFixed(5);
         const maxLng = (coords.lng + deltaLng).toFixed(5);
