@@ -835,8 +835,51 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
   const totalPanels = panels.length || Math.round((capacityKwp * 1000) / 580);
   const totalModuleArea = (totalPanels * (moduleW * moduleH)) / 1_000_000;
 
+  // Set document title dynamically to "SolarApp - [Nama Proyek]" for browser print dialog suggested filename
+  const syncDocumentTitle = () => {
+    const projName = activeProj?.name?.trim() || "Laporan Rekayasa PLTS";
+    const title = `SolarApp - ${projName}`;
+    document.title = title;
+    try {
+      if (window.top && window.top !== window) {
+        window.top.document.title = title;
+      }
+    } catch {
+      // ignore cross-origin restriction if any
+    }
+    return title;
+  };
+
+  useEffect(() => {
+    const originalTitle = document.title;
+    let originalTopTitle = "";
+    try {
+      if (window.top && window.top !== window) {
+        originalTopTitle = window.top.document.title;
+      }
+    } catch {}
+
+    syncDocumentTitle();
+
+    const handleBeforePrint = () => {
+      syncDocumentTitle();
+    };
+    window.addEventListener("beforeprint", handleBeforePrint);
+
+    return () => {
+      window.removeEventListener("beforeprint", handleBeforePrint);
+      document.title = originalTitle;
+      try {
+        if (window.top && window.top !== window && originalTopTitle) {
+          window.top.document.title = originalTopTitle;
+        }
+      } catch {}
+    };
+  }, [activeProj?.name]);
+
   // Print function
   const handlePrint = () => {
+    syncDocumentTitle();
     window.print();
   };
 
@@ -2262,9 +2305,7 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
             <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
               <button
                 type="button"
-                onClick={() => {
-                  window.print();
-                }}
+                onClick={handlePrint}
                 style={{
                   display: "flex",
                   alignItems: "center",

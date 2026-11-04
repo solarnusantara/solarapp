@@ -228,6 +228,20 @@ export default function App() {
     return () => window.removeEventListener("popstate", handlePopState);
   }, [projects]);
 
+  // Synchronize document.title with active project for browser tab and print-to-PDF suggested filename
+  useEffect(() => {
+    const projTitle = activeProject?.name ? `SolarApp - ${activeProject.name}` : "SolarApp — Studio Desain PLTS";
+    document.title = projTitle;
+    try {
+      if (window.top && window.top !== window) {
+        window.top.document.title = projTitle;
+      }
+    } catch {
+      // ignore cross-origin restriction
+    }
+  }, [activeProject?.name]);
+
+
   const unreadNotifications = notifications.filter(n => !n.read).length;
   const t = copy[lang];
 
