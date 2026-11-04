@@ -236,7 +236,7 @@ body.ts-studio-fullscreen .solar-studio-app .main-area { height: 100vh !importan
   min-height: 1120px;
   margin: 0 auto 24px;
   background: #ffffff;
-  color: #0f172a;
+  color: #0f172a !important;
   box-shadow: 0 8px 30px rgba(0, 0, 0, 0.4);
   border-radius: 4px;
   padding: 32px 36px;
@@ -246,6 +246,35 @@ body.ts-studio-fullscreen .solar-studio-app .main-area { height: 100vh !importan
   display: flex;
   flex-direction: column;
   justify-content: space-between;
+}
+
+/* Accessibility High-Contrast Overrides for Engineering Report Sheets */
+.a4-page-sheet table {
+  color: #0f172a !important;
+}
+
+.a4-page-sheet th {
+  color: #0f172a !important;
+  font-weight: 800 !important;
+}
+
+.a4-page-sheet td {
+  color: #0f172a !important;
+}
+
+.a4-page-sheet td strong,
+.a4-page-sheet strong {
+  color: #0f172a !important;
+}
+
+/* Interactive Screen Mode High-Contrast Accessibility Overrides */
+table.pv-table th {
+  color: #cbd5e1 !important;
+  font-weight: 700 !important;
+}
+
+table.pv-table td {
+  color: #e2e8f0;
 }
 
 .only-print {

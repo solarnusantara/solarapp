@@ -311,11 +311,17 @@ function Report3DViewport({
       scene.add(ringMesh);
     } else {
       // MALAM: Nocturnal Sky with Moonlit Ambient & Safety Perimeter Markers
-      const nightHemiLight = new THREE.HemisphereLight(0x22364f, 0x090d16, 0.45);
+      // Crisp directional moonlight so panel racking, rows, and structure cast visible contrasts
+      const moonLight = new THREE.DirectionalLight(0xa5c4f5, 2.6);
+      moonLight.position.set(span * 0.4, span * 1.5, span * 0.7);
+      moonLight.castShadow = true;
+      scene.add(moonLight);
+
+      const nightHemiLight = new THREE.HemisphereLight(0x60a5fa, 0x0f172a, 1.15);
       scene.add(nightHemiLight);
 
       // Starfield particles in upper sky
-      const starCount = 280;
+      const starCount = 350;
       const starGeom = new THREE.BufferGeometry();
       const starPositions = new Float32Array(starCount * 3);
       for (let i = 0; i < starCount; i++) {
@@ -328,14 +334,14 @@ function Report3DViewport({
       }
       starGeom.setAttribute("position", new THREE.BufferAttribute(starPositions, 3));
       const starMat = new THREE.PointsMaterial({
-        color: 0x93c5fd,
-        size: Math.max(1.5, span * 0.012),
+        color: 0xbae6fd,
+        size: Math.max(1.8, span * 0.014),
         transparent: true,
-        opacity: 0.85,
+        opacity: 0.9,
       });
       scene.add(new THREE.Points(starGeom, starMat));
 
-      // Perimeter safety LED beacon markers (green beacons)
+      // Perimeter safety LED beacon markers (bright green beacons)
       const beaconCorners = [
         { x: -areaWM / 2, z: -areaHM / 2 },
         { x: areaWM / 2, z: -areaHM / 2 },
@@ -343,10 +349,10 @@ function Report3DViewport({
         { x: -areaWM / 2, z: areaHM / 2 },
       ];
       beaconCorners.forEach((c) => {
-        const beaconGeom = new THREE.SphereGeometry(Math.max(0.4, span * 0.009), 12, 12);
+        const beaconGeom = new THREE.SphereGeometry(Math.max(0.6, span * 0.012), 16, 16);
         const beaconMat = new THREE.MeshBasicMaterial({ color: 0x22c55e });
         const beacon = new THREE.Mesh(beaconGeom, beaconMat);
-        beacon.position.set(c.x, buildingHeight + 0.35, c.z);
+        beacon.position.set(c.x, buildingHeight + 0.4, c.z);
         scene.add(beacon);
       });
     }
@@ -355,7 +361,7 @@ function Report3DViewport({
     const groundGeom = new THREE.PlaneGeometry(span * 3, span * 3);
     groundGeom.rotateX(-Math.PI / 2);
     const groundMat = new THREE.MeshStandardMaterial({
-      color: isNight ? 0x0c1524 : 0xe2e8f0,
+      color: isNight ? 0x0f172a : 0xe2e8f0,
       roughness: 0.85,
     });
     const groundMesh = new THREE.Mesh(groundGeom, groundMat);
@@ -366,41 +372,41 @@ function Report3DViewport({
     const gridHelper = new THREE.GridHelper(
       span * 2.2,
       Math.max(12, Math.round(span / 4)),
-      isNight ? 0x22364f : 0x94a3b8,
-      isNight ? 0x142030 : 0xcbd5e1
+      isNight ? 0x38bdf8 : 0x94a3b8,
+      isNight ? 0x1e293b : 0xcbd5e1
     );
     gridHelper.position.y = -0.04;
     scene.add(gridHelper);
 
-    // Cardinal Direction Sprites
+    // Cardinal Direction Sprites (Crisp High-Contrast Badges for WCAG Accessibility)
     const compassDist = span * 0.65;
     const directions = [
       { label: "UTARA (N)", x: 0, z: -compassDist, color: "#0284c7" },
-      { label: "SELATAN (S)", x: 0, z: compassDist, color: "#64748b" },
+      { label: "SELATAN (S)", x: 0, z: compassDist, color: "#0f172a" },
       { label: "TIMUR (E)", x: compassDist, z: 0, color: "#d97706" },
       { label: "BARAT (W)", x: -compassDist, z: 0, color: "#d97706" },
     ];
     directions.forEach((d) => {
       const canvas = document.createElement("canvas");
-      canvas.width = 160;
-      canvas.height = 36;
+      canvas.width = 180;
+      canvas.height = 42;
       const ctx = canvas.getContext("2d");
       if (ctx) {
-        ctx.fillStyle = isNight ? "#0e1a2be0" : "#ffffffea";
-        if (ctx.roundRect) ctx.roundRect(0, 0, 160, 36, 6);
-        else ctx.rect(0, 0, 160, 36);
+        ctx.fillStyle = isNight ? "#0f172af2" : "#fffffffa";
+        if (ctx.roundRect) ctx.roundRect(0, 0, 180, 42, 7);
+        else ctx.rect(0, 0, 180, 42);
         ctx.fill();
-        ctx.strokeStyle = isNight ? "#243a57" : "#cbd5e1";
-        ctx.lineWidth = 1.5;
+        ctx.strokeStyle = isNight ? "#38bdf8" : "#0f172a";
+        ctx.lineWidth = 2.5;
         ctx.stroke();
-        ctx.fillStyle = isNight ? (d.color === "#0284c7" ? "#38bdf8" : d.color) : d.color;
-        ctx.font = "bold 13px system-ui, sans-serif";
+        ctx.fillStyle = isNight ? "#ffffff" : "#0f172a";
+        ctx.font = "bold 15px system-ui, sans-serif";
         ctx.textAlign = "center";
         ctx.textBaseline = "middle";
-        ctx.fillText(d.label, 80, 18);
+        ctx.fillText(d.label, 90, 21);
         const tex = new THREE.CanvasTexture(canvas);
         const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex }));
-        sp.scale.set(span * 0.14, (span * 0.14 * 36) / 160, 1);
+        sp.scale.set(span * 0.15, (span * 0.15 * 42) / 180, 1);
         sp.position.set(d.x, 0.4, d.z);
         scene.add(sp);
       }
@@ -408,12 +414,12 @@ function Report3DViewport({
 
     // Building Roof & Walls
     const wallMat = new THREE.MeshStandardMaterial({
-      color: isNight ? 0x223246 : 0x64748b,
+      color: isNight ? 0x1e293b : 0x475569,
       roughness: 0.8,
     });
     const roofMat = new THREE.MeshStandardMaterial({
-      color: isNight ? 0x141f2e : 0x94a3b8,
-      roughness: 0.65,
+      color: isNight ? 0x0f172a : 0xf1f5f9,
+      roughness: 0.7,
     });
 
     if (siteCorners && siteCorners.length >= 3) {
@@ -488,9 +494,9 @@ function Report3DViewport({
 
       const panelGeom = new THREE.BoxGeometry(pW, 0.05, pH);
       const panelMat = new THREE.MeshStandardMaterial({
-        color: !isNight ? 0x0284c7 : 0x0c253d,
-        roughness: !isNight ? 0.22 : 0.65,
-        metalness: !isNight ? 0.65 : 0.25,
+        color: !isNight ? 0x0284c7 : 0x2563eb,
+        roughness: !isNight ? 0.22 : 0.32,
+        metalness: !isNight ? 0.65 : 0.55,
       });
       const panelIM = new THREE.InstancedMesh(panelGeom, panelMat, n);
       panelIM.castShadow = !isNight;
@@ -1039,34 +1045,34 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
           </div>
           <div>
             <div style={{ fontWeight: 900, fontSize: 11, color: "#0f172a", letterSpacing: 0.5 }}>SOLARAPP</div>
-            <div style={{ fontSize: 7.5, color: "#64748b", fontWeight: 700 }}>ENGINEERING STUDIO</div>
+            <div style={{ fontSize: 7.5, color: "#1e293b", fontWeight: 800 }}>ENGINEERING STUDIO</div>
           </div>
         </div>
 
         <div style={{ padding: "4px 10px", borderRight: "1px solid #cbd5e1", display: "flex", flexDirection: "column", justifyContent: "center" }}>
-          <div style={{ fontSize: 7.5, color: "#64748b", textTransform: "uppercase" }}>NAMA PROYEK / FASILITAS</div>
+          <div style={{ fontSize: 7.5, color: "#1e293b", fontWeight: 700, textTransform: "uppercase" }}>NAMA PROYEK / FASILITAS</div>
           <div style={{ fontWeight: 800, fontSize: 10.5, color: "#0f172a" }}>{activeProj?.name} ({capacityKwp} kWp)</div>
-          <div style={{ fontSize: 8, color: "#475569" }}>KLIEN: {client} · {coords.name}</div>
+          <div style={{ fontSize: 8, color: "#0f172a" }}>KLIEN: {client} · {coords.name}</div>
         </div>
 
         <div style={{ padding: "4px 8px", display: "flex", flexDirection: "column", justifyContent: "center" }}>
-          <div style={{ fontSize: 7.5, color: "#64748b" }}>SKALA / SATUAN</div>
-          <div style={{ fontWeight: 700, fontSize: 9 }}>NTS (1:500) · mm / meter</div>
+          <div style={{ fontSize: 7.5, color: "#1e293b", fontWeight: 700 }}>SKALA / SATUAN</div>
+          <div style={{ fontWeight: 700, fontSize: 9, color: "#0f172a" }}>NTS (1:500) · mm / meter</div>
         </div>
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 120px 100px 85px", fontSize: 8 }}>
         <div style={{ padding: "4px 8px", borderRight: "1px solid #cbd5e1" }}>
-          <span style={{ color: "#64748b" }}>JUDUL GAMBAR:</span> <strong style={{ color: "#0f172a", fontSize: 8.5 }}>{title}</strong>
+          <span style={{ color: "#1e293b", fontWeight: 700 }}>JUDUL GAMBAR:</span> <strong style={{ color: "#0f172a", fontSize: 8.5 }}>{title}</strong>
         </div>
         <div style={{ padding: "4px 6px", borderRight: "1px solid #cbd5e1" }}>
-          <span style={{ color: "#64748b" }}>NO. GAMBAR:</span> <strong style={{ fontFamily: "monospace" }}>{docNo}</strong>
+          <span style={{ color: "#1e293b", fontWeight: 700 }}>NO. GAMBAR:</span> <strong style={{ fontFamily: "monospace", color: "#0f172a" }}>{docNo}</strong>
         </div>
         <div style={{ padding: "4px 6px", borderRight: "1px solid #cbd5e1" }}>
-          <span style={{ color: "#64748b" }}>TANGGAL:</span> <strong>{date}</strong>
+          <span style={{ color: "#1e293b", fontWeight: 700 }}>TANGGAL:</span> <strong style={{ color: "#0f172a" }}>{date}</strong>
         </div>
         <div style={{ padding: "4px 6px", background: "#f8fafc", textAlign: "center" }}>
-          <span style={{ color: "#64748b" }}>LEMBAR:</span> <strong style={{ color: "#0f172a" }}>{sheetNo} DARI 3</strong>
+          <span style={{ color: "#1e293b", fontWeight: 700 }}>LEMBAR:</span> <strong style={{ color: "#0f172a" }}>{sheetNo} DARI 3</strong>
         </div>
       </div>
     </div>
@@ -1088,7 +1094,7 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
             <div style={{ fontSize: 9, color: "#059669", fontWeight: 700, letterSpacing: 1 }}>SOLAR PV ENGINEERING STUDIO & FEASIBILITY STUDY</div>
           </div>
         </div>
-        <div style={{ textAlign: "right", fontSize: 8.5, color: "#475569" }}>
+        <div style={{ textAlign: "right", fontSize: 8.5, color: "#1e293b", fontWeight: 600 }}>
           <div>DOKUMEN NO: <strong style={{ color: "#0f172a" }}>SOLARAPP-DED-2026-001</strong></div>
           <div>REVISI: <strong style={{ color: "#0f172a" }}>REV 0 (IFC)</strong></div>
           <div>TANGGAL LAPORAN: <strong style={{ color: "#0f172a" }}>{date}</strong></div>
@@ -1099,28 +1105,28 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
         <h2 style={{ fontSize: 14.5, margin: "0 0 2px", color: "#0f172a", fontWeight: 800, textTransform: "uppercase" }}>
           LAPORAN KELAYAKAN REKAYASA & ESTIMASI PRODUKSI ENERGI PLTS
         </h2>
-        <div style={{ fontSize: 8.5, color: "#475569" }}>
+        <div style={{ fontSize: 8.5, color: "#1e293b", fontWeight: 600 }}>
           Kalkulasi Radiasi Matahari 25 Tahun NASA POWER, Analisis Rugi Daya, Profil Energi Bulanan & Titik Sambung PLN
         </div>
       </div>
 
       {/* Project Profile Table */}
-      <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 5, padding: "7px 10px", marginBottom: 10, fontSize: 9 }}>
+      <div style={{ background: "#f8fafc", border: "1.5px solid #cbd5e1", borderRadius: 5, padding: "8px 11px", marginBottom: 10, fontSize: 9 }}>
         <div style={{ display: "grid", gridTemplateColumns: "1.2fr 1.2fr 1fr", gap: 8 }}>
           <div>
-            <span style={{ color: "#64748b" }}>Nama Proyek: </span>
+            <span style={{ color: "#1e293b", fontWeight: 700 }}>Nama Proyek: </span>
             <strong style={{ color: "#0f172a" }}>{activeProj?.name}</strong>
-            <div style={{ color: "#059669", fontWeight: 700, marginTop: 1 }}>Tipe: {activeProj?.system || "Rooftop On-Grid"} ({capacityKwp} kWp)</div>
+            <div style={{ color: "#047857", fontWeight: 800, marginTop: 1 }}>Tipe: {activeProj?.system || "Rooftop On-Grid"} ({capacityKwp} kWp)</div>
           </div>
           <div>
-            <span style={{ color: "#64748b" }}>Klien / Pemilik: </span>
+            <span style={{ color: "#1e293b", fontWeight: 700 }}>Klien / Pemilik: </span>
             <strong style={{ color: "#0f172a" }}>{client}</strong>
-            <div style={{ color: "#475569", marginTop: 1 }}>Lokasi: {coords.name}</div>
+            <div style={{ color: "#0f172a", marginTop: 1, fontWeight: 500 }}>Lokasi: {coords.name}</div>
           </div>
           <div>
-            <span style={{ color: "#64748b" }}>Koordinat GPS: </span>
+            <span style={{ color: "#1e293b", fontWeight: 700 }}>Koordinat GPS: </span>
             <strong style={{ color: "#0f172a" }}>{coords.lat.toFixed(4)}°, {coords.lng.toFixed(4)}°</strong>
-            <div style={{ color: "#475569", marginTop: 1 }}>Status: {status}</div>
+            <div style={{ color: "#0f172a", marginTop: 1, fontWeight: 500 }}>Status: {status}</div>
           </div>
         </div>
       </div>
@@ -1128,49 +1134,49 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
       {/* 6 Metric KPI Badges */}
       {yieldData && (
         <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 5, marginBottom: 10, textAlign: "center" }}>
-          <div style={{ padding: "5px 6px", background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 4 }}>
-            <div style={{ fontSize: 8, color: "#64748b" }}>Kapasitas DC</div>
-            <strong style={{ fontSize: 12.5, color: "#0f172a" }}>{yieldData.capacityKwp}</strong> <small style={{ fontSize: 8, color: "#059669" }}>kWp</small>
+          <div style={{ padding: "5px 6px", background: "#ffffff", border: "1.5px solid #cbd5e1", borderRadius: 4 }}>
+            <div style={{ fontSize: 8, color: "#1e293b", fontWeight: 700 }}>Kapasitas DC</div>
+            <strong style={{ fontSize: 13, color: "#0f172a" }}>{yieldData.capacityKwp}</strong> <small style={{ fontSize: 8, color: "#047857", fontWeight: 800 }}>kWp</small>
           </div>
-          <div style={{ padding: "5px 6px", background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 4 }}>
-            <div style={{ fontSize: 8, color: "#64748b" }}>Total Modul</div>
-            <strong style={{ fontSize: 12.5, color: "#0f172a" }}>{totalPanels.toLocaleString()}</strong> <small style={{ fontSize: 8, color: "#059669" }}>unit</small>
+          <div style={{ padding: "5px 6px", background: "#ffffff", border: "1.5px solid #cbd5e1", borderRadius: 4 }}>
+            <div style={{ fontSize: 8, color: "#1e293b", fontWeight: 700 }}>Total Modul</div>
+            <strong style={{ fontSize: 13, color: "#0f172a" }}>{totalPanels.toLocaleString()}</strong> <small style={{ fontSize: 8, color: "#047857", fontWeight: 800 }}>unit</small>
           </div>
-          <div style={{ padding: "5px 6px", background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 4 }}>
-            <div style={{ fontSize: 8, color: "#64748b" }}>Specific Yield</div>
-            <strong style={{ fontSize: 12.5, color: "#0f172a" }}>{yieldData.specificYield.toLocaleString()}</strong> <small style={{ fontSize: 8, color: "#059669" }}>kWh/kWp</small>
+          <div style={{ padding: "5px 6px", background: "#ffffff", border: "1.5px solid #cbd5e1", borderRadius: 4 }}>
+            <div style={{ fontSize: 8, color: "#1e293b", fontWeight: 700 }}>Specific Yield</div>
+            <strong style={{ fontSize: 13, color: "#0f172a" }}>{yieldData.specificYield.toLocaleString()}</strong> <small style={{ fontSize: 8, color: "#047857", fontWeight: 800 }}>kWh/kWp</small>
           </div>
-          <div style={{ padding: "5px 6px", background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 4 }}>
-            <div style={{ fontSize: 8, color: "#64748b" }}>Produksi Thn</div>
-            <strong style={{ fontSize: 12.5, color: "#0f172a" }}>{yieldData.annualEnergyMwh.toLocaleString()}</strong> <small style={{ fontSize: 8, color: "#059669" }}>MWh</small>
+          <div style={{ padding: "5px 6px", background: "#ffffff", border: "1.5px solid #cbd5e1", borderRadius: 4 }}>
+            <div style={{ fontSize: 8, color: "#1e293b", fontWeight: 700 }}>Produksi Thn</div>
+            <strong style={{ fontSize: 13, color: "#0f172a" }}>{yieldData.annualEnergyMwh.toLocaleString()}</strong> <small style={{ fontSize: 8, color: "#047857", fontWeight: 800 }}>MWh</small>
           </div>
-          <div style={{ padding: "5px 6px", background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 4 }}>
-            <div style={{ fontSize: 8, color: "#64748b" }}>Perf. Ratio (PR)</div>
-            <strong style={{ fontSize: 12.5, color: "#0f172a" }}>{(yieldData.pr * 100).toFixed(1)}%</strong>
+          <div style={{ padding: "5px 6px", background: "#ffffff", border: "1.5px solid #cbd5e1", borderRadius: 4 }}>
+            <div style={{ fontSize: 8, color: "#1e293b", fontWeight: 700 }}>Perf. Ratio (PR)</div>
+            <strong style={{ fontSize: 13, color: "#047857" }}>{(yieldData.pr * 100).toFixed(1)}%</strong>
           </div>
-          <div style={{ padding: "5px 6px", background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 4 }}>
-            <div style={{ fontSize: 8, color: "#64748b" }}>Reduksi CO₂</div>
-            <strong style={{ fontSize: 12.5, color: "#0f172a" }}>{yieldData.carbonOffsetTons.toLocaleString()}</strong> <small style={{ fontSize: 8, color: "#059669" }}>ton</small>
+          <div style={{ padding: "5px 6px", background: "#ffffff", border: "1.5px solid #cbd5e1", borderRadius: 4 }}>
+            <div style={{ fontSize: 8, color: "#1e293b", fontWeight: 700 }}>Reduksi CO₂</div>
+            <strong style={{ fontSize: 13, color: "#0f172a" }}>{yieldData.carbonOffsetTons.toLocaleString()}</strong> <small style={{ fontSize: 8, color: "#047857", fontWeight: 800 }}>ton</small>
           </div>
         </div>
       )}
 
       {/* Compact Monthly Bar Chart */}
       {yieldData && (
-        <div style={{ background: "#ffffff", border: "1px solid #e2e8f0", borderRadius: 5, padding: "7px 10px", marginBottom: 10 }}>
+        <div style={{ background: "#ffffff", border: "1.5px solid #cbd5e1", borderRadius: 5, padding: "7px 10px", marginBottom: 10 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
-            <span style={{ fontSize: 9.5, fontWeight: 700, color: "#0f172a" }}>📊 Profil Produksi Energi Bulanan (MWh)</span>
-            <span style={{ fontSize: 8, color: "#64748b" }}>Distribusi Musiman Berdasarkan Insolasi Harian NASA POWER 25 Tahun</span>
+            <span style={{ fontSize: 9.5, fontWeight: 800, color: "#0f172a" }}>📊 Profil Produksi Energi Bulanan (MWh)</span>
+            <span style={{ fontSize: 8, color: "#1e293b", fontWeight: 600 }}>Distribusi Musiman Berdasarkan Insolasi Harian NASA POWER 25 Tahun</span>
           </div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(12, 1fr)", gap: 5, alignItems: "flex-end", height: 72, background: "#f8fafc", borderRadius: 4, padding: "6px 5px 3px", border: "1px solid #f1f5f9" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(12, 1fr)", gap: 5, alignItems: "flex-end", height: 72, background: "#f8fafc", borderRadius: 4, padding: "6px 5px 3px", border: "1px solid #e2e8f0" }}>
             {yieldData.monthly.map((m) => {
               const heightPct = Math.max(16, Math.round((m.monthlyEnergyKwh / maxMonthlyKwh) * 100));
               const mwh = (m.monthlyEnergyKwh / 1000).toFixed(1);
               return (
                 <div key={m.month} style={{ display: "flex", flexDirection: "column", alignItems: "center", height: "100%", justifyContent: "flex-end" }}>
-                  <span style={{ fontSize: 7.5, fontWeight: 700, color: "#059669", marginBottom: 2 }}>{mwh}</span>
+                  <span style={{ fontSize: 7.5, fontWeight: 800, color: "#047857", marginBottom: 2 }}>{mwh}</span>
                   <div style={{ width: "80%", maxWidth: 22, height: `${heightPct}%`, background: "linear-gradient(180deg, #10b981 0%, #059669 100%)", borderRadius: "2px 2px 0 0" }} />
-                  <span style={{ fontSize: 7.5, color: "#64748b", marginTop: 2 }}>{m.month}</span>
+                  <span style={{ fontSize: 7.5, color: "#0f172a", fontWeight: 700, marginTop: 2 }}>{m.month}</span>
                 </div>
               );
             })}
@@ -1181,37 +1187,37 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
       {/* Monthly Irradiance & Yield Table */}
       {yieldData && (
         <div style={{ marginBottom: 10 }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 8, border: "1px solid #e2e8f0" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 8.5, border: "1.5px solid #0f172a", color: "#0f172a" }}>
             <thead>
-              <tr style={{ background: "#f1f5f9", color: "#334155", textAlign: "center" }}>
-                <th style={{ padding: "3.5px 5px", textAlign: "left", borderBottom: "1px solid #cbd5e1" }}>Bulan</th>
-                <th style={{ padding: "3.5px 5px", borderBottom: "1px solid #cbd5e1" }}>GHI (kWh/m²/hari)</th>
-                <th style={{ padding: "3.5px 5px", borderBottom: "1px solid #cbd5e1" }}>Suhu (°C)</th>
-                <th style={{ padding: "3.5px 5px", borderBottom: "1px solid #cbd5e1" }}>Harian (kWh)</th>
-                <th style={{ padding: "3.5px 5px", borderBottom: "1px solid #cbd5e1" }}>Total (MWh)</th>
-                <th style={{ padding: "3.5px 5px", textAlign: "right", borderBottom: "1px solid #cbd5e1" }}>Est. Hemat (Rp)</th>
+              <tr style={{ background: "#e2e8f0", color: "#0f172a", textAlign: "center" }}>
+                <th style={{ padding: "4px 6px", textAlign: "left", borderBottom: "1.5px solid #0f172a", color: "#0f172a", fontWeight: 800 }}>Bulan</th>
+                <th style={{ padding: "4px 6px", borderBottom: "1.5px solid #0f172a", color: "#0f172a", fontWeight: 800 }}>GHI (kWh/m²/hari)</th>
+                <th style={{ padding: "4px 6px", borderBottom: "1.5px solid #0f172a", color: "#0f172a", fontWeight: 800 }}>Suhu (°C)</th>
+                <th style={{ padding: "4px 6px", borderBottom: "1.5px solid #0f172a", color: "#0f172a", fontWeight: 800 }}>Harian (kWh)</th>
+                <th style={{ padding: "4px 6px", borderBottom: "1.5px solid #0f172a", color: "#0f172a", fontWeight: 800 }}>Total (MWh)</th>
+                <th style={{ padding: "4px 6px", textAlign: "right", borderBottom: "1.5px solid #0f172a", color: "#0f172a", fontWeight: 800 }}>Est. Hemat (Rp)</th>
               </tr>
             </thead>
             <tbody>
               {yieldData.monthly.map((m, idx) => (
-                <tr key={m.month} style={{ background: idx % 2 === 0 ? "#ffffff" : "#f8fafc", textAlign: "center" }}>
-                  <td style={{ padding: "3px 5px", textAlign: "left", fontWeight: 700, color: "#0f172a" }}>{m.month}</td>
-                  <td style={{ padding: "3px 5px" }}>{m.ghi.toFixed(2)}</td>
-                  <td style={{ padding: "3px 5px" }}>{m.temp.toFixed(1)} °C</td>
-                  <td style={{ padding: "3px 5px" }}>{m.dailyEnergyKwh.toLocaleString()}</td>
-                  <td style={{ padding: "3px 5px", fontWeight: 700, color: "#059669" }}>{(m.monthlyEnergyKwh / 1000).toFixed(1)}</td>
-                  <td style={{ padding: "3px 5px", textAlign: "right" }}>Rp {m.savingsIdr.toLocaleString()}</td>
+                <tr key={m.month} style={{ background: idx % 2 === 0 ? "#ffffff" : "#f1f5f9", textAlign: "center", borderBottom: "1px solid #e2e8f0" }}>
+                  <td style={{ padding: "3.5px 6px", textAlign: "left", fontWeight: 800, color: "#0f172a" }}>{m.month}</td>
+                  <td style={{ padding: "3.5px 6px", fontWeight: 600, color: "#0f172a" }}>{m.ghi.toFixed(2)}</td>
+                  <td style={{ padding: "3.5px 6px", fontWeight: 600, color: "#0f172a" }}>{m.temp.toFixed(1)} °C</td>
+                  <td style={{ padding: "3.5px 6px", fontWeight: 600, color: "#0f172a" }}>{m.dailyEnergyKwh.toLocaleString()}</td>
+                  <td style={{ padding: "3.5px 6px", fontWeight: 800, color: "#047857" }}>{(m.monthlyEnergyKwh / 1000).toFixed(1)}</td>
+                  <td style={{ padding: "3.5px 6px", textAlign: "right", fontWeight: 600, color: "#0f172a" }}>Rp {m.savingsIdr.toLocaleString()}</td>
                 </tr>
               ))}
             </tbody>
             <tfoot>
-              <tr style={{ background: "#e2e8f0", fontWeight: 800, textAlign: "center", color: "#0f172a" }}>
-                <td style={{ padding: "3.5px 5px", textAlign: "left" }}>TOTAL / RATA-RATA</td>
-                <td style={{ padding: "3.5px 5px" }}>{yieldData.annualGhi.toFixed(2)} PSH</td>
-                <td style={{ padding: "3.5px 5px" }}>{yieldData.annualTemp.toFixed(1)} °C</td>
-                <td style={{ padding: "3.5px 5px" }}>-</td>
-                <td style={{ padding: "3.5px 5px", color: "#059669" }}>{yieldData.annualEnergyMwh.toLocaleString()} MWh</td>
-                <td style={{ padding: "3.5px 5px", textAlign: "right", color: "#059669" }}>Rp {yieldData.annualSavingsIdr.toLocaleString()}</td>
+              <tr style={{ background: "#cbd5e1", fontWeight: 900, textAlign: "center", color: "#0f172a", borderTop: "2px solid #0f172a" }}>
+                <td style={{ padding: "4px 6px", textAlign: "left", color: "#0f172a", fontWeight: 900 }}>TOTAL / RATA-RATA</td>
+                <td style={{ padding: "4px 6px", color: "#0f172a", fontWeight: 800 }}>{yieldData.annualGhi.toFixed(2)} PSH</td>
+                <td style={{ padding: "4px 6px", color: "#0f172a", fontWeight: 800 }}>{yieldData.annualTemp.toFixed(1)} °C</td>
+                <td style={{ padding: "4px 6px", color: "#0f172a", fontWeight: 800 }}>-</td>
+                <td style={{ padding: "4px 6px", color: "#047857", fontWeight: 900 }}>{yieldData.annualEnergyMwh.toLocaleString()} MWh</td>
+                <td style={{ padding: "4px 6px", textAlign: "right", color: "#047857", fontWeight: 900 }}>Rp {yieldData.annualSavingsIdr.toLocaleString()}</td>
               </tr>
             </tfoot>
           </table>
@@ -1219,29 +1225,29 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
       )}
 
       {/* Bottom Section: Loss Analysis & Grid Interconnection */}
-      <div style={{ display: "grid", gridTemplateColumns: "1.1fr 1fr", gap: 8, marginBottom: 10, fontSize: 8 }}>
-        <div style={{ border: "1px solid #e2e8f0", borderRadius: 4, padding: "6px 8px", background: "#f8fafc" }}>
-          <div style={{ fontWeight: 700, color: "#0f172a", marginBottom: 3, display: "flex", alignItems: "center", gap: 4 }}>
-            <ShieldCheck size={11} style={{ color: "#059669" }} /> Dekomposisi Rugi Daya Sistem (IEC 61724)
+      <div style={{ display: "grid", gridTemplateColumns: "1.1fr 1fr", gap: 8, marginBottom: 10, fontSize: 8, color: "#0f172a" }}>
+        <div style={{ border: "1.5px solid #cbd5e1", borderRadius: 4, padding: "6px 8px", background: "#ffffff", color: "#0f172a" }}>
+          <div style={{ fontWeight: 800, color: "#0f172a", marginBottom: 3, display: "flex", alignItems: "center", gap: 4 }}>
+            <ShieldCheck size={11} style={{ color: "#047857" }} /> Dekomposisi Rugi Daya Sistem (IEC 61724)
           </div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "2px 6px" }}>
-            <div>Soiling / Debu: <strong>-2.5%</strong></div>
-            <div>Rugi Suhu Ambien: <strong>-9.1%</strong></div>
-            <div>Shading Obstacle: <strong>-0.8%</strong></div>
-            <div>Efisiensi Inverter: <strong>-1.8%</strong></div>
-            <div>Kabel DC/AC: <strong>-1.2%</strong></div>
-            <div>Net PR: <strong style={{ color: "#059669" }}>81.4%</strong></div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "2px 6px", color: "#0f172a" }}>
+            <div>Soiling / Debu: <strong style={{ color: "#dc2626" }}>-2.5%</strong></div>
+            <div>Rugi Suhu Ambien: <strong style={{ color: "#dc2626" }}>-9.1%</strong></div>
+            <div>Shading Obstacle: <strong style={{ color: "#047857" }}>-0.8%</strong></div>
+            <div>Efisiensi Inverter: <strong style={{ color: "#dc2626" }}>-1.8%</strong></div>
+            <div>Kabel DC/AC: <strong style={{ color: "#dc2626" }}>-1.2%</strong></div>
+            <div>Net PR: <strong style={{ color: "#047857" }}>81.4%</strong></div>
           </div>
         </div>
 
-        <div style={{ border: "1px solid #e2e8f0", borderRadius: 4, padding: "6px 8px", background: "#f8fafc" }}>
-          <div style={{ fontWeight: 700, color: "#0f172a", marginBottom: 3, display: "flex", alignItems: "center", gap: 4 }}>
+        <div style={{ border: "1.5px solid #cbd5e1", borderRadius: 4, padding: "6px 8px", background: "#ffffff", color: "#0f172a" }}>
+          <div style={{ fontWeight: 800, color: "#0f172a", marginBottom: 3, display: "flex", alignItems: "center", gap: 4 }}>
             <Zap size={11} style={{ color: "#0284c7" }} /> Rekomendasi Titik Sambung Grid PLN
           </div>
           {substations.slice(0, 2).map((sub) => (
-            <div key={sub.name} style={{ display: "flex", justifyContent: "space-between", marginBottom: 2 }}>
-              <span>{sub.name} ({sub.voltage})</span>
-              <strong>{sub.distanceKm.toFixed(1)} km · Siap</strong>
+            <div key={sub.name} style={{ display: "flex", justifyContent: "space-between", marginBottom: 2, color: "#0f172a" }}>
+              <span style={{ fontWeight: 600, color: "#0f172a" }}>{sub.name} ({sub.voltage})</span>
+              <strong style={{ color: "#0369a1" }}>{sub.distanceKm.toFixed(1)} km · Siap</strong>
             </div>
           ))}
         </div>
@@ -1250,21 +1256,21 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
       {/* Approval / Signatures */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, fontSize: 8.5, marginTop: 4 }}>
         <div>
-          <div style={{ color: "#64748b" }}>DISUSUN & DISETUJUI OLEH:</div>
-          <div style={{ fontWeight: 700, color: "#0f172a", marginTop: 2 }}>{prepared}</div>
-          <div style={{ fontSize: 8, color: "#64748b" }}>Lead Electrical & Structural PV Engineer</div>
-          <div style={{ marginTop: 12, borderBottom: "1px solid #94a3b8", width: "70%" }} />
+          <div style={{ color: "#1e293b", fontWeight: 700 }}>DISUSUN & DISETUJUI OLEH:</div>
+          <div style={{ fontWeight: 800, color: "#0f172a", marginTop: 2 }}>{prepared}</div>
+          <div style={{ fontSize: 8, color: "#0f172a", fontWeight: 600 }}>Lead Electrical & Structural PV Engineer</div>
+          <div style={{ marginTop: 12, borderBottom: "1.5px solid #0f172a", width: "70%" }} />
         </div>
         <div style={{ textAlign: "right" }}>
-          <div style={{ color: "#64748b" }}>DISETUJUI OLEH KLIEN / FASILITAS:</div>
-          <div style={{ fontWeight: 700, color: "#0f172a", marginTop: 2 }}>{client}</div>
-          <div style={{ fontSize: 8, color: "#64748b" }}>Kepala Divisi Energi & Fasilitas</div>
-          <div style={{ marginTop: 12, borderBottom: "1px solid #94a3b8", width: "70%", marginLeft: "auto" }} />
+          <div style={{ color: "#1e293b", fontWeight: 700 }}>DISETUJUI OLEH KLIEN / FASILITAS:</div>
+          <div style={{ fontWeight: 800, color: "#0f172a", marginTop: 2 }}>{client}</div>
+          <div style={{ fontSize: 8, color: "#0f172a", fontWeight: 600 }}>Kepala Divisi Energi & Fasilitas</div>
+          <div style={{ marginTop: 12, borderBottom: "1.5px solid #0f172a", width: "70%", marginLeft: "auto" }} />
         </div>
       </div>
 
       {/* Sheet Footer */}
-      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 8, color: "#64748b", borderTop: "1px solid #e2e8f0", paddingTop: 5, marginTop: 10 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 8, color: "#0f172a", fontWeight: 700, borderTop: "1.5px solid #0f172a", paddingTop: 5, marginTop: 10 }}>
         <span>SOLARAPP · DOKUMEN RAHASIA TEKNIS EPC</span>
         <span>LEMBAR 1 DARI 3 (EXECUTIVE SUMMARY)</span>
       </div>
@@ -1284,11 +1290,11 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
           </div>
           <div>
             <div style={{ fontSize: 12.5, fontWeight: 800, color: "#0f172a" }}>GEOLOKASI TAPAK, STUDI SHADING & LOSS BREAKDOWN</div>
-            <div style={{ fontSize: 8, color: "#64748b" }}>LEMBAR 2 DARI 3 · EPC DRAWING PACKAGE · REVISI 0 (IFC)</div>
+            <div style={{ fontSize: 8, color: "#0f172a", fontWeight: 600 }}>LEMBAR 2 DARI 3 · EPC DRAWING PACKAGE · REVISI 0 (IFC)</div>
           </div>
         </div>
         <div style={{ textAlign: "right", fontSize: 8.5 }}>
-          <span style={{ color: "#64748b" }}>METODE: </span><strong style={{ color: "#0f172a" }}>GIS & 3D RAY-TRACING</strong>
+          <span style={{ color: "#1e293b", fontWeight: 700 }}>METODE: </span><strong style={{ color: "#0f172a" }}>GIS & 3D RAY-TRACING</strong>
         </div>
       </div>
 
@@ -1413,38 +1419,38 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
 
               {/* Geolocation Coordinates & Site Data */}
               <div style={{ display: "flex", flexDirection: "column", justifyContent: "space-between", gap: 4, fontSize: 8 }}>
-                <div style={{ background: "#ffffff", padding: "5px 8px", border: "1px solid #e2e8f0", borderRadius: 3 }}>
-                  <div style={{ color: "#64748b", fontSize: 7.5 }}>Nama Lokasi & Fasilitas</div>
+                <div style={{ background: "#ffffff", padding: "5px 8px", border: "1.5px solid #cbd5e1", borderRadius: 3 }}>
+                  <div style={{ color: "#1e293b", fontSize: 7.5, fontWeight: 700 }}>Nama Lokasi & Fasilitas</div>
                   <strong style={{ color: "#0f172a", fontSize: 9 }}>{coords.name}</strong>
                 </div>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 4 }}>
-                  <div style={{ background: "#ffffff", padding: "5px 8px", border: "1px solid #e2e8f0", borderRadius: 3 }}>
-                    <div style={{ color: "#64748b", fontSize: 7.5 }}>Latitude (Lintang)</div>
-                    <strong style={{ color: "#0284c7" }}>{coords.lat.toFixed(5)}° S</strong>
+                  <div style={{ background: "#ffffff", padding: "5px 8px", border: "1.5px solid #cbd5e1", borderRadius: 3 }}>
+                    <div style={{ color: "#1e293b", fontSize: 7.5, fontWeight: 700 }}>Latitude (Lintang)</div>
+                    <strong style={{ color: "#0369a1", fontWeight: 800 }}>{coords.lat.toFixed(5)}° S</strong>
                   </div>
-                  <div style={{ background: "#ffffff", padding: "5px 8px", border: "1px solid #e2e8f0", borderRadius: 3 }}>
-                    <div style={{ color: "#64748b", fontSize: 7.5 }}>Longitude (Bujur)</div>
-                    <strong style={{ color: "#0284c7" }}>{coords.lng.toFixed(5)}° E</strong>
-                  </div>
-                </div>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 4 }}>
-                  <div style={{ background: "#ffffff", padding: "5px 8px", border: "1px solid #e2e8f0", borderRadius: 3 }}>
-                    <div style={{ color: "#64748b", fontSize: 7.5 }}>Elevasi Tapak (DEM)</div>
-                    <strong style={{ color: "#0f172a" }}>+34.2 m dpl</strong>
-                  </div>
-                  <div style={{ background: "#ffffff", padding: "5px 8px", border: "1px solid #e2e8f0", borderRadius: 3 }}>
-                    <div style={{ color: "#64748b", fontSize: 7.5 }}>Luas Tapak Bangunan</div>
-                    <strong style={{ color: "#059669" }}>{((areaW * areaH) / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 0 })} m²</strong>
+                  <div style={{ background: "#ffffff", padding: "5px 8px", border: "1.5px solid #cbd5e1", borderRadius: 3 }}>
+                    <div style={{ color: "#1e293b", fontSize: 7.5, fontWeight: 700 }}>Longitude (Bujur)</div>
+                    <strong style={{ color: "#0369a1", fontWeight: 800 }}>{coords.lng.toFixed(5)}° E</strong>
                   </div>
                 </div>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 4 }}>
-                  <div style={{ background: "#ffffff", padding: "5px 8px", border: "1px solid #e2e8f0", borderRadius: 3 }}>
-                    <div style={{ color: "#64748b", fontSize: 7.5 }}>Orientasi Utama</div>
-                    <strong style={{ color: "#0f172a" }}>Hadap Khatulistiwa</strong>
+                  <div style={{ background: "#ffffff", padding: "5px 8px", border: "1.5px solid #cbd5e1", borderRadius: 3 }}>
+                    <div style={{ color: "#1e293b", fontSize: 7.5, fontWeight: 700 }}>Elevasi Tapak (DEM)</div>
+                    <strong style={{ color: "#0f172a", fontWeight: 800 }}>+34.2 m dpl</strong>
                   </div>
-                  <div style={{ background: "#ffffff", padding: "5px 8px", border: "1px solid #e2e8f0", borderRadius: 3 }}>
-                    <div style={{ color: "#64748b", fontSize: 7.5 }}>Status Verifikasi</div>
-                    <strong style={{ color: "#059669" }}>✓ Ground Truth OK</strong>
+                  <div style={{ background: "#ffffff", padding: "5px 8px", border: "1.5px solid #cbd5e1", borderRadius: 3 }}>
+                    <div style={{ color: "#1e293b", fontSize: 7.5, fontWeight: 700 }}>Luas Tapak Bangunan</div>
+                    <strong style={{ color: "#047857", fontWeight: 800 }}>{((areaW * areaH) / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 0 })} m²</strong>
+                  </div>
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 4 }}>
+                  <div style={{ background: "#ffffff", padding: "5px 8px", border: "1.5px solid #cbd5e1", borderRadius: 3 }}>
+                    <div style={{ color: "#1e293b", fontSize: 7.5, fontWeight: 700 }}>Orientasi Utama</div>
+                    <strong style={{ color: "#0f172a", fontWeight: 800 }}>Hadap Khatulistiwa</strong>
+                  </div>
+                  <div style={{ background: "#ffffff", padding: "5px 8px", border: "1.5px solid #cbd5e1", borderRadius: 3 }}>
+                    <div style={{ color: "#1e293b", fontSize: 7.5, fontWeight: 700 }}>Status Verifikasi</div>
+                    <strong style={{ color: "#047857", fontWeight: 800 }}>✓ Ground Truth OK</strong>
                   </div>
                 </div>
                 <a
@@ -1476,49 +1482,49 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
       })()}
 
       {/* Shading Analysis Matrix */}
-      <div style={{ border: "1px solid #e2e8f0", borderRadius: 5, padding: "7px 9px", background: "#f8fafc", marginBottom: 8 }}>
-        <div style={{ fontWeight: 700, color: "#0f172a", marginBottom: 4, display: "flex", alignItems: "center", gap: 4, fontSize: 9 }}>
-          <Clock size={12} style={{ color: "#f59e0b" }} /> Matriks Evaluasi Shading & Sudut Jatuh Bayangan Obstacle
+      <div style={{ border: "1.5px solid #cbd5e1", borderRadius: 5, padding: "7px 9px", background: "#f8fafc", marginBottom: 8 }}>
+        <div style={{ fontWeight: 800, color: "#0f172a", marginBottom: 4, display: "flex", alignItems: "center", gap: 4, fontSize: 9 }}>
+          <Clock size={12} style={{ color: "#d97706" }} /> Matriks Evaluasi Shading & Sudut Jatuh Bayangan Obstacle
         </div>
-        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 8 }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 8.5, border: "1.5px solid #0f172a", color: "#0f172a" }}>
           <thead>
-            <tr style={{ background: "#e2e8f0", color: "#334155" }}>
-              <th style={{ padding: "3.5px 5px", textAlign: "left" }}>Waktu (WIB)</th>
-              <th style={{ padding: "3.5px 5px" }}>Elevasi</th>
-              <th style={{ padding: "3.5px 5px" }}>Azimuth</th>
-              <th style={{ padding: "3.5px 5px" }}>Arah Bayangan</th>
-              <th style={{ padding: "3.5px 5px" }}>Panjang Relatif</th>
-              <th style={{ padding: "3.5px 5px", textAlign: "right" }}>Status Klirens</th>
+            <tr style={{ background: "#e2e8f0", color: "#0f172a" }}>
+              <th style={{ padding: "4px 6px", textAlign: "left", color: "#0f172a", fontWeight: 800 }}>Waktu (WIB)</th>
+              <th style={{ padding: "4px 6px", textAlign: "center", color: "#0f172a", fontWeight: 800 }}>Elevasi</th>
+              <th style={{ padding: "4px 6px", textAlign: "center", color: "#0f172a", fontWeight: 800 }}>Azimuth</th>
+              <th style={{ padding: "4px 6px", textAlign: "center", color: "#0f172a", fontWeight: 800 }}>Arah Bayangan</th>
+              <th style={{ padding: "4px 6px", textAlign: "center", color: "#0f172a", fontWeight: 800 }}>Panjang Relatif</th>
+              <th style={{ padding: "4px 6px", textAlign: "right", color: "#0f172a", fontWeight: 800 }}>Status Klirens</th>
             </tr>
           </thead>
           <tbody>
-            <tr style={{ borderBottom: "1px dashed #cbd5e1" }}>
-              <td style={{ padding: "3.5px 5px", fontWeight: 700 }}>☀️ Pagi 09:00 WIB</td>
-              <td style={{ padding: "3.5px 5px", textAlign: "center" }}>42.5°</td>
-              <td style={{ padding: "3.5px 5px", textAlign: "center" }}>68.2° (Timur-Laut)</td>
-              <td style={{ padding: "3.5px 5px", textAlign: "center" }}>Barat Daya (248.2°)</td>
-              <td style={{ padding: "3.5px 5px", textAlign: "center" }}>1.10 × H (~2.6 m)</td>
-              <td style={{ padding: "3.5px 5px", textAlign: "right", color: "#059669", fontWeight: 700 }}>✓ Bebas Shading</td>
+            <tr style={{ borderBottom: "1px solid #e2e8f0", background: "#ffffff" }}>
+              <td style={{ padding: "4px 6px", fontWeight: 800, color: "#0f172a" }}>☀️ Pagi 09:00 WIB</td>
+              <td style={{ padding: "4px 6px", textAlign: "center", fontWeight: 700, color: "#0f172a" }}>42.5°</td>
+              <td style={{ padding: "4px 6px", textAlign: "center", fontWeight: 600, color: "#0f172a" }}>68.2° (Timur-Laut)</td>
+              <td style={{ padding: "4px 6px", textAlign: "center", fontWeight: 600, color: "#0f172a" }}>Barat Daya (248.2°)</td>
+              <td style={{ padding: "4px 6px", textAlign: "center", fontWeight: 700, color: "#0f172a" }}>1.10 × H (~2.6 m)</td>
+              <td style={{ padding: "4px 6px", textAlign: "right", color: "#047857", fontWeight: 800 }}>✓ Bebas Shading</td>
             </tr>
-            <tr style={{ borderBottom: "1px dashed #cbd5e1" }}>
-              <td style={{ padding: "3.5px 5px", fontWeight: 700 }}>☀️ Siang 12:00 WIB (Puncak)</td>
-              <td style={{ padding: "3.5px 5px", textAlign: "center" }}>78.1°</td>
-              <td style={{ padding: "3.5px 5px", textAlign: "center" }}>18.5° (Utara)</td>
-              <td style={{ padding: "3.5px 5px", textAlign: "center" }}>Selatan (198.5°)</td>
-              <td style={{ padding: "3.5px 5px", textAlign: "center" }}>0.21 × H (~0.5 m)</td>
-              <td style={{ padding: "3.5px 5px", textAlign: "right", color: "#059669", fontWeight: 700 }}>✓ Puncak Radiasi</td>
+            <tr style={{ borderBottom: "1px solid #e2e8f0", background: "#f8fafc" }}>
+              <td style={{ padding: "4px 6px", fontWeight: 800, color: "#0f172a" }}>☀️ Siang 12:00 WIB (Puncak)</td>
+              <td style={{ padding: "4px 6px", textAlign: "center", fontWeight: 700, color: "#0f172a" }}>78.1°</td>
+              <td style={{ padding: "4px 6px", textAlign: "center", fontWeight: 600, color: "#0f172a" }}>18.5° (Utara)</td>
+              <td style={{ padding: "4px 6px", textAlign: "center", fontWeight: 600, color: "#0f172a" }}>Selatan (198.5°)</td>
+              <td style={{ padding: "4px 6px", textAlign: "center", fontWeight: 700, color: "#0f172a" }}>0.21 × H (~0.5 m)</td>
+              <td style={{ padding: "4px 6px", textAlign: "right", color: "#047857", fontWeight: 800 }}>✓ Puncak Radiasi</td>
             </tr>
-            <tr>
-              <td style={{ padding: "3.5px 5px", fontWeight: 700 }}>☀️ Sore 15:00 WIB</td>
-              <td style={{ padding: "3.5px 5px", textAlign: "center" }}>44.0°</td>
-              <td style={{ padding: "3.5px 5px", textAlign: "center" }}>285.3° (Barat-Laut)</td>
-              <td style={{ padding: "3.5px 5px", textAlign: "center" }}>Tenggara (105.3°)</td>
-              <td style={{ padding: "3.5px 5px", textAlign: "center" }}>1.04 × H (~2.5 m)</td>
-              <td style={{ padding: "3.5px 5px", textAlign: "right", color: "#059669", fontWeight: 700 }}>✓ Bebas Shading</td>
+            <tr style={{ background: "#ffffff" }}>
+              <td style={{ padding: "4px 6px", fontWeight: 800, color: "#0f172a" }}>☀️ Sore 15:00 WIB</td>
+              <td style={{ padding: "4px 6px", textAlign: "center", fontWeight: 700, color: "#0f172a" }}>44.0°</td>
+              <td style={{ padding: "4px 6px", textAlign: "center", fontWeight: 600, color: "#0f172a" }}>285.3° (Barat-Laut)</td>
+              <td style={{ padding: "4px 6px", textAlign: "center", fontWeight: 600, color: "#0f172a" }}>Tenggara (105.3°)</td>
+              <td style={{ padding: "4px 6px", textAlign: "center", fontWeight: 700, color: "#0f172a" }}>1.04 × H (~2.5 m)</td>
+              <td style={{ padding: "4px 6px", textAlign: "right", color: "#047857", fontWeight: 800 }}>✓ Bebas Shading</td>
             </tr>
           </tbody>
         </table>
-        <div style={{ fontSize: 7.5, color: "#059669", marginTop: 3, fontWeight: 700 }}>
+        <div style={{ fontSize: 7.5, color: "#047857", marginTop: 3, fontWeight: 800 }}>
           ✓ Kesimpulan Shading: Jarak setback modul dari HVAC chiller (≥ 3.0 m) menjamin 0% kehilangan daya akibat bayangan pada jam produktif (09:00 - 15:00 WIB).
         </div>
       </div>
@@ -1526,63 +1532,63 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
       {/* Loss Breakdown & Mounting Specs */}
       <div style={{ display: "grid", gridTemplateColumns: "1.2fr 1fr", gap: 8, marginBottom: 6, fontSize: 8 }}>
         {/* Detailed Loss Breakdown */}
-        <div style={{ border: "1px solid #e2e8f0", borderRadius: 5, padding: "7px 8px", background: "#ffffff" }}>
-          <div style={{ fontWeight: 700, color: "#0f172a", marginBottom: 4, display: "flex", alignItems: "center", gap: 4 }}>
-            <Activity size={11} style={{ color: "#ef4444" }} /> Analisis Susut Daya Sistem Lengkap (IEC 61724)
+        <div style={{ border: "1.5px solid #cbd5e1", borderRadius: 5, padding: "7px 8px", background: "#ffffff" }}>
+          <div style={{ fontWeight: 800, color: "#0f172a", marginBottom: 4, display: "flex", alignItems: "center", gap: 4 }}>
+            <Activity size={11} style={{ color: "#dc2626" }} /> Analisis Susut Daya Sistem Lengkap (IEC 61724)
           </div>
           <div style={{ display: "grid", gap: 3 }}>
             <div style={{ display: "flex", justifyContent: "space-between" }}>
-              <span style={{ color: "#64748b" }}>Rugi Suhu Ambien (Thermal Derating -0.35%/°C):</span>
-              <strong style={{ color: "#ef4444" }}>-9.1%</strong>
+              <span style={{ color: "#0f172a", fontWeight: 600 }}>Rugi Suhu Ambien (Thermal Derating -0.35%/°C):</span>
+              <strong style={{ color: "#dc2626" }}>-9.1%</strong>
             </div>
             <div style={{ display: "flex", justifyContent: "space-between" }}>
-              <span style={{ color: "#64748b" }}>Soiling & Endapan Debu Industri Tropis:</span>
-              <strong style={{ color: "#ef4444" }}>-2.5%</strong>
+              <span style={{ color: "#0f172a", fontWeight: 600 }}>Soiling & Endapan Debu Industri Tropis:</span>
+              <strong style={{ color: "#dc2626" }}>-2.5%</strong>
             </div>
             <div style={{ display: "flex", justifyContent: "space-between" }}>
-              <span style={{ color: "#64748b" }}>Efisiensi Konversi Inverter On-Grid:</span>
-              <strong style={{ color: "#ef4444" }}>-1.8%</strong>
+              <span style={{ color: "#0f172a", fontWeight: 600 }}>Efisiensi Konversi Inverter On-Grid:</span>
+              <strong style={{ color: "#dc2626" }}>-1.8%</strong>
             </div>
             <div style={{ display: "flex", justifyContent: "space-between" }}>
-              <span style={{ color: "#64748b" }}>Hambatan Kabel DC & AC (Ohmic Cable Losses):</span>
-              <strong style={{ color: "#ef4444" }}>-1.2%</strong>
+              <span style={{ color: "#0f172a", fontWeight: 600 }}>Hambatan Kabel DC & AC (Ohmic Cable Losses):</span>
+              <strong style={{ color: "#dc2626" }}>-1.2%</strong>
             </div>
             <div style={{ display: "flex", justifyContent: "space-between" }}>
-              <span style={{ color: "#64748b" }}>Near Shading & Obstacle Losses:</span>
-              <strong style={{ color: "#059669" }}>-0.8%</strong>
+              <span style={{ color: "#0f172a", fontWeight: 600 }}>Near Shading & Obstacle Losses:</span>
+              <strong style={{ color: "#047857" }}>-0.8%</strong>
             </div>
-            <div style={{ display: "flex", justifyContent: "space-between", borderTop: "1px solid #e2e8f0", paddingTop: 3, fontWeight: 800 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", borderTop: "1.5px solid #0f172a", paddingTop: 3, fontWeight: 900 }}>
               <span style={{ color: "#0f172a" }}>Net Performance Ratio (PR):</span>
-              <strong style={{ color: "#059669", fontSize: 9 }}>81.4%</strong>
+              <strong style={{ color: "#047857", fontSize: 9.5 }}>81.4%</strong>
             </div>
           </div>
         </div>
 
         {/* Structural Mounting Specs */}
-        <div style={{ border: "1px solid #e2e8f0", borderRadius: 5, padding: "7px 8px", background: "#ffffff" }}>
-          <div style={{ fontWeight: 700, color: "#0f172a", marginBottom: 4, display: "flex", alignItems: "center", gap: 4 }}>
-            <ShieldCheck size={11} style={{ color: "#059669" }} /> Spesifikasi Mekanikal Racking
+        <div style={{ border: "1.5px solid #cbd5e1", borderRadius: 5, padding: "7px 8px", background: "#ffffff" }}>
+          <div style={{ fontWeight: 800, color: "#0f172a", marginBottom: 4, display: "flex", alignItems: "center", gap: 4 }}>
+            <ShieldCheck size={11} style={{ color: "#047857" }} /> Spesifikasi Mekanikal Racking
           </div>
           <div style={{ display: "grid", gap: 3 }}>
             <div style={{ display: "flex", justifyContent: "space-between" }}>
-              <span style={{ color: "#64748b" }}>Material Rail:</span>
-              <strong>Aluminium AL6005-T5</strong>
+              <span style={{ color: "#0f172a", fontWeight: 600 }}>Material Rail:</span>
+              <strong style={{ color: "#0f172a" }}>Aluminium AL6005-T5</strong>
             </div>
             <div style={{ display: "flex", justifyContent: "space-between" }}>
-              <span style={{ color: "#64748b" }}>Fastener & Baut:</span>
-              <strong>Stainless SUS304 Anti-Karat</strong>
+              <span style={{ color: "#0f172a", fontWeight: 600 }}>Fastener & Baut:</span>
+              <strong style={{ color: "#0f172a" }}>Stainless SUS304 Anti-Karat</strong>
             </div>
             <div style={{ display: "flex", justifyContent: "space-between" }}>
-              <span style={{ color: "#64748b" }}>Kemiringan (Tilt):</span>
-              <strong>{tilt}° (Hadap Khatulistiwa)</strong>
+              <span style={{ color: "#0f172a", fontWeight: 600 }}>Kemiringan (Tilt):</span>
+              <strong style={{ color: "#0f172a" }}>{tilt}° (Hadap Khatulistiwa)</strong>
             </div>
             <div style={{ display: "flex", justifyContent: "space-between" }}>
-              <span style={{ color: "#64748b" }}>Beban Angin SNI:</span>
-              <strong>120 km/jam (SNI 1727:2020)</strong>
+              <span style={{ color: "#0f172a", fontWeight: 600 }}>Beban Angin SNI:</span>
+              <strong style={{ color: "#0f172a" }}>120 km/jam (SNI 1727:2020)</strong>
             </div>
             <div style={{ display: "flex", justifyContent: "space-between" }}>
-              <span style={{ color: "#64748b" }}>Beban Mati Total:</span>
-              <strong>~14.5 kg/m² (Kategori Ringan)</strong>
+              <span style={{ color: "#0f172a", fontWeight: 600 }}>Beban Mati Total:</span>
+              <strong style={{ color: "#0f172a" }}>~14.5 kg/m² (Kategori Ringan)</strong>
             </div>
           </div>
         </div>
@@ -1592,7 +1598,7 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
       {renderCadTitleBlock(2, "GEOLOKASI TAPAK, STUDI SHADING & LOSS BREAKDOWN", "SOLARAPP-DED-SH-002")}
 
       {/* Sheet Footer */}
-      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 8, color: "#64748b", borderTop: "1px solid #e2e8f0", paddingTop: 5, marginTop: 8 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 8, color: "#1e293b", fontWeight: 700, borderTop: "1.5px solid #cbd5e1", paddingTop: 5, marginTop: 8 }}>
         <span>SOLARAPP · DOKUMEN GAMBAR TEKNIS DED</span>
         <span>LEMBAR 2 DARI 3 (GEOLOCATION & SHADING)</span>
       </div>
@@ -1612,11 +1618,11 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
           </div>
           <div>
             <div style={{ fontSize: 12.5, fontWeight: 800, color: "#0f172a" }}>DETAIL TATA LETAK MODUL PV 2D & VISUALISASI 3D DUA LAYER (SIANG & MALAM)</div>
-            <div style={{ fontSize: 8, color: "#64748b" }}>LEMBAR 3 DARI 3 · EPC DRAWING PACKAGE · REVISI 0 (IFC)</div>
+            <div style={{ fontSize: 8, color: "#1e293b", fontWeight: 700 }}>LEMBAR 3 DARI 3 · EPC DRAWING PACKAGE · REVISI 0 (IFC)</div>
           </div>
         </div>
         <div style={{ textAlign: "right", fontSize: 8.5 }}>
-          <span style={{ color: "#64748b" }}>SKALA: </span><strong style={{ color: "#0f172a" }}>NTS (1:500)</strong>
+          <span style={{ color: "#1e293b", fontWeight: 700 }}>SKALA: </span><strong style={{ color: "#0f172a" }}>NTS (1:500)</strong>
         </div>
       </div>
 
@@ -1819,22 +1825,22 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
 
         {/* 2-Condition Comparative Analysis Summaries (Siang vs Malam) */}
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, fontSize: 8 }}>
-          <div style={{ background: "#ffffff", border: "1px solid #e2e8f0", borderRadius: 3, padding: "4px 6px" }}>
-            <div style={{ fontWeight: 800, color: "#ca8a04", display: "flex", justifyContent: "space-between" }}>
+          <div style={{ background: "#ffffff", border: "1.5px solid #cbd5e1", borderRadius: 4, padding: "5px 8px" }}>
+            <div style={{ fontWeight: 800, color: "#b45309", display: "flex", justifyContent: "space-between", fontSize: 9 }}>
               <span>☀️ Evaluasi Kondisi Siang</span>
-              <span style={{ color: "#059669" }}>✓ Efisiensi 100%</span>
+              <span style={{ color: "#047857" }}>✓ Efisiensi 100%</span>
             </div>
-            <div style={{ color: "#475569", marginTop: 2, lineHeight: 1.3 }}>
+            <div style={{ color: "#0f172a", marginTop: 2, lineHeight: 1.35, fontWeight: 600 }}>
               Sinar jatuh hampir tegak lurus (azimuth 18.5°). Bayangan jatuh tepat di bawah obstacle (&lt; 0.5 m). Tidak ada modul yang mengalami shading, efisiensi radiasi 100% dengan daya puncak sistem.
             </div>
           </div>
 
-          <div style={{ background: "#ffffff", border: "1px solid #e2e8f0", borderRadius: 3, padding: "4px 6px" }}>
-            <div style={{ fontWeight: 800, color: "#6366f1", display: "flex", justifyContent: "space-between" }}>
+          <div style={{ background: "#ffffff", border: "1.5px solid #cbd5e1", borderRadius: 4, padding: "5px 8px" }}>
+            <div style={{ fontWeight: 800, color: "#4338ca", display: "flex", justifyContent: "space-between", fontSize: 9 }}>
               <span>🌙 Evaluasi Kondisi Malam</span>
-              <span style={{ color: "#6366f1" }}>✓ Standby Aman</span>
+              <span style={{ color: "#4338ca" }}>✓ Standby Aman</span>
             </div>
-            <div style={{ color: "#475569", marginTop: 2, lineHeight: 1.3 }}>
+            <div style={{ color: "#0f172a", marginTop: 2, lineHeight: 1.35, fontWeight: 600 }}>
               Elevasi surya di bawah horizon (-78°). Irradiansi 0 W/m². Inverter string dalam status Standby Isolation (IEC 62109) untuk mencegah arus balik. Sistem penerangan perimeter aktif (&lt; 50W).
             </div>
           </div>
@@ -1855,7 +1861,7 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
       {renderCadTitleBlock(3, "DETAIL TATA LETAK MODUL PV 2D & VISUALISASI 3D DUA LAYER", "SOLARAPP-DED-PV-003")}
 
       {/* Sheet Footer */}
-      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 8, color: "#64748b", borderTop: "1px solid #e2e8f0", paddingTop: 5, marginTop: 6 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 8, color: "#1e293b", fontWeight: 700, borderTop: "1.5px solid #cbd5e1", paddingTop: 5, marginTop: 6 }}>
         <span>SOLARAPP · DOKUMEN GAMBAR TEKNIS DED</span>
         <span>LEMBAR 3 DARI 3 (2D & 3D DUAL-LAYER)</span>
       </div>
@@ -1992,19 +1998,19 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
 
             <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10, background: "#0c1510", padding: 12, borderRadius: 8, border: "1px solid #1a2a20" }}>
               <div>
-                <div style={{ fontSize: 10, color: "#7a8f81" }}>Target Kapasitas</div>
+                <div style={{ fontSize: 10, color: "#94a3b8", fontWeight: 700 }}>Target Kapasitas</div>
                 <div style={{ fontSize: 16, fontWeight: 800, color: "var(--green, #b8f36b)" }}>{capacityKwp} kWp</div>
-                <small style={{ fontSize: 10, color: "#8a9c90" }}>{totalPanels.toLocaleString()} modul 580Wp</small>
+                <small style={{ fontSize: 10, color: "#cbd5e1", fontWeight: 600 }}>{totalPanels.toLocaleString()} modul 580Wp</small>
               </div>
               <div>
-                <div style={{ fontSize: 10, color: "#7a8f81" }}>Luas Modul Efektif</div>
+                <div style={{ fontSize: 10, color: "#94a3b8", fontWeight: 700 }}>Luas Modul Efektif</div>
                 <div style={{ fontSize: 16, fontWeight: 800, color: "#38bdf8" }}>{totalModuleArea.toLocaleString(undefined, { maximumFractionDigits: 0 })} m²</div>
-                <small style={{ fontSize: 10, color: "#8a9c90" }}>Tilt {tilt}° azimuth 0°</small>
+                <small style={{ fontSize: 10, color: "#cbd5e1", fontWeight: 600 }}>Tilt {tilt}° azimuth 0°</small>
               </div>
               <div>
-                <div style={{ fontSize: 10, color: "#7a8f81" }}>Model Radiasi</div>
+                <div style={{ fontSize: 10, color: "#94a3b8", fontWeight: 700 }}>Model Radiasi</div>
                 <div style={{ fontSize: 16, fontWeight: 800, color: "#f59e0b" }}>NASA POWER</div>
-                <small style={{ fontSize: 10, color: "#8a9c90" }}>25-Thn Climatology</small>
+                <small style={{ fontSize: 10, color: "#cbd5e1", fontWeight: 600 }}>25-Thn Climatology</small>
               </div>
             </div>
           </div>
@@ -2013,69 +2019,69 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
           {yieldData && (
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
               <div className="pv-card" style={{ padding: 14 }}>
-                <div style={{ display: "flex", justifyContent: "space-between", color: "#8a9c90", fontSize: 11 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", color: "#cbd5e1", fontSize: 11, fontWeight: 700 }}>
                   <span>Kapasitas Sistem DC</span>
                   <Zap size={14} style={{ color: "#b8f36b" }} />
                 </div>
                 <div style={{ fontSize: 22, fontWeight: 800, color: "#edf5ef", margin: "6px 0 2px" }}>
                   {yieldData.capacityKwp} <small style={{ fontSize: 12 }}>kWp</small>
                 </div>
-                <small style={{ color: "#8a9c90", fontSize: 11 }}>{totalPanels.toLocaleString()} Panel Tier-1 (580 Wp)</small>
+                <small style={{ color: "#94a3b8", fontSize: 11, fontWeight: 600 }}>{totalPanels.toLocaleString()} Panel Tier-1 (580 Wp)</small>
               </div>
 
               <div className="pv-card" style={{ padding: 14 }}>
-                <div style={{ display: "flex", justifyContent: "space-between", color: "#8a9c90", fontSize: 11 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", color: "#cbd5e1", fontSize: 11, fontWeight: 700 }}>
                   <span>Estimasi Yield Tahunan</span>
                   <TrendingUp size={14} style={{ color: "#38bdf8" }} />
                 </div>
                 <div style={{ fontSize: 22, fontWeight: 800, color: "#38bdf8", margin: "6px 0 2px" }}>
                   {yieldData.annualEnergyMwh.toLocaleString()} <small style={{ fontSize: 12 }}>MWh/thn</small>
                 </div>
-                <small style={{ color: "#8a9c90", fontSize: 11 }}>Specific: {yieldData.specificYield.toLocaleString()} kWh/kWp</small>
+                <small style={{ color: "#94a3b8", fontSize: 11, fontWeight: 600 }}>Specific: {yieldData.specificYield.toLocaleString()} kWh/kWp</small>
               </div>
 
               <div className="pv-card" style={{ padding: 14 }}>
-                <div style={{ display: "flex", justifyContent: "space-between", color: "#8a9c90", fontSize: 11 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", color: "#cbd5e1", fontSize: 11, fontWeight: 700 }}>
                   <span>Rata-rata Radiasi Harian</span>
                   <Sun size={14} style={{ color: "#f59e0b" }} />
                 </div>
                 <div style={{ fontSize: 22, fontWeight: 800, color: "#f59e0b", margin: "6px 0 2px" }}>
                   {yieldData.annualGhi.toFixed(2)} <small style={{ fontSize: 12 }}>kWh/m²/hari</small>
                 </div>
-                <small style={{ color: "#8a9c90", fontSize: 11 }}>Peak Sun Hours (PSH) rata-rata</small>
+                <small style={{ color: "#94a3b8", fontSize: 11, fontWeight: 600 }}>Peak Sun Hours (PSH) rata-rata</small>
               </div>
 
               <div className="pv-card" style={{ padding: 14 }}>
-                <div style={{ display: "flex", justifyContent: "space-between", color: "#8a9c90", fontSize: 11 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", color: "#cbd5e1", fontSize: 11, fontWeight: 700 }}>
                   <span>Performance Ratio (PR)</span>
                   <Gauge size={14} style={{ color: "#b8f36b" }} />
                 </div>
                 <div style={{ fontSize: 22, fontWeight: 800, color: "#b8f36b", margin: "6px 0 2px" }}>
                   {(yieldData.pr * 100).toFixed(1)}%
                 </div>
-                <small style={{ color: "#8a9c90", fontSize: 11 }}>Standar IEC 61724 (Suhu & Kabel)</small>
+                <small style={{ color: "#94a3b8", fontSize: 11, fontWeight: 600 }}>Standar IEC 61724 (Suhu & Kabel)</small>
               </div>
 
               <div className="pv-card" style={{ padding: 14 }}>
-                <div style={{ display: "flex", justifyContent: "space-between", color: "#8a9c90", fontSize: 11 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", color: "#cbd5e1", fontSize: 11, fontWeight: 700 }}>
                   <span>Reduksi Emisi CO₂</span>
                   <Leaf size={14} style={{ color: "#10b981" }} />
                 </div>
                 <div style={{ fontSize: 22, fontWeight: 800, color: "#10b981", margin: "6px 0 2px" }}>
                   {yieldData.carbonOffsetTons.toLocaleString()} <small style={{ fontSize: 12 }}>Ton/thn</small>
                 </div>
-                <small style={{ color: "#8a9c90", fontSize: 11 }}>Faktor Emisi Grid Jamali 0.79 kg/kWh</small>
+                <small style={{ color: "#94a3b8", fontSize: 11, fontWeight: 600 }}>Faktor Emisi Grid Jamali 0.79 kg/kWh</small>
               </div>
 
               <div className="pv-card" style={{ padding: 14 }}>
-                <div style={{ display: "flex", justifyContent: "space-between", color: "#8a9c90", fontSize: 11 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", color: "#cbd5e1", fontSize: 11, fontWeight: 700 }}>
                   <span>Levelized Cost (LCOE)</span>
                   <Award size={14} style={{ color: "#a855f7" }} />
                 </div>
                 <div style={{ fontSize: 22, fontWeight: 800, color: "#c084fc", margin: "6px 0 2px" }}>
                   Rp 680 <small style={{ fontSize: 12 }}>/kWh</small>
                 </div>
-                <small style={{ color: "#8a9c90", fontSize: 11 }}>Tarif B2/I3 PLN: Rp 1.114/kWh</small>
+                <small style={{ color: "#94a3b8", fontSize: 11, fontWeight: 600 }}>Tarif B2/I3 PLN: Rp 1.114/kWh</small>
               </div>
             </div>
           )}
@@ -2194,38 +2200,38 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
                 <h3 style={{ fontSize: 14, margin: "0 0 10px", color: "#edf5ef", fontWeight: 700, display: "flex", alignItems: "center", gap: 6 }}>
                   <CloudSun size={15} style={{ color: "#38bdf8" }} /> Data Insolasi Bulanan (NASA POWER)
                 </h3>
-                <table className="pv-table" style={{ width: "100%", fontSize: 11 }}>
+                <table className="pv-table" style={{ width: "100%", fontSize: 11, borderCollapse: "collapse" }}>
                   <thead>
-                    <tr>
-                      <th style={{ textAlign: "left" }}>Bulan</th>
-                      <th>GHI (kWh/m²/hari)</th>
-                      <th>Suhu Ambien</th>
-                      <th>Total (MWh)</th>
-                      <th style={{ textAlign: "right" }}>Est. Hemat (Rp)</th>
+                    <tr style={{ borderBottom: "1.5px solid #334155" }}>
+                      <th style={{ textAlign: "left", padding: "6px 8px", color: "#cbd5e1", fontWeight: 700 }}>Bulan</th>
+                      <th style={{ textAlign: "center", padding: "6px 8px", color: "#cbd5e1", fontWeight: 700 }}>GHI (kWh/m²/hari)</th>
+                      <th style={{ textAlign: "center", padding: "6px 8px", color: "#cbd5e1", fontWeight: 700 }}>Suhu Ambien</th>
+                      <th style={{ textAlign: "center", padding: "6px 8px", color: "#cbd5e1", fontWeight: 700 }}>Total (MWh)</th>
+                      <th style={{ textAlign: "right", padding: "6px 8px", color: "#cbd5e1", fontWeight: 700 }}>Est. Hemat (Rp)</th>
                     </tr>
                   </thead>
                   <tbody>
                     {yieldData.monthly.map((m) => (
-                      <tr key={m.month}>
-                        <td style={{ fontWeight: 600, color: "#edf5ef" }}>{m.month}</td>
-                        <td>{m.ghi.toFixed(2)}</td>
-                        <td>{m.temp.toFixed(1)} °C</td>
-                        <td style={{ fontWeight: 700, color: "var(--green, #b8f36b)" }}>
+                      <tr key={m.month} style={{ borderBottom: "1px solid #1e293b" }}>
+                        <td style={{ fontWeight: 700, color: "#f8fafc", padding: "6px 8px" }}>{m.month}</td>
+                        <td style={{ color: "#e2e8f0", padding: "6px 8px", textAlign: "center", fontWeight: 600 }}>{m.ghi.toFixed(2)}</td>
+                        <td style={{ color: "#e2e8f0", padding: "6px 8px", textAlign: "center", fontWeight: 600 }}>{m.temp.toFixed(1)} °C</td>
+                        <td style={{ fontWeight: 800, color: "var(--green, #b8f36b)", padding: "6px 8px", textAlign: "center" }}>
                           {(m.monthlyEnergyKwh / 1000).toFixed(1)}
                         </td>
-                        <td style={{ textAlign: "right" }}>Rp {m.savingsIdr.toLocaleString()}</td>
+                        <td style={{ textAlign: "right", color: "#f1f5f9", padding: "6px 8px", fontWeight: 600 }}>Rp {m.savingsIdr.toLocaleString()}</td>
                       </tr>
                     ))}
                   </tbody>
                   <tfoot>
-                    <tr style={{ background: "#14251b", fontWeight: 700 }}>
-                      <td>TOTAL / RATA-RATA</td>
-                      <td>{yieldData.annualGhi.toFixed(2)} PSH</td>
-                      <td>{yieldData.annualTemp.toFixed(1)} °C</td>
-                      <td style={{ color: "var(--green, #b8f36b)" }}>
+                    <tr style={{ background: "#14251b", fontWeight: 800, borderTop: "2px solid #22c55e" }}>
+                      <td style={{ padding: "7px 8px", color: "#f8fafc", fontWeight: 800 }}>TOTAL / RATA-RATA</td>
+                      <td style={{ padding: "7px 8px", color: "#f8fafc", textAlign: "center", fontWeight: 700 }}>{yieldData.annualGhi.toFixed(2)} PSH</td>
+                      <td style={{ padding: "7px 8px", color: "#f8fafc", textAlign: "center", fontWeight: 700 }}>{yieldData.annualTemp.toFixed(1)} °C</td>
+                      <td style={{ padding: "7px 8px", textAlign: "center", color: "var(--green, #b8f36b)", fontWeight: 800 }}>
                         {yieldData.annualEnergyMwh.toLocaleString()} MWh
                       </td>
-                      <td style={{ textAlign: "right", color: "var(--green, #b8f36b)" }}>
+                      <td style={{ textAlign: "right", padding: "7px 8px", color: "var(--green, #b8f36b)", fontWeight: 800 }}>
                         Rp {yieldData.annualSavingsIdr.toLocaleString()}
                       </td>
                     </tr>
@@ -2241,23 +2247,23 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
                   </h3>
                   <div style={{ display: "grid", gap: 6, fontSize: 11 }}>
                     <div style={{ display: "flex", justifyContent: "space-between", padding: "4px 0", borderBottom: "1px dashed #1f3024" }}>
-                      <span style={{ color: "#8a9c90" }}>Shading & Obstacle Near-loss</span>
+                      <span style={{ color: "#cbd5e1", fontWeight: 600 }}>Shading & Obstacle Near-loss</span>
                       <strong style={{ color: "#38bdf8" }}>-0.8%</strong>
                     </div>
                     <div style={{ display: "flex", justifyContent: "space-between", padding: "4px 0", borderBottom: "1px dashed #1f3024" }}>
-                      <span style={{ color: "#8a9c90" }}>Soiling & Debu Tropis</span>
+                      <span style={{ color: "#cbd5e1", fontWeight: 600 }}>Soiling & Debu Tropis</span>
                       <strong style={{ color: "#f87171" }}>-2.5%</strong>
                     </div>
                     <div style={{ display: "flex", justifyContent: "space-between", padding: "4px 0", borderBottom: "1px dashed #1f3024" }}>
-                      <span style={{ color: "#8a9c90" }}>Thermal Derating (-0.35%/°C)</span>
+                      <span style={{ color: "#cbd5e1", fontWeight: 600 }}>Thermal Derating (-0.35%/°C)</span>
                       <strong style={{ color: "#f87171" }}>-9.1%</strong>
                     </div>
                     <div style={{ display: "flex", justifyContent: "space-between", padding: "4px 0", borderBottom: "1px dashed #1f3024" }}>
-                      <span style={{ color: "#8a9c90" }}>Efisiensi Inverter Euro</span>
+                      <span style={{ color: "#cbd5e1", fontWeight: 600 }}>Efisiensi Inverter Euro</span>
                       <strong style={{ color: "#f87171" }}>-1.8%</strong>
                     </div>
                     <div style={{ display: "flex", justifyContent: "space-between", padding: "4px 0", borderBottom: "1px dashed #1f3024" }}>
-                      <span style={{ color: "#8a9c90" }}>Kabel DC & AC Resistance</span>
+                      <span style={{ color: "#cbd5e1", fontWeight: 600 }}>Kabel DC & AC Resistance</span>
                       <strong style={{ color: "#f87171" }}>-1.2%</strong>
                     </div>
                     <div style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", fontWeight: 700 }}>
