@@ -1,6 +1,27 @@
 import { getProjectDefaultLayout } from "./defaultProjectsData";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Download, Grid2X2, MousePointer2, RotateCcw, Trash2, WandSparkles, ImagePlus, X, Globe, MapPin, Undo2, Redo2, Copy, RotateCw, CheckSquare, Zap } from "lucide-react";
+import {
+  Download,
+  Grid2X2,
+  MousePointer2,
+  RotateCcw,
+  Trash2,
+  WandSparkles,
+  ImagePlus,
+  X,
+  Globe,
+  MapPin,
+  Undo2,
+  Redo2,
+  Copy,
+  RotateCw,
+  CheckSquare,
+  Zap,
+  ZoomIn,
+  ZoomOut,
+  Maximize2,
+  Hand
+} from "lucide-react";
 import GoogleMapsModal from "./GoogleMapsModal";
 import * as api from "./api";
 
@@ -55,7 +76,7 @@ function computeInsetPolygon(
   let signedArea = 0;
   for (let i = 0; i < n; i++) {
     const j = (i + 1) % n;
-    signedArea += corners[i].x * corners[j].y - corners[j].y * corners[i].x;
+    signedArea += corners[i].x * corners[j].y - corners[j].x * corners[i].y;
   }
   const isClockwiseScreen = signedArea > 0;
 
@@ -187,6 +208,19 @@ export default function PVLayout({
   const dragStartPositionsRef = useRef<Map<number, { x: number; y: number }>>(new Map());
   const [hasMovedDuringDrag, setHasMovedDuringDrag] = useState(false);
 
+  // Zoom & Pan state
+  const [zoom, setZoom] = useState(1);
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const [toolMode, setToolMode] = useState<"select" | "pan">("select");
+  const isPanningRef = useRef(false);
+  const panStartRef = useRef<{ clientX: number; clientY: number; startPanX: number; startPanY: number }>({ clientX: 0, clientY: 0, startPanX: 0, startPanY: 0 });
+  const isSpacePressedRef = useRef(false);
+
+  // Marquee selection state
+  const [marquee, setMarquee] = useState<{ startX: number; startY: number; currentX: number; currentY: number } | null>(null);
+  const marqueeStartRef = useRef<{ x: number; y: number } | null>(null);
+  const isMarqueeDraggingRef = useRef(false);
+
   const [notice, setNotice] = useState("");
   const [isMapsModalOpen, setIsMapsModalOpen] = useState(false);
   const id = lang === "id";
@@ -232,6 +266,12 @@ export default function PVLayout({
       saveDraft(next.panels, settings, next.obstacles);
       setNotice(id ? "↪ Redo: Aksi diterapkan kembali." : "↪ Redo: Action redone.");
     }
+  }
+
+  function handleResetView() {
+    setZoom(1);
+    setPan({ x: 0, y: 0 });
+    setNotice(id ? "🔍 Tampilan kanvas di-reset ke 100%." : "🔍 Canvas view reset to 100%.");
   }
 
   useEffect(() => {
@@ -588,11 +628,15 @@ export default function PVLayout({
     }
   }
 
-  // Keyboard Shortcuts (Undo, Redo, Delete, Select All, Escape)
+  // Keyboard Shortcuts (Undo, Redo, Delete, Select All, Zoom, Pan, Escape)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement)?.tagName?.toLowerCase();
       if (tag === "input" || tag === "textarea" || tag === "select") return;
+
+      if (e.code === "Space") {
+        isSpacePressedRef.current = true;
+      }
 
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") {
         e.preventDefault();
@@ -618,19 +662,42 @@ export default function PVLayout({
       } else if (e.key === "Escape") {
         e.preventDefault();
         handleClearSelection();
+      } else if ((e.ctrlKey || e.metaKey) && (e.key === "=" || e.key === "+")) {
+        e.preventDefault();
+        setZoom(prev => Math.min(3.5, Number((prev + 0.2).toFixed(2))));
+      } else if ((e.ctrlKey || e.metaKey) && (e.key === "-" || e.key === "_")) {
+        e.preventDefault();
+        setZoom(prev => Math.max(0.4, Number((prev - 0.2).toFixed(2))));
+      } else if ((e.ctrlKey || e.metaKey) && e.key === "0") {
+        e.preventDefault();
+        handleResetView();
       }
     };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [historyIndex, history, selectedIds, selectedObstacleId, panels, obstacles, settings]);
 
-  // Coordinate transforms
-  function pointFromEvent(event: React.PointerEvent<SVGElement>) {
+    const handleKeyUp = (e: KeyboardEvent) => {
+      if (e.code === "Space") {
+        isSpacePressedRef.current = false;
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    window.addEventListener("keyup", handleKeyUp);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("keyup", handleKeyUp);
+    };
+  }, [historyIndex, history, selectedIds, selectedObstacleId, panels, obstacles, settings, zoom]);
+
+  // Coordinate transforms with Zoom and Pan
+  function pointFromEvent(event: React.PointerEvent<SVGElement> | React.MouseEvent<SVGElement>) {
     const svg = (event.currentTarget as SVGElement).ownerSVGElement || (event.currentTarget as SVGSVGElement);
     const rect = (svg || event.currentTarget).getBoundingClientRect();
     const sx = ((event.clientX - rect.left) / rect.width) * 1000;
     const sy = ((event.clientY - rect.top) / rect.height) * 600;
-    return { x: (sx - originX) / scale, y: (sy - originY) / scale };
+    // Invert zoom & pan around center (500, 300)
+    const contentSx = (sx - 500 - pan.x) / zoom + 500;
+    const contentSy = (sy - 300 - pan.y) / zoom + 300;
+    return { x: (contentSx - originX) / scale, y: (contentSy - originY) / scale };
   }
 
   const scale = Math.min(840 / Math.max(settings.areaWidth, 1), 430 / Math.max(settings.areaHeight, 1));
@@ -645,36 +712,53 @@ export default function PVLayout({
     return setbackPolygon.map(p => `${originX + p.x * scale},${originY + p.y * scale}`).join(" ");
   }, [setbackPolygon, originX, originY, scale]);
 
+  function handleWheel(e: React.WheelEvent<HTMLElement>) {
+    e.preventDefault();
+    const delta = e.deltaY < 0 ? 0.12 : -0.12;
+    setZoom(prev => Math.max(0.4, Math.min(3.5, Number((prev + delta).toFixed(2)))));
+  }
+
   // Pointer interactions
   function canvasPointerDown(event: React.PointerEvent<SVGSVGElement>) {
     if ((event.target as Element).closest("[data-panel]")) return;
     if ((event.target as Element).closest("[data-obstacle]")) return;
 
-    setSelectedIds(new Set());
-    setSelectedObstacleId(null);
-
-    const p = pointFromEvent(event);
-    if (p.x < 0 || p.y < 0 || p.x > settings.areaWidth || p.y > settings.areaHeight) return;
-
-    const x = Math.max(0, Math.min(settings.areaWidth - moduleW, Math.round((p.x - moduleW / 2) / 50) * 50));
-    const y = Math.max(0, Math.min(settings.areaHeight - moduleH, Math.round((p.y - moduleH / 2) / 50) * 50));
-    const candidate = { id: Date.now(), x, y, w: moduleW, h: moduleH };
-
-    if (!isPlacementValid(candidate)) {
-      setNotice(copy.obstacleOverlap);
+    // Pan mode or middle-click or Space held
+    if (event.button === 1 || toolMode === "pan" || isSpacePressedRef.current) {
+      isPanningRef.current = true;
+      panStartRef.current = {
+        clientX: event.clientX,
+        clientY: event.clientY,
+        startPanX: pan.x,
+        startPanY: pan.y
+      };
+      (event.currentTarget as SVGSVGElement).setPointerCapture(event.pointerId);
       return;
     }
 
-    const next = [...panels, candidate];
-    setPanels(next);
-    setSelectedIds(new Set([candidate.id]));
-    pushHistory(next, obstacles);
-    saveDraft(next);
-    setNotice(copy.manual);
+    // Select mode: start potential marquee or click
+    const p = pointFromEvent(event);
+    marqueeStartRef.current = p;
+    isMarqueeDraggingRef.current = false;
+    setMarquee(null);
+    (event.currentTarget as SVGSVGElement).setPointerCapture(event.pointerId);
   }
 
   function handlePanelPointerDown(e: React.PointerEvent<SVGGElement>, panel: Panel) {
     e.stopPropagation();
+
+    if (toolMode === "pan" || isSpacePressedRef.current) {
+      isPanningRef.current = true;
+      panStartRef.current = {
+        clientX: e.clientX,
+        clientY: e.clientY,
+        startPanX: pan.x,
+        startPanY: pan.y
+      };
+      (e.currentTarget as SVGGElement).ownerSVGElement?.setPointerCapture(e.pointerId);
+      return;
+    }
+
     const isMulti = e.shiftKey || e.ctrlKey || e.metaKey;
 
     let currentSelected = selectedIds;
@@ -712,8 +796,21 @@ export default function PVLayout({
   }
 
   function canvasPointerMove(event: React.PointerEvent<SVGSVGElement>) {
-    const p = pointFromEvent(event);
+    if (isPanningRef.current) {
+      const dx = event.clientX - panStartRef.current.clientX;
+      const dy = event.clientY - panStartRef.current.clientY;
+      const rect = event.currentTarget.getBoundingClientRect();
+      const scaleX = 1000 / Math.max(rect.width, 1);
+      const scaleY = 600 / Math.max(rect.height, 1);
+      setPan({
+        x: Math.round(panStartRef.current.startPanX + dx * scaleX),
+        y: Math.round(panStartRef.current.startPanY + dy * scaleY)
+      });
+      return;
+    }
+
     if (draggingObstacleId !== null) {
+      const p = pointFromEvent(event);
       const moving = obstacles.find(o => o.id === draggingObstacleId);
       if (!moving) return;
       const candidate = {
@@ -729,35 +826,113 @@ export default function PVLayout({
       return;
     }
 
-    if (draggingId === null) return;
+    if (draggingId !== null) {
+      const p = pointFromEvent(event);
+      const dx = Math.round((p.x - dragStartMouseRef.current.x) / 50) * 50;
+      const dy = Math.round((p.y - dragStartMouseRef.current.y) / 50) * 50;
+      if (dx === 0 && dy === 0) return;
 
-    const dx = Math.round((p.x - dragStartMouseRef.current.x) / 50) * 50;
-    const dy = Math.round((p.y - dragStartMouseRef.current.y) / 50) * 50;
-    if (dx === 0 && dy === 0) return;
+      const posMap = dragStartPositionsRef.current;
+      if (!posMap || posMap.size === 0) return;
 
-    const posMap = dragStartPositionsRef.current;
-    if (!posMap || posMap.size === 0) return;
+      const proposedPanels = panels.map(panel => {
+        const startPos = posMap.get(panel.id);
+        if (!startPos) return panel;
+        const nextX = Math.max(0, Math.min(settings.areaWidth - panel.w, startPos.x + dx));
+        const nextY = Math.max(0, Math.min(settings.areaHeight - panel.h, startPos.y + dy));
+        return { ...panel, x: nextX, y: nextY };
+      });
 
-    const proposedPanels = panels.map(panel => {
-      const startPos = posMap.get(panel.id);
-      if (!startPos) return panel;
-      const nextX = Math.max(0, Math.min(settings.areaWidth - panel.w, startPos.x + dx));
-      const nextY = Math.max(0, Math.min(settings.areaHeight - panel.h, startPos.y + dy));
-      return { ...panel, x: nextX, y: nextY };
-    });
+      const allValid = proposedPanels.every(panel => {
+        if (!posMap.has(panel.id)) return true;
+        return isPlacementValid(panel, obstacles);
+      });
 
-    const allValid = proposedPanels.every(panel => {
-      if (!posMap.has(panel.id)) return true;
-      return isPlacementValid(panel, obstacles);
-    });
+      if (allValid) {
+        setPanels(proposedPanels);
+        setHasMovedDuringDrag(true);
+      }
+      return;
+    }
 
-    if (allValid) {
-      setPanels(proposedPanels);
-      setHasMovedDuringDrag(true);
+    if (marqueeStartRef.current !== null) {
+      const p = pointFromEvent(event);
+      const dist = Math.hypot(p.x - marqueeStartRef.current.x, p.y - marqueeStartRef.current.y);
+      if (dist > 80 || isMarqueeDraggingRef.current) {
+        isMarqueeDraggingRef.current = true;
+        setMarquee({
+          startX: marqueeStartRef.current.x,
+          startY: marqueeStartRef.current.y,
+          currentX: p.x,
+          currentY: p.y
+        });
+      }
     }
   }
 
-  function finishDrag() {
+  function finishDrag(event?: React.PointerEvent<SVGSVGElement>) {
+    if (isPanningRef.current) {
+      isPanningRef.current = false;
+      return;
+    }
+
+    if (isMarqueeDraggingRef.current && marquee) {
+      const minX = Math.min(marquee.startX, marquee.currentX);
+      const maxX = Math.max(marquee.startX, marquee.currentX);
+      const minY = Math.min(marquee.startY, marquee.currentY);
+      const maxY = Math.max(marquee.startY, marquee.currentY);
+
+      const hitPanels = panels.filter(p =>
+        p.x < maxX && p.x + p.w > minX &&
+        p.y < maxY && p.y + p.h > minY
+      );
+
+      const isAdditive = event?.shiftKey || event?.ctrlKey || event?.metaKey;
+      if (isAdditive) {
+        setSelectedIds(prev => new Set([...prev, ...hitPanels.map(p => p.id)]));
+      } else {
+        setSelectedIds(new Set(hitPanels.map(p => p.id)));
+      }
+
+      if (hitPanels.length > 0) {
+        const kwp = (hitPanels.length * settings.watts / 1000).toFixed(2);
+        setNotice(id ? `🟦 ${hitPanels.length} panel dipilih dengan kotak seleksi (${kwp} kWp).` : `🟦 ${hitPanels.length} panels selected (${kwp} kWp).`);
+      } else if (!isAdditive) {
+        setSelectedIds(new Set());
+      }
+
+      setMarquee(null);
+      marqueeStartRef.current = null;
+      isMarqueeDraggingRef.current = false;
+      return;
+    }
+
+    if (marqueeStartRef.current && !isMarqueeDraggingRef.current) {
+      const clickP = marqueeStartRef.current;
+      marqueeStartRef.current = null;
+      setMarquee(null);
+
+      if (!event?.shiftKey && !event?.ctrlKey && !event?.metaKey) {
+        setSelectedIds(new Set());
+        setSelectedObstacleId(null);
+      }
+
+      if (clickP.x >= 0 && clickP.y >= 0 && clickP.x <= settings.areaWidth && clickP.y <= settings.areaHeight) {
+        const x = Math.max(0, Math.min(settings.areaWidth - moduleW, Math.round((clickP.x - moduleW / 2) / 50) * 50));
+        const y = Math.max(0, Math.min(settings.areaHeight - moduleH, Math.round((clickP.y - moduleH / 2) / 50) * 50));
+        const candidate = { id: Date.now(), x, y, w: moduleW, h: moduleH };
+
+        if (isPlacementValid(candidate)) {
+          const next = [...panels, candidate];
+          setPanels(next);
+          setSelectedIds(new Set([candidate.id]));
+          pushHistory(next, obstacles);
+          saveDraft(next);
+          setNotice(copy.manual);
+        }
+      }
+    }
+
     if (hasMovedDuringDrag) {
       pushHistory(panels, obstacles);
       saveDraft(panels, settings, obstacles);
@@ -1169,7 +1344,7 @@ export default function PVLayout({
             ) : (
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", paddingTop: 2 }}>
                 <span style={{ fontSize: 10, color: "#829588" }}>
-                  {id ? "Klik panel / Shift+klik" : "Click module / Shift+click"}
+                  {id ? "Tarik kotak seleksi di kanvas" : "Drag selection box on canvas"}
                 </span>
                 <button
                   type="button"
@@ -1186,14 +1361,93 @@ export default function PVLayout({
         </aside>
 
         <div className="panel pv-canvas-panel">
-          <div className="pv-canvas-toolbar">
-            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              <MousePointer2 size={15} />
-              <strong>{copy.canvas}</strong>
-              <span className="pv-units">{copy.snap}</span>
+          <div className="pv-canvas-toolbar" style={{ flexWrap: "wrap", gap: 8, padding: "8px 12px" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+              {/* Tool Mode: Select or Pan */}
+              <div style={{ display: "flex", background: "#0e1511", padding: 2, borderRadius: 5, border: "1px solid #233528" }}>
+                <button
+                  type="button"
+                  title={id ? "Mode Seleksi (Tarik kotak untuk memilih banyak)" : "Select Mode (Drag box to select)"}
+                  onClick={() => setToolMode("select")}
+                  style={{
+                    background: toolMode === "select" ? "#1e3525" : "transparent",
+                    color: toolMode === "select" ? "#b8f36b" : "#7a8f81",
+                    border: "none",
+                    borderRadius: 4,
+                    padding: "3px 8px",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 4,
+                    fontSize: 11,
+                    cursor: "pointer",
+                    fontWeight: toolMode === "select" ? 700 : 400
+                  }}
+                >
+                  <MousePointer2 size={13} />
+                  <span>{id ? "Seleksi" : "Select"}</span>
+                </button>
+
+                <button
+                  type="button"
+                  title={id ? "Mode Geser / Pan (Bisa juga tahan tombol Spasi + drag)" : "Pan Mode (Or hold Space + drag)"}
+                  onClick={() => setToolMode("pan")}
+                  style={{
+                    background: toolMode === "pan" ? "#1e3525" : "transparent",
+                    color: toolMode === "pan" ? "#b8f36b" : "#7a8f81",
+                    border: "none",
+                    borderRadius: 4,
+                    padding: "3px 8px",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 4,
+                    fontSize: 11,
+                    cursor: "pointer",
+                    fontWeight: toolMode === "pan" ? 700 : 400
+                  }}
+                >
+                  <Hand size={13} />
+                  <span>{id ? "Geser" : "Pan"}</span>
+                </button>
+              </div>
+
+              {/* Zoom Controls */}
+              <div style={{ display: "flex", alignItems: "center", gap: 3, background: "#0e1511", padding: "2px 4px", borderRadius: 5, border: "1px solid #233528" }}>
+                <button
+                  type="button"
+                  title={id ? "Perkecil (Zoom Out / Ctrl+-)" : "Zoom Out (Ctrl+-)"}
+                  onClick={() => setZoom(prev => Math.max(0.4, Number((prev - 0.15).toFixed(2))))}
+                  style={{ background: "transparent", border: "none", color: "#a5b8ad", padding: 3, cursor: "pointer", display: "inline-flex" }}
+                >
+                  <ZoomOut size={13} />
+                </button>
+                <button
+                  type="button"
+                  title={id ? "Klik untuk reset zoom ke 100%" : "Click to reset zoom to 100%"}
+                  onClick={handleResetView}
+                  style={{ background: "transparent", border: "none", color: "#edf5ef", fontSize: 10, fontFamily: "monospace", padding: "2px 4px", cursor: "pointer", minWidth: 42, textAlign: "center" }}
+                >
+                  {Math.round(zoom * 100)}%
+                </button>
+                <button
+                  type="button"
+                  title={id ? "Perbesar (Zoom In / Ctrl++)" : "Zoom In (Ctrl++)"}
+                  onClick={() => setZoom(prev => Math.min(3.5, Number((prev + 0.15).toFixed(2))))}
+                  style={{ background: "transparent", border: "none", color: "#a5b8ad", padding: 3, cursor: "pointer", display: "inline-flex" }}
+                >
+                  <ZoomIn size={13} />
+                </button>
+                <button
+                  type="button"
+                  title={id ? "Reset Tampilan Penuh" : "Fit / Reset View"}
+                  onClick={handleResetView}
+                  style={{ background: "transparent", border: "none", color: "#7a8f81", padding: 3, cursor: "pointer", display: "inline-flex", borderLeft: "1px solid #233528", marginLeft: 2 }}
+                >
+                  <Maximize2 size={12} />
+                </button>
+              </div>
 
               {/* Undo / Redo toolbar buttons */}
-              <div style={{ display: "flex", alignItems: "center", gap: 4, marginLeft: 12, borderLeft: "1px solid #233528", paddingLeft: 12 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 3, borderLeft: "1px solid #233528", paddingLeft: 8 }}>
                 <button
                   type="button"
                   title="Undo (Ctrl+Z)"
@@ -1205,16 +1459,15 @@ export default function PVLayout({
                     borderColor: historyIndex > 0 ? "#2e4a36" : "#1f2a22",
                     color: historyIndex > 0 ? "#edf5ef" : "#4e6154",
                     borderRadius: 4,
-                    padding: "4px 8px",
+                    padding: "3px 6px",
                     display: "inline-flex",
                     alignItems: "center",
-                    gap: 4,
-                    fontSize: 11,
+                    gap: 3,
+                    fontSize: 10,
                     cursor: historyIndex > 0 ? "pointer" : "not-allowed",
-                    transition: "all .15s ease",
                   }}
                 >
-                  <Undo2 size={13} />
+                  <Undo2 size={12} />
                   <span>Undo</span>
                 </button>
 
@@ -1229,16 +1482,15 @@ export default function PVLayout({
                     borderColor: historyIndex < history.length - 1 ? "#2e4a36" : "#1f2a22",
                     color: historyIndex < history.length - 1 ? "#edf5ef" : "#4e6154",
                     borderRadius: 4,
-                    padding: "4px 8px",
+                    padding: "3px 6px",
                     display: "inline-flex",
                     alignItems: "center",
-                    gap: 4,
-                    fontSize: 11,
+                    gap: 3,
+                    fontSize: 10,
                     cursor: historyIndex < history.length - 1 ? "pointer" : "not-allowed",
-                    transition: "all .15s ease",
                   }}
                 >
-                  <Redo2 size={13} />
+                  <Redo2 size={12} />
                   <span>Redo</span>
                 </button>
               </div>
@@ -1248,16 +1500,15 @@ export default function PVLayout({
                 <div style={{
                   display: "inline-flex",
                   alignItems: "center",
-                  gap: 6,
+                  gap: 5,
                   background: "#193522",
                   border: "1px solid #386b45",
-                  padding: "3px 8px",
+                  padding: "2px 7px",
                   borderRadius: 4,
-                  fontSize: 11,
+                  fontSize: 10,
                   color: "#b8f36b",
-                  marginLeft: 8,
                 }}>
-                  <CheckSquare size={12} />
+                  <CheckSquare size={11} />
                   <span>{selectedIds.size} {id ? "terpilih" : "selected"}</span>
                   <button
                     type="button"
@@ -1265,26 +1516,26 @@ export default function PVLayout({
                     title={id ? "Hapus modul terpilih" : "Delete selected modules"}
                     style={{ background: "transparent", border: "none", color: "#ff8b8b", cursor: "pointer", display: "inline-flex", padding: 0 }}
                   >
-                    <Trash2 size={12} />
+                    <Trash2 size={11} />
                   </button>
                 </div>
               )}
             </div>
 
-            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginLeft: "auto" }}>
               {site?.coordinates && (
                 <span style={{ fontSize: 10, color: "var(--green, #b8f36b)", display: "inline-flex", alignItems: "center", gap: 4, background: "#152419", padding: "2px 8px", borderRadius: 4, border: "1px solid #2e4a35" }}>
                   <MapPin size={11} />
-                  <span style={{ maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  <span style={{ maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                     {site.address || `${site.coordinates.lat.toFixed(4)}, ${site.coordinates.lng.toFixed(4)}`}
                   </span>
                 </span>
               )}
-              <span>{settings.areaWidth.toLocaleString()} × {settings.areaHeight.toLocaleString()} mm</span>
+              <span style={{ fontSize: 10, color: "var(--muted, #93a69a)" }}>{settings.areaWidth.toLocaleString()} × {settings.areaHeight.toLocaleString()} mm</span>
             </div>
           </div>
 
-          <div className="pv-canvas-wrap">
+          <div className="pv-canvas-wrap" onWheel={handleWheel}>
             <svg
               className="pv-canvas"
               viewBox="0 0 1000 600"
@@ -1294,6 +1545,9 @@ export default function PVLayout({
               onPointerMove={canvasPointerMove}
               onPointerUp={finishDrag}
               onPointerLeave={finishDrag}
+              style={{
+                cursor: isPanningRef.current ? "grabbing" : (toolMode === "pan" || isSpacePressedRef.current ? "grab" : "crosshair")
+              }}
             >
               <defs>
                 <pattern id="pv-grid-small" width="20" height="20" patternUnits="userSpaceOnUse">
@@ -1309,161 +1563,180 @@ export default function PVLayout({
               </defs>
               <rect width="1000" height="600" fill="url(#pv-grid-large)" />
 
-              {backgroundImage && (
-                <g clipPath="url(#polygon-boundary-clip)">
-                  <image
-                    href={backgroundImage}
-                    x={originX}
-                    y={originY}
-                    width={settings.areaWidth * scale}
-                    height={settings.areaHeight * scale}
-                    preserveAspectRatio="none"
-                    opacity={backgroundOpacity}
-                    pointerEvents="none"
-                  />
-                </g>
-              )}
+              {/* Master transformed group for Zoom & Pan */}
+              <g transform={`translate(${500 + pan.x}, ${300 + pan.y}) scale(${zoom}) translate(-500, -300)`}>
+                {backgroundImage && (
+                  <g clipPath="url(#polygon-boundary-clip)">
+                    <image
+                      href={backgroundImage}
+                      x={originX}
+                      y={originY}
+                      width={settings.areaWidth * scale}
+                      height={settings.areaHeight * scale}
+                      preserveAspectRatio="none"
+                      opacity={backgroundOpacity}
+                      pointerEvents="none"
+                    />
+                  </g>
+                )}
 
-              {/* Site boundary polygon (Trapezoid / Custom Quad / Rect) */}
-              <polygon
-                points={svgPolygonPoints}
-                fill="#14221a"
-                fillOpacity={backgroundImage ? ".15" : ".65"}
-                stroke="#b8f36b"
-                strokeWidth="2"
-                strokeDasharray="8 4"
-              />
-
-              {/* Obstacles */}
-              {obstacles.map(obstacle => (
-                <g
-                  key={obstacle.id}
-                  data-obstacle="true"
-                  onPointerDown={e => {
-                    e.stopPropagation();
-                    setSelectedObstacleId(obstacle.id);
-                    setSelectedIds(new Set());
-                    setDraggingObstacleId(obstacle.id);
-                    (e.currentTarget as SVGGElement).ownerSVGElement?.setPointerCapture(e.pointerId);
-                  }}
-                  style={{ cursor: "move" }}
-                >
-                  <rect
-                    x={originX + obstacle.x * scale}
-                    y={originY + obstacle.y * scale}
-                    width={Math.max(1, obstacle.w * scale)}
-                    height={Math.max(1, obstacle.h * scale)}
-                    fill={selectedObstacleId === obstacle.id ? "#ff9f9f" : "#d45d5d"}
-                    fillOpacity=".38"
-                    stroke={selectedObstacleId === obstacle.id ? "#ffd0d0" : "#ff7777"}
-                    strokeWidth="2"
-                    strokeDasharray="5 3"
-                  />
-                  <text
-                    x={originX + (obstacle.x + obstacle.w / 2) * scale}
-                    y={originY + (obstacle.y + obstacle.h / 2) * scale}
-                    textAnchor="middle"
-                    dominantBaseline="middle"
-                    fill="#ffe2e2"
-                    fontSize="11"
-                  >
-                    {obstacle.label}
-                  </text>
-                </g>
-              ))}
-
-              {/* Inset setback boundary polygon */}
-              <polygon
-                points={svgSetbackPolygonPoints}
-                fill="none"
-                stroke="#e8b86b"
-                strokeWidth="1.5"
-                strokeDasharray="3 5"
-              />
-
-              {/* Vertex handles if custom polygon */}
-              {isCustomPolygon && activeCorners.map((pt, idx) => (
-                <circle
-                  key={idx}
-                  cx={originX + pt.x * scale}
-                  cy={originY + pt.y * scale}
-                  r="4"
-                  fill="#b8f36b"
-                  stroke="#111713"
-                  strokeWidth="1.5"
+                {/* Site boundary polygon (Trapezoid / Custom Quad / Rect) */}
+                <polygon
+                  points={svgPolygonPoints}
+                  fill="#14221a"
+                  fillOpacity={backgroundImage ? ".15" : ".65"}
+                  stroke="#b8f36b"
+                  strokeWidth="2"
+                  strokeDasharray="8 4"
                 />
-              ))}
 
-              {/* PV Modules */}
-              {panels.map((panel, index) => {
-                const isSelected = selectedIds.has(panel.id);
-                return (
+                {/* Obstacles */}
+                {obstacles.map(obstacle => (
                   <g
-                    key={panel.id}
-                    data-panel="true"
-                    onPointerDown={e => handlePanelPointerDown(e, panel)}
+                    key={obstacle.id}
+                    data-obstacle="true"
+                    onPointerDown={e => {
+                      if (toolMode === "pan" || isSpacePressedRef.current) return;
+                      e.stopPropagation();
+                      setSelectedObstacleId(obstacle.id);
+                      setSelectedIds(new Set());
+                      setDraggingObstacleId(obstacle.id);
+                      (e.currentTarget as SVGGElement).ownerSVGElement?.setPointerCapture(e.pointerId);
+                    }}
                     style={{ cursor: "move" }}
                   >
                     <rect
-                      x={originX + panel.x * scale}
-                      y={originY + panel.y * scale}
-                      width={Math.max(1, panel.w * scale)}
-                      height={Math.max(1, panel.h * scale)}
-                      rx="2"
-                      fill={isSelected ? "#4fa672" : "#387a55"}
-                      fillOpacity={isSelected ? ".96" : ".86"}
-                      stroke={isSelected ? "#b8f36b" : "#7ec696"}
-                      strokeWidth={isSelected ? 2.5 : 1}
+                      x={originX + obstacle.x * scale}
+                      y={originY + obstacle.y * scale}
+                      width={Math.max(1, obstacle.w * scale)}
+                      height={Math.max(1, obstacle.h * scale)}
+                      fill={selectedObstacleId === obstacle.id ? "#ff9f9f" : "#d45d5d"}
+                      fillOpacity=".38"
+                      stroke={selectedObstacleId === obstacle.id ? "#ffd0d0" : "#ff7777"}
+                      strokeWidth="2"
+                      strokeDasharray="5 3"
                     />
-                    {isSelected && (
-                      <rect
-                        x={originX + panel.x * scale - 1}
-                        y={originY + panel.y * scale - 1}
-                        width={Math.max(1, panel.w * scale) + 2}
-                        height={Math.max(1, panel.h * scale) + 2}
-                        fill="none"
-                        stroke="#b8f36b"
-                        strokeWidth="0.8"
-                        strokeDasharray="3 2"
-                        pointerEvents="none"
-                      />
-                    )}
-                    <path
-                      d={`M ${originX + panel.x * scale + panel.w * scale / 2} ${originY + panel.y * scale} V ${originY + (panel.y + panel.h) * scale}`}
-                      stroke="#10251b"
-                      strokeWidth="1"
-                    />
-                    <path
-                      d={`M ${originX + panel.x * scale} ${originY + panel.y * scale + panel.h * scale / 2} H ${originX + (panel.x + panel.w) * scale}`}
-                      stroke="#10251b"
-                      strokeWidth="1"
-                    />
-                    {panel.w * scale > 26 && panel.h * scale > 16 && (
-                      <text
-                        x={originX + (panel.x + panel.w / 2) * scale}
-                        y={originY + (panel.y + panel.h / 2) * scale + 3}
-                        textAnchor="middle"
-                        fontSize="9"
-                        fill={isSelected ? "#b8f36b" : "#e2f3e8"}
-                        fontWeight="700"
-                      >
-                        {String(index + 1).padStart(2, "0")}
-                      </text>
-                    )}
+                    <text
+                      x={originX + (obstacle.x + obstacle.w / 2) * scale}
+                      y={originY + (obstacle.y + obstacle.h / 2) * scale}
+                      textAnchor="middle"
+                      dominantBaseline="middle"
+                      fill="#ffe2e2"
+                      fontSize="11"
+                    >
+                      {obstacle.label}
+                    </text>
                   </g>
-                );
-              })}
+                ))}
 
-              <text x={originX} y={Math.max(18, originY - 12)} fill="#b8f36b" fontSize="12">
-                SITE BOUNDARY · {settings.system.toUpperCase()}{isCustomPolygon ? " (TRAPEZIUM / POLIGON)" : ""}
-              </text>
+                {/* Inset setback boundary polygon */}
+                <polygon
+                  points={svgSetbackPolygonPoints}
+                  fill="none"
+                  stroke="#e8b86b"
+                  strokeWidth="1.5"
+                  strokeDasharray="3 5"
+                />
+
+                {/* Vertex handles if custom polygon */}
+                {isCustomPolygon && activeCorners.map((pt, idx) => (
+                  <circle
+                    key={idx}
+                    cx={originX + pt.x * scale}
+                    cy={originY + pt.y * scale}
+                    r="4"
+                    fill="#b8f36b"
+                    stroke="#111713"
+                    strokeWidth="1.5"
+                  />
+                ))}
+
+                {/* PV Modules */}
+                {panels.map((panel, index) => {
+                  const isSelected = selectedIds.has(panel.id);
+                  return (
+                    <g
+                      key={panel.id}
+                      data-panel="true"
+                      onPointerDown={e => handlePanelPointerDown(e, panel)}
+                      style={{ cursor: "move" }}
+                    >
+                      <rect
+                        x={originX + panel.x * scale}
+                        y={originY + panel.y * scale}
+                        width={Math.max(1, panel.w * scale)}
+                        height={Math.max(1, panel.h * scale)}
+                        rx="2"
+                        fill={isSelected ? "#4fa672" : "#387a55"}
+                        fillOpacity={isSelected ? ".96" : ".86"}
+                        stroke={isSelected ? "#b8f36b" : "#7ec696"}
+                        strokeWidth={isSelected ? 2.5 : 1}
+                      />
+                      {isSelected && (
+                        <rect
+                          x={originX + panel.x * scale - 1}
+                          y={originY + panel.y * scale - 1}
+                          width={Math.max(1, panel.w * scale) + 2}
+                          height={Math.max(1, panel.h * scale) + 2}
+                          fill="none"
+                          stroke="#b8f36b"
+                          strokeWidth="0.8"
+                          strokeDasharray="3 2"
+                          pointerEvents="none"
+                        />
+                      )}
+                      <path
+                        d={`M ${originX + panel.x * scale + panel.w * scale / 2} ${originY + panel.y * scale} V ${originY + (panel.y + panel.h) * scale}`}
+                        stroke="#10251b"
+                        strokeWidth="1"
+                      />
+                      <path
+                        d={`M ${originX + panel.x * scale} ${originY + panel.y * scale + panel.h * scale / 2} H ${originX + (panel.x + panel.w) * scale}`}
+                        stroke="#10251b"
+                        strokeWidth="1"
+                      />
+                      {panel.w * scale > 26 && panel.h * scale > 16 && (
+                        <text
+                          x={originX + (panel.x + panel.w / 2) * scale}
+                          y={originY + (panel.y + panel.h / 2) * scale + 3}
+                          textAnchor="middle"
+                          fontSize="9"
+                          fill={isSelected ? "#b8f36b" : "#e2f3e8"}
+                          fontWeight="700"
+                        >
+                          {String(index + 1).padStart(2, "0")}
+                        </text>
+                      )}
+                    </g>
+                  );
+                })}
+
+                {/* Marquee Box Selection Overlay */}
+                {marquee && (
+                  <rect
+                    x={originX + Math.min(marquee.startX, marquee.currentX) * scale}
+                    y={originY + Math.min(marquee.startY, marquee.currentY) * scale}
+                    width={Math.max(1, Math.abs(marquee.currentX - marquee.startX) * scale)}
+                    height={Math.max(1, Math.abs(marquee.currentY - marquee.startY) * scale)}
+                    fill="rgba(184, 243, 107, 0.22)"
+                    stroke="#b8f36b"
+                    strokeWidth={1.5 / zoom}
+                    strokeDasharray={`${6 / zoom} ${3 / zoom}`}
+                    pointerEvents="none"
+                  />
+                )}
+
+                <text x={originX} y={Math.max(18, originY - 12)} fill="#b8f36b" fontSize="12">
+                  SITE BOUNDARY · {settings.system.toUpperCase()}{isCustomPolygon ? " (TRAPEZIUM / POLIGON)" : ""}
+                </text>
+              </g>
             </svg>
           </div>
 
           <div className="pv-canvas-footer">
             <span><i className="pv-legend-dot" /> {panels.length} modules</span>
             <span>
-              {copy.hint} · <strong style={{ color: "#b8f36b" }}>Ctrl+Z</strong> Undo · <strong style={{ color: "#b8f36b" }}>Ctrl+Y</strong> Redo · <strong style={{ color: "#b8f36b" }}>Ctrl+A</strong> {id ? "Pilih Semua" : "Select All"} · <strong style={{ color: "#b8f36b" }}>Del</strong> {id ? "Hapus" : "Delete"}
+              {copy.hint} · <strong style={{ color: "#b8f36b" }}>Tarik Kotak</strong> Seleksi Bulk · <strong style={{ color: "#b8f36b" }}>Scroll</strong> Zoom · <strong style={{ color: "#b8f36b" }}>Space+Drag</strong> Geser · <strong style={{ color: "#b8f36b" }}>Ctrl+Z</strong> Undo
             </span>
           </div>
 
