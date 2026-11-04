@@ -257,15 +257,33 @@ body.ts-studio-fullscreen .solar-studio-app .main-area { height: 100vh !importan
     size: A4 portrait;
     margin: 8mm 10mm;
   }
-  html, body {
-    background: #ffffff !important;
-    color: #0f172a !important;
+  html,
+  body,
+  body.solarapp-workspace-body,
+  body.ts-studio-fullscreen,
+  body.ts-studio-fullscreen .solar-studio-app,
+  body.ts-studio-fullscreen .solar-studio-app .app-shell,
+  body.ts-studio-fullscreen .solar-studio-app .main-area,
+  .solar-studio-app,
+  .app-shell,
+  .main-area,
+  .app-main,
+  .module-page,
+  .print-document-container {
+    height: auto !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    overflow: visible !important;
+    position: static !important;
+    display: block !important;
     margin: 0 !important;
     padding: 0 !important;
+    background: #ffffff !important;
+    color: #0f172a !important;
     -webkit-print-color-adjust: exact !important;
     print-color-adjust: exact !important;
   }
-  /* Hide application shell UI */
+  /* Hide application shell UI & overlays */
   aside,
   nav,
   header:not(.print-header),
@@ -274,20 +292,14 @@ body.ts-studio-fullscreen .solar-studio-app .main-area { height: 100vh !importan
   .screen-only,
   .app-sidebar,
   .app-header,
+  .sidebar,
+  .topbar,
   .pv-heading-actions,
   .preview-modal-header {
     display: none !important;
   }
   .only-print {
     display: block !important;
-  }
-  .app-shell, .app-main, .module-page {
-    display: block !important;
-    padding: 0 !important;
-    margin: 0 !important;
-    background: #ffffff !important;
-    border: none !important;
-    color: #0f172a !important;
   }
   .print-document-container {
     display: block !important;
@@ -297,24 +309,27 @@ body.ts-studio-fullscreen .solar-studio-app .main-area { height: 100vh !importan
     background: #ffffff !important;
   }
   .a4-page-sheet {
+    page-break-before: auto !important;
     page-break-after: always !important;
+    page-break-inside: avoid !important;
+    break-before: auto !important;
     break-after: page !important;
+    break-inside: avoid !important;
     width: 100% !important;
     max-width: 100% !important;
-    min-height: 275mm !important;
-    height: 275mm !important;
+    min-height: 250mm !important;
+    height: auto !important;
     margin: 0 !important;
-    padding: 0 !important;
+    padding: 6mm 8mm !important;
     box-shadow: none !important;
     border-radius: 0 !important;
     background: #ffffff !important;
     color: #0f172a !important;
-    display: flex !important;
-    flex-direction: column !important;
-    justify-content: space-between !important;
+    display: block !important;
+    box-sizing: border-box !important;
   }
   .a4-page-sheet:last-child {
-    page-break-after: avoid !important;
-    break-after: avoid !important;
+    page-break-after: auto !important;
+    break-after: auto !important;
   }
 }
