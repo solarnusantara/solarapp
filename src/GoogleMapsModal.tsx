@@ -13,6 +13,7 @@ import {
   RotateCw,
   RotateCcw,
   Compass,
+  Crop,
 } from "lucide-react";
 import { fetchGoogleSolarInsights } from "./gisSolarService";
 import type { GoogleSolarInsights } from "./gisSolarService";
@@ -45,10 +46,32 @@ interface GoogleMapsModalProps {
     azimuthDegrees?: number;
     googleSolarData?: GoogleSolarInsights;
     segmentsData?: BoxSegmentData[];
+    boxes?: Array<{
+      id: string;
+      name: string;
+      color: string;
+      center: { lat: number; lng: number };
+      widthM: number;
+      heightM: number;
+      rotationAngle: number;
+    }>;
+    cropPaddingM?: number;
   }) => void;
   initialWidthMm?: number;
   initialHeightMm?: number;
   initialPolygonPoints?: Array<{ lat: number; lng: number }>;
+  initialRotationDeg?: number;
+  initialCenter?: { lat: number; lng: number };
+  initialBoxes?: Array<{
+    id: string;
+    name: string;
+    color: string;
+    center: { lat: number; lng: number };
+    widthM: number;
+    heightM: number;
+    rotationAngle: number;
+  }>;
+  initialCropPaddingM?: number;
 }
 
 const DEFAULT_API_KEY = "AIzaSyC6TAjg7EBuCmkaWRwl-ih0PQ_Be07rc3o";
@@ -106,6 +129,10 @@ export default function GoogleMapsModal({
   initialWidthMm = 74000,
   initialHeightMm = 28000,
   initialPolygonPoints,
+  initialRotationDeg,
+  initialCenter,
+  initialBoxes,
+  initialCropPaddingM = 5,
 }: GoogleMapsModalProps) {
   const mapRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -129,16 +156,31 @@ export default function GoogleMapsModal({
     lng: 107.1985,
   });
 
+  // Custom Crop Padding State
+  const [cropPaddingM, setCropPaddingM] = useState<number>(initialCropPaddingM ?? 5);
+  const cropPolyRef = useRef<any>(null);
+
+  // Canva-Style Direct Manipulation Handles Ref
+  const handlesRef = useRef<{
+    cornerMarkers: any[];
+    rotMarker: any;
+    rotLine: any;
+  }>({
+    cornerMarkers: [],
+    rotMarker: null,
+    rotLine: null,
+  });
+
   // Multiple 90-degree boxes
   const [boxes, setBoxes] = useState<RoofBox[]>([
     {
       id: "box-1",
       name: "Box A (Atap Utama)",
       color: SHAPE_PALETTE[0],
-      center: { lat: -6.3685, lng: 107.1985 },
+      center: initialCenter || { lat: -6.3685, lng: 107.1985 },
       widthM: Math.round(initialWidthMm / 1000) || 74,
       heightM: Math.round(initialHeightMm / 1000) || 28,
-      rotationAngle: 24,
+      rotationAngle: initialRotationDeg !== undefined ? initialRotationDeg : 334,
     },
   ]);
   const [activeBoxId, setActiveBoxId] = useState<string>("box-1");
@@ -284,7 +326,21 @@ export default function GoogleMapsModal({
       const resetCoords = computeStrict90BoxCoords(newCenter, w, h, rot);
       poly.setPath(resetCoords);
 
-      setBoxes(prev => prev.map(b => b.id === box.id ? { ...b, center: newCenter } : b));
+      const updatedBox: RoofBox = {
+        id: box.id,
+        name: current?.name || box.name,
+        color: current?.color || box.color,
+        widthM: w,
+        heightM: h,
+        rotationAngle: rot,
+        center: newCenter,
+        poly: poly,
+      };
+      setBoxes(prev => prev.map(b => b.id === box.id ? updatedBox : b));
+      if (box.id === activeBoxId) {
+        syncHandlesForActiveBox(updatedBox);
+      }
+      syncCropBoundary();
     });
 
     // Click to select active box
@@ -299,11 +355,14 @@ export default function GoogleMapsModal({
     const win = window as any;
     if (!mapRef.current || !win.google?.maps) return;
 
-    let initLat = centerCoords.lat;
-    let initLng = centerCoords.lng;
+    let initLat = initialCenter?.lat ?? centerCoords.lat;
+    let initLng = initialCenter?.lng ?? centerCoords.lng;
 
-    // Check if initialPolygonPoints provided
-    if (initialPolygonPoints && initialPolygonPoints.length >= 3) {
+    if (initialBoxes && initialBoxes.length > 0 && initialBoxes[0].center) {
+      initLat = initialBoxes[0].center.lat;
+      initLng = initialBoxes[0].center.lng;
+      setCenterCoords({ lat: initLat, lng: initLng });
+    } else if (initialPolygonPoints && initialPolygonPoints.length >= 3) {
       let sLat = 0, sLng = 0;
       initialPolygonPoints.forEach(p => { sLat += p.lat; sLng += p.lng; });
       initLat = sLat / initialPolygonPoints.length;
@@ -331,22 +390,38 @@ export default function GoogleMapsModal({
 
     setMapInstance(map);
 
-    // Setup initial box
-    const firstBox: RoofBox = {
-      id: "box-1",
-      name: "Box A (Atap Utama)",
-      color: SHAPE_PALETTE[0],
-      center: { lat: initLat, lng: initLng },
-      widthM: Math.round(initialWidthMm / 1000) || 74,
-      heightM: Math.round(initialHeightMm / 1000) || 28,
-      rotationAngle: 24,
-    };
+    // Rehydrate previous boxes or initialize with initialRotationDeg
+    let loadedBoxes: RoofBox[] = [];
+    if (initialBoxes && initialBoxes.length > 0) {
+      loadedBoxes = initialBoxes.map(b => {
+        const boxObj: RoofBox = {
+          id: b.id,
+          name: b.name,
+          color: b.color || SHAPE_PALETTE[0],
+          center: b.center || { lat: initLat, lng: initLng },
+          widthM: b.widthM || 74,
+          heightM: b.heightM || 28,
+          rotationAngle: b.rotationAngle !== undefined ? b.rotationAngle : (initialRotationDeg ?? 334),
+        };
+        boxObj.poly = createPolygonForBox(map, boxObj);
+        return boxObj;
+      });
+    } else {
+      const firstBox: RoofBox = {
+        id: "box-1",
+        name: "Box A (Atap Utama)",
+        color: SHAPE_PALETTE[0],
+        center: { lat: initLat, lng: initLng },
+        widthM: Math.round(initialWidthMm / 1000) || 74,
+        heightM: Math.round(initialHeightMm / 1000) || 28,
+        rotationAngle: initialRotationDeg !== undefined ? initialRotationDeg : 334,
+      };
+      firstBox.poly = createPolygonForBox(map, firstBox);
+      loadedBoxes = [firstBox];
+    }
 
-    const poly = createPolygonForBox(map, firstBox);
-    firstBox.poly = poly;
-
-    setBoxes([firstBox]);
-    setActiveBoxId("box-1");
+    setBoxes(loadedBoxes);
+    setActiveBoxId(loadedBoxes[0]?.id || "box-1");
 
     // Setup Places Autocomplete
     if (searchInputRef.current && win.google.maps.places?.Autocomplete) {
@@ -367,9 +442,10 @@ export default function GoogleMapsModal({
         map.setZoom(19);
 
         setCenterCoords({ lat: newLat, lng: newLng });
-        if (firstBox.poly) {
-          const coords = computeStrict90BoxCoords({ lat: newLat, lng: newLng }, firstBox.widthM, firstBox.heightM, firstBox.rotationAngle);
-          firstBox.poly.setPath(coords);
+        const leadBox = boxesRef.current[0] || loadedBoxes[0];
+        if (leadBox?.poly) {
+          const coords = computeStrict90BoxCoords({ lat: newLat, lng: newLng }, leadBox.widthM, leadBox.heightM, leadBox.rotationAngle);
+          leadBox.poly.setPath(coords);
         }
         setBoxes(prev => prev.map((b, i) => i === 0 ? { ...b, center: { lat: newLat, lng: newLng } } : b));
         setSearchAddress(place.formatted_address || place.name || "");
@@ -377,8 +453,248 @@ export default function GoogleMapsModal({
     }
   }
 
-  // Highlight active box styling on map
+  // Clear handles
+  function clearHandles() {
+    handlesRef.current.cornerMarkers.forEach(m => m.setMap(null));
+    handlesRef.current.cornerMarkers = [];
+    if (handlesRef.current.rotMarker) {
+      handlesRef.current.rotMarker.setMap(null);
+      handlesRef.current.rotMarker = null;
+    }
+    if (handlesRef.current.rotLine) {
+      handlesRef.current.rotLine.setMap(null);
+      handlesRef.current.rotLine = null;
+    }
+  }
+
+  // Canva-Style Direct Manipulation Handles (4 corners resize + 1 top rotation handle)
+  function syncHandlesForActiveBox(box: RoofBox | null) {
+    const win = window as any;
+    if (!mapInstance || !win.google?.maps) return;
+    if (!box) {
+      clearHandles();
+      return;
+    }
+
+    const rad = (box.rotationAngle * Math.PI) / 180;
+    const cosA = Math.cos(rad);
+    const sinA = Math.sin(rad);
+    const cosLat = Math.cos((box.center.lat * Math.PI) / 180);
+    const mLng = M_PER_DEG_LAT * cosLat;
+    const halfW = box.widthM / 2;
+    const halfH = box.heightM / 2;
+
+    // 4 Corners: TL, TR, BR, BL
+    const localCorners = [
+      { x: -halfW, y: halfH, cursor: "nwse-resize" },
+      { x: halfW, y: halfH, cursor: "nesw-resize" },
+      { x: halfW, y: -halfH, cursor: "nwse-resize" },
+      { x: -halfW, y: -halfH, cursor: "nesw-resize" },
+    ];
+
+    const cornerLatLngs = localCorners.map(pt => {
+      const rx = pt.x * cosA - pt.y * sinA;
+      const ry = pt.x * sinA + pt.y * cosA;
+      return new win.google.maps.LatLng(box.center.lat + ry / M_PER_DEG_LAT, box.center.lng + rx / mLng);
+    });
+
+    // Rotation Handle: extended above top center
+    const rotDist = Math.max(7, Math.min(14, box.heightM * 0.28 + 4));
+    const topCenterLocal = { x: 0, y: halfH };
+    const rotHandleLocal = { x: 0, y: halfH + rotDist };
+
+    const topCenterLatLng = new win.google.maps.LatLng(
+      box.center.lat + (topCenterLocal.x * sinA + topCenterLocal.y * cosA) / M_PER_DEG_LAT,
+      box.center.lng + (topCenterLocal.x * cosA - topCenterLocal.y * sinA) / mLng
+    );
+
+    const rotHandleLatLng = new win.google.maps.LatLng(
+      box.center.lat + (rotHandleLocal.x * sinA + rotHandleLocal.y * cosA) / M_PER_DEG_LAT,
+      box.center.lng + (rotHandleLocal.x * cosA - rotHandleLocal.y * sinA) / mLng
+    );
+
+    // If handles not created yet, instantiate them
+    if (handlesRef.current.cornerMarkers.length !== 4) {
+      clearHandles();
+      handlesRef.current.cornerMarkers = localCorners.map((pt, idx) => {
+        const marker = new win.google.maps.Marker({
+          position: cornerLatLngs[idx],
+          map: mapInstance,
+          draggable: true,
+          icon: {
+            path: win.google.maps.SymbolPath.CIRCLE,
+            scale: 7,
+            fillColor: "#ffffff",
+            fillOpacity: 1,
+            strokeColor: box.color || "#3b82f6",
+            strokeWeight: 2.5,
+          },
+          cursor: pt.cursor,
+          title: "Tarik sudut untuk resize " + box.name,
+          zIndex: 200,
+        });
+
+        marker.addListener("drag", (e: any) => {
+          const curBox = boxesRef.current.find(b => b.id === activeBoxId);
+          if (!curBox) return;
+          const curRad = (curBox.rotationAngle * Math.PI) / 180;
+          const dEast = (e.latLng.lng() - curBox.center.lng) * mLng;
+          const dNorth = (e.latLng.lat() - curBox.center.lat) * M_PER_DEG_LAT;
+          const rx = dEast * Math.cos(curRad) + dNorth * Math.sin(curRad);
+          const ry = -dEast * Math.sin(curRad) + dNorth * Math.cos(curRad);
+          const newW = Math.max(4, Math.round(Math.abs(rx) * 2 * 2) / 2);
+          const newH = Math.max(4, Math.round(Math.abs(ry) * 2 * 2) / 2);
+          updateActiveBoxProps({ widthM: newW, heightM: newH });
+        });
+
+        return marker;
+      });
+
+      // Stem Line
+      handlesRef.current.rotLine = new win.google.maps.Polyline({
+        path: [topCenterLatLng, rotHandleLatLng],
+        strokeColor: "#b8f36b",
+        strokeOpacity: 0.9,
+        strokeWeight: 2,
+        map: mapInstance,
+        zIndex: 190,
+      });
+
+      // Rotation Knob
+      const rotMarker = new win.google.maps.Marker({
+        position: rotHandleLatLng,
+        map: mapInstance,
+        draggable: true,
+        icon: {
+          url: "data:image/svg+xml;utf-8," + encodeURIComponent(
+            '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">' +
+            '<circle cx="16" cy="16" r="14" fill="#142117" stroke="#b8f36b" stroke-width="2.5"/>' +
+            '<path d="M16 8 A8 8 0 1 1 8 16" fill="none" stroke="#b8f36b" stroke-width="2.5" stroke-linecap="round"/>' +
+            '<polygon points="8,11 4,16 11,16" fill="#b8f36b"/>' +
+            '</svg>'
+          ),
+          scaledSize: new win.google.maps.Size(30, 30),
+          anchor: new win.google.maps.Point(15, 15),
+        },
+        cursor: "grab",
+        title: "Putar rotasi box (Canva-style) " + box.name,
+        zIndex: 210,
+      });
+
+      rotMarker.addListener("drag", (e: any) => {
+        const curBox = boxesRef.current.find(b => b.id === activeBoxId);
+        if (!curBox) return;
+        const dEast = (e.latLng.lng() - curBox.center.lng) * mLng;
+        const dNorth = (e.latLng.lat() - curBox.center.lat) * M_PER_DEG_LAT;
+        let angle = -Math.atan2(dEast, dNorth) * (180 / Math.PI);
+        angle = Math.round(((angle % 360) + 360) % 360);
+        updateActiveBoxProps({ rotationAngle: angle });
+      });
+
+      handlesRef.current.rotMarker = rotMarker;
+    } else {
+      handlesRef.current.cornerMarkers.forEach((m, idx) => {
+        m.setPosition(cornerLatLngs[idx]);
+        m.setIcon({
+          path: win.google.maps.SymbolPath.CIRCLE,
+          scale: 7,
+          fillColor: "#ffffff",
+          fillOpacity: 1,
+          strokeColor: box.color || "#3b82f6",
+          strokeWeight: 2.5,
+        });
+      });
+      if (handlesRef.current.rotLine) {
+        handlesRef.current.rotLine.setPath([topCenterLatLng, rotHandleLatLng]);
+      }
+      if (handlesRef.current.rotMarker) {
+        handlesRef.current.rotMarker.setPosition(rotHandleLatLng);
+      }
+    }
+  }
+
+  // Draw green crop area boundary on Google Maps
+  function syncCropBoundary() {
+    const win = window as any;
+    if (!mapInstance || !win.google?.maps || boxes.length === 0) return;
+
+    const allBoxCorners = boxes.flatMap(b => {
+      const halfW = b.widthM / 2;
+      const halfH = b.heightM / 2;
+      const rad = (b.rotationAngle * Math.PI) / 180;
+      const cosA = Math.cos(rad);
+      const sinA = Math.sin(rad);
+      const cosLat = Math.cos((b.center.lat * Math.PI) / 180);
+      const mLng = M_PER_DEG_LAT * cosLat;
+      return [
+        { x: -halfW, y: halfH },
+        { x: halfW, y: halfH },
+        { x: halfW, y: -halfH },
+        { x: -halfW, y: -halfH },
+      ].map(pt => ({
+        lat: b.center.lat + (pt.x * sinA + pt.y * cosA) / M_PER_DEG_LAT,
+        lng: b.center.lng + (pt.x * cosA - pt.y * sinA) / mLng,
+      }));
+    });
+
+    const minLat = Math.min(...allBoxCorners.map(c => c.lat));
+    const maxLat = Math.max(...allBoxCorners.map(c => c.lat));
+    const minLng = Math.min(...allBoxCorners.map(c => c.lng));
+    const maxLng = Math.max(...allBoxCorners.map(c => c.lng));
+    const siteCenterLat = (minLat + maxLat) / 2;
+    const siteCenterLng = (minLng + maxLng) / 2;
+
+    const primaryAngle = boxes[0]?.rotationAngle ?? 24;
+    const rad = (primaryAngle * Math.PI) / 180;
+    const cosA = Math.cos(rad);
+    const sinA = Math.sin(rad);
+    const cosLat = Math.cos((siteCenterLat * Math.PI) / 180);
+    const mLng = M_PER_DEG_LAT * cosLat;
+
+    let minRx = Infinity, maxRx = -Infinity, minRy = Infinity, maxRy = -Infinity;
+    allBoxCorners.forEach(pt => {
+      const dEast = (pt.lng - siteCenterLng) * mLng;
+      const dNorth = (pt.lat - siteCenterLat) * M_PER_DEG_LAT;
+      const rx = dEast * cosA + dNorth * sinA;
+      const ry = -dEast * sinA + dNorth * cosA;
+      if (rx < minRx) minRx = rx;
+      if (rx > maxRx) maxRx = rx;
+      if (ry < minRy) minRy = ry;
+      if (ry > maxRy) maxRy = ry;
+    });
+
+    const padM = cropPaddingM;
+    const cropCorners = [
+      { rx: minRx - padM, ry: maxRy + padM }, // TL
+      { rx: maxRx + padM, ry: maxRy + padM }, // TR
+      { rx: maxRx + padM, ry: minRy - padM }, // BR
+      { rx: minRx - padM, ry: minRy - padM }, // BL
+    ].map(pt => {
+      const dEast = pt.rx * cosA - pt.ry * sinA;
+      const dNorth = pt.rx * sinA + pt.ry * cosA;
+      return new win.google.maps.LatLng(siteCenterLat + dNorth / M_PER_DEG_LAT, siteCenterLng + dEast / mLng);
+    });
+
+    if (!cropPolyRef.current) {
+      cropPolyRef.current = new win.google.maps.Polygon({
+        paths: cropCorners,
+        strokeColor: "#22c55e",
+        strokeOpacity: 0.9,
+        strokeWeight: 2,
+        fillColor: "#22c55e",
+        fillOpacity: 0.05,
+        map: mapInstance,
+        zIndex: 5,
+        clickable: false,
+      });
+    } else {
+      cropPolyRef.current.setPath(cropCorners);
+    }
+  }
+
+  // Highlight active box styling on map & sync handles
   useEffect(() => {
+    if (!mapInstance) return;
     boxes.forEach(b => {
       if (!b.poly) return;
       const isActive = b.id === activeBoxId;
@@ -389,7 +705,20 @@ export default function GoogleMapsModal({
         zIndex: isActive ? 100 : 10,
       });
     });
-  }, [activeBoxId, boxes]);
+    syncHandlesForActiveBox(activeBox);
+    syncCropBoundary();
+  }, [activeBoxId, boxes, cropPaddingM, mapInstance]);
+
+  // Clean up handles when closing
+  useEffect(() => {
+    if (!isOpen) {
+      clearHandles();
+      if (cropPolyRef.current) {
+        cropPolyRef.current.setMap(null);
+        cropPolyRef.current = null;
+      }
+    }
+  }, [isOpen]);
 
   // Update active box dimensions or rotation
   function updateActiveBoxProps(updates: Partial<Pick<RoofBox, "widthM" | "heightM" | "rotationAngle">>) {
@@ -401,12 +730,16 @@ export default function GoogleMapsModal({
     const coords = computeStrict90BoxCoords(activeBox.center, nextW, nextH, nextAngle);
     activeBox.poly.setPath(coords);
 
-    setBoxes(prev => prev.map(b => b.id === activeBox.id ? {
-      ...b,
+    const updatedBox = {
+      ...activeBox,
       widthM: nextW,
       heightM: nextH,
       rotationAngle: nextAngle,
-    } : b));
+    };
+
+    setBoxes(prev => prev.map(b => b.id === activeBox.id ? updatedBox : b));
+    syncHandlesForActiveBox(updatedBox);
+    syncCropBoundary();
   }
 
   function rotateActiveBoxBy(deltaDeg: number) {
@@ -541,8 +874,8 @@ export default function GoogleMapsModal({
         });
       });
 
-      // Add a clean 5-meter margin on all sides of the site
-      const padM = 5;
+      // Use custom cropPaddingM for margin around site
+      const padM = cropPaddingM;
       const siteWidthM = Math.max(20, (maxRx - minRx) + padM * 2);
       const siteHeightM = Math.max(15, (maxRy - minRy) + padM * 2);
       const siteWidthMm = Math.round(siteWidthM * 1000);
@@ -586,6 +919,16 @@ export default function GoogleMapsModal({
         polygonCornersMm: segmentsData[0]?.polygonCornersMm,
         rotationDeg: Math.round(primaryAngle),
         segmentsData,
+        boxes: boxes.map(b => ({
+          id: b.id,
+          name: b.name,
+          color: b.color,
+          center: b.center,
+          widthM: b.widthM,
+          heightM: b.heightM,
+          rotationAngle: b.rotationAngle,
+        })),
+        cropPaddingM,
       });
 
       onClose();
@@ -837,6 +1180,46 @@ export default function GoogleMapsModal({
               </button>
             </div>
           )}
+
+          {/* Custom Crop Area Size / Padding Controls */}
+          <div style={{ display: "flex", alignItems: "center", gap: 6, background: "#0c140f", padding: "4px 10px", borderRadius: 6, border: "1px solid #233829" }}>
+            <span style={{ fontSize: 11, color: "#8aa092", display: "flex", alignItems: "center", gap: 4, fontWeight: 600 }}>
+              <Crop size={12} style={{ color: "#22c55e" }} /> Margin Crop:
+            </span>
+            <input
+              type="number"
+              min="0"
+              max="200"
+              step="5"
+              value={cropPaddingM}
+              onChange={e => setCropPaddingM(Math.max(0, Number(e.target.value)))}
+              style={{ width: 46, background: "#162319", border: "1px solid #284430", color: "#22c55e", fontSize: 11, fontWeight: 800, padding: "2px 4px", borderRadius: 4, textAlign: "center" }}
+              title="Margin area crop di sekeliling atap (meter)"
+            />
+            <span style={{ fontSize: 10, color: "#8aa092" }}>m</span>
+            <div style={{ display: "flex", gap: 3 }}>
+              {[5, 10, 20, 40].map(pad => (
+                <button
+                  key={pad}
+                  type="button"
+                  onClick={() => setCropPaddingM(pad)}
+                  style={{
+                    background: cropPaddingM === pad ? "#1f3a25" : "#141e16",
+                    border: "1px solid " + (cropPaddingM === pad ? "#4ade80" : "#28392c"),
+                    color: cropPaddingM === pad ? "#b8f36b" : "#8aa092",
+                    fontSize: 10,
+                    fontWeight: 700,
+                    padding: "2px 6px",
+                    borderRadius: 4,
+                    cursor: "pointer",
+                  }}
+                  title={`Set margin crop ${pad} meter`}
+                >
+                  +{pad}m
+                </button>
+              ))}
+            </div>
+          </div>
         </div>
 
         {/* Multi-Box Chips Bar */}
@@ -1081,7 +1464,7 @@ export default function GoogleMapsModal({
           }}
         >
           <span>
-            💡 <strong>Petunjuk:</strong> Klik dan geser box untuk memposisikannya di atas atap. Gunakan <strong>+ Tambah Box Atap</strong> untuk menambah box atap lainnya (misal 1 atap besar + 4 atap kecil).
+            🎨 <strong>Canva-Style Editing:</strong> Tarik <strong>4 sudut putih</strong> dengan mouse untuk resize panjang/lebar • Tarik <strong>knob ↺ hijau</strong> di atas box untuk memutar rotasi • Kotak hijau garis-putus menunjukkan <strong>area crop peta</strong> yang akan diekspor.
           </span>
           <span style={{ color: "#5d7063", whiteSpace: "nowrap" }}>
             Lat: {centerCoords.lat.toFixed(5)}, Lng: {centerCoords.lng.toFixed(5)}

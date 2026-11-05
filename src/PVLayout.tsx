@@ -89,6 +89,16 @@ export type Site = {
   pitchDegrees?: number;
   azimuthDegrees?: number;
   googleSolarData?: any;
+  boxes?: Array<{
+    id: string;
+    name: string;
+    color: string;
+    center: { lat: number; lng: number };
+    widthM: number;
+    heightM: number;
+    rotationAngle: number;
+  }>;
+  cropPaddingM?: number;
 };
 
 const STORAGE_KEY = "solar-apps-pv-layout-v1";
@@ -674,6 +684,8 @@ export default function PVLayout({
       pitchDegrees: data.pitchDegrees,
       azimuthDegrees: data.azimuthDegrees,
       googleSolarData: data.googleSolarData,
+      boxes: (data as any).boxes,
+      cropPaddingM: (data as any).cropPaddingM,
     };
     setSettings(nextSettings);
     setSite(nextSite);
@@ -2265,9 +2277,13 @@ export default function PVLayout({
         isOpen={isMapsModalOpen}
         onClose={() => setIsMapsModalOpen(false)}
         onApply={handleGoogleMapsApply}
-        initialWidthMm={settings.areaWidth}
-        initialHeightMm={settings.areaHeight}
+        initialWidthMm={site?.boxes?.[0]?.widthM ? site.boxes[0].widthM * 1000 : settings.areaWidth}
+        initialHeightMm={site?.boxes?.[0]?.heightM ? site.boxes[0].heightM * 1000 : settings.areaHeight}
         initialPolygonPoints={site?.polygonPoints}
+        initialRotationDeg={site?.rotationDeg}
+        initialCenter={site?.coordinates}
+        initialBoxes={site?.boxes}
+        initialCropPaddingM={site?.cropPaddingM}
       />
     </section>
   );
