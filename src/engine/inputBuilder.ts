@@ -3,6 +3,7 @@
 // error list naming each missing field. BESS is not part of this flow, so it is sent as an
 // explicit 0 (helio requires the fields). `obstacles`/`bom_items` are explicit empty arrays:
 // obstacles travel inside `scene.keepouts`, the BOM is out of scope.
+import { isExportMode } from "./exportMode";
 import type { SimulationInput, SiteSummary } from "./types";
 import type { Racking } from "./types/Racking";
 import type { EngineInputs } from "./types/local";
@@ -78,6 +79,7 @@ export function buildSimulationInput(args: {
   };
   if (inputs.horizon && inputs.horizon.points.length > 0) input.horizon = inputs.horizon;
   if (inputs.uncertainty) input.uncertainty = inputs.uncertainty;
+  if (isExportMode(inputs.export_limitation_mode)) input.export_limitation_mode = inputs.export_limitation_mode;
   if (inputs.module_characterization_id) input.module_characterization_id = inputs.module_characterization_id;
   if (inputs.inverter_characterization_id) input.inverter_characterization_id = inputs.inverter_characterization_id;
   return { input };

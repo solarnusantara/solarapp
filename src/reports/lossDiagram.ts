@@ -3,6 +3,7 @@
 // layout values (collector area x irradiation is NOT computed here; efficiency at STC is passed in).
 import type { StageSummary } from "../engine/types";
 import { DASH, isNum, n, plain } from "./format";
+import { pvsystStageLabel, pvsystSubLabel } from "./labels";
 
 export type LossRowKind = "milestone" | "stage" | "sub" | "info";
 
@@ -59,8 +60,7 @@ export function pvsystOrder(stages: StageSummary[]): StageSummary[] {
   return out;
 }
 
-export const fmtSigned = (v: number | null | undefined) => (isNum(v) ? `${v > 0 ? "+" : v < 0 ? "-" : ""}${Math.abs(v).toFixed(2)}%` : DASH);
-const rowLabel = (s: { pvsyst_label: string | null; helioscope_label?: string | null; label: string }) => s.pvsyst_label ?? s.helioscope_label ?? s.label;
+export const fmtSigned = (v: number | null | undefined) => { if (!isNum(v)) return DASH; const t = Math.abs(v).toFixed(2); return `${t === "0.00" ? "" : v > 0 ? "+" : "-"}${t}%`; };
 
 export function buildLossDiagram(stages: StageSummary[], opts: LossDiagramOpts): LossDiagram {
   const rowH = opts.rowH ?? 20;
@@ -97,15 +97,16 @@ export function buildLossDiagram(stages: StageSummary[], opts: LossDiagramOpts):
         }
         return;
       }
+      if (s.key === "effective_rear_irradiance" && (!ok || s.annual === 0)) return; // monofacial: no rear side
       const subs = s.breakdown ?? [];
       // A stage with no PVsyst name whose loss is fully described by its sub-losses is shown as those sub-losses only.
       if (s.pvsyst_label || subs.length === 0) {
-        push({ kind: "stage", key: s.key, label: rowLabel(s), pct: ok ? fmtSigned(s.delta_pct) : "tidak dimodelkan", deltaPct: ok ? s.delta_pct ?? 0 : null, notModeled: !ok });
+        push({ kind: "stage", key: s.key, label: pvsystStageLabel(s), pct: ok ? fmtSigned(s.delta_pct) : "tidak dimodelkan", deltaPct: ok ? s.delta_pct ?? 0 : null, notModeled: !ok });
       }
       for (const b of subs) {
         const bok = b.status !== "not_modeled" && isNum(b.pct_of_input);
         const d = bok ? -(b.pct_of_input as number) || 0 : null;
-        push({ kind: "sub", key: b.key, label: b.pvsyst_label ?? b.label, pct: bok ? fmtSigned(d) : "tidak dimodelkan", deltaPct: d, notModeled: !bok });
+        push({ kind: "sub", key: b.key, label: pvsystSubLabel(b), pct: bok ? fmtSigned(d) : "tidak dimodelkan", deltaPct: d, notModeled: !bok });
       }
       if (s.key === AFTER_OHMIC && ok) push({ kind: "milestone", key: "virtual_energy_mpp", label: "Array virtual energy at MPP", value: `${plain(s.annual, 0)} kWh` });
       // The inverter group is the ac_power row plus the constrained-DC limits (PVsyst order puts both before this milestone).

@@ -222,7 +222,8 @@ export function monthlyBalance(h: HourlyTable | null | undefined, columns: Hourl
   const globHor = monthlyEnergy(h, columns, "ghi");
   const diffHor = monthlyEnergy(h, columns, "dhi");
   const globInc = monthlyEnergy(h, columns, "poa_irradiance");
-  const globEff = monthlyEnergy(h, columns, "effective_irradiance");
+  // PVsyst GlobEff = effective global corrected for IAM, shadings AND soiling: the after-soiling column.
+  const globEff = monthlyEnergy(h, columns, "soiled_irradiance");
   const eArray = monthlyEnergy(h, columns, "optimal_dc_power") ?? monthlyEnergy(h, columns, "module_power");
   const eGrid = monthlyEnergy(h, columns, "grid_power");
   const tAmb = monthlyMean(h, "temp_air");
@@ -285,4 +286,22 @@ export function horizonDiffuseFactor(points: Array<{ azimuth_deg: number; elevat
   let acc = 0;
   for (let az = 0; az < 360; az += 0.5) { const h = (at(az) * Math.PI) / 180; acc += Math.sin(h) ** 2; }
   return 1 - acc / 720;
+}
+
+/** Monthly balance straight from helio's production.engineering.monthly_balance (same numbers the engine computed). */
+export function monthlyBalanceFromEngineering(rows: Array<{ month: number; glob_hor_kwh_m2: number; diff_hor_kwh_m2: number | null; t_amb_c: number; glob_inc_kwh_m2: number; glob_eff_kwh_m2: number; e_array_kwh: number | null; e_grid_kwh: number; pr_pct: number | null }> | null | undefined, dcKwp: number | null): MonthlyBalance | null {
+  if (!rows || rows.length !== 12) return null;
+  const by = [...rows].sort((a, b) => a.month - b.month);
+  const all = <T,>(f: (r: (typeof by)[number]) => T | null): T[] | null => { const v = by.map(f); return v.every((x) => x !== null && (typeof x !== "number" || Number.isFinite(x))) ? (v as T[]) : null; };
+  const ok = isNum(dcKwp) && dcKwp > 0;
+  const eGrid = by.map((r) => r.e_grid_kwh), globInc = by.map((r) => r.glob_inc_kwh_m2);
+  const eArray = all((r) => r.e_array_kwh);
+  const perDay = (a: number[]) => a.map((v, i) => v / dcKwp! / NONLEAP_DAYS[i]);
+  return {
+    globHor: by.map((r) => r.glob_hor_kwh_m2), diffHor: all((r) => r.diff_hor_kwh_m2), tAmb: by.map((r) => r.t_amb_c), globInc,
+    globEff: by.map((r) => r.glob_eff_kwh_m2), eArray, eGrid, pr: all((r) => (r.pr_pct === null ? null : r.pr_pct / 100)),
+    yf: ok ? perDay(eGrid) : null,
+    ls: ok && eArray ? perDay(eArray.map((v, i) => v - eGrid[i])) : null,
+    lc: ok && eArray ? globInc.map((g, i) => (g - eArray[i] / dcKwp!) / NONLEAP_DAYS[i]) : null,
+  };
 }

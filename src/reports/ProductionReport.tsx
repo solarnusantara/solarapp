@@ -4,7 +4,9 @@ import type { ReactNode } from "react";
 import { BarChart, Donut } from "./charts";
 import { DASH, MONTHS_EN, MONTHS_SHORT, dateTime, firstOf, isNum, monthlyUniform, n, pct, text } from "./format";
 import { producingMean, monthlyEnergy } from "./aggregate";
-import { conditionSet, donutSlices, isTotalRow, lossGroups, out, prod, sourceLabel, wireSummary } from "./model";
+import { conditionSet, donutSlices, engineering, isTotalRow, lossGroups, out, prod, sourceLabel, wireSummary } from "./model";
+import { helioscopeStageLabel } from "./labels";
+import { exportModeLabel } from "../engine/exportMode";
 import { renderModel } from "./layoutGeometry";
 import { Sheet, SONUS_ID_LOGO, SourceNotice, type ReportProps } from "./parts";
 
@@ -85,7 +87,11 @@ export default function ProductionReport({ data, projectId, project }: ReportPro
   const segChunks: typeof segRows[] = [segRows.slice(0, FIRST)];
   for (let i = FIRST; i < segRows.length; i += REST) segChunks.push(segRows.slice(i, i + REST));
 
-  const SegTable = ({ rows }: { rows: typeof segRows }) => (
+  // One module-count source: the footer total is the sum of the rows above; a run on another count is flagged, never hidden.
+  const segTotalModules = segRows.reduce((a, r) => a + (r.modules ?? 0), 0);
+  const segTotalKw = segRows.reduce((a, r) => a + (isNum(r.kw) ? r.kw : 0), 0);
+  const runModules = isNum(design?.module_count) ? design.module_count : null;
+  const SegTable = ({ rows, last }: { rows: typeof segRows; last?: boolean }) => (
     <Card title="Field Segments" style={{ marginTop: "4mm" }}>
       <table className="prd-table">
         <thead><tr>{["Description", "Racking", "Orientation", "Tilt", "Azimuth", "Intrarow Spacing", "Frame Size", "Frames", "Modules", "Power"].map((h) => <th key={h}>{h}</th>)}</tr></thead>
@@ -94,6 +100,9 @@ export default function ProductionReport({ data, projectId, project }: ReportPro
           {rows.map((r) => (
             <tr key={r.key}><td>Field Segment</td><td>{r.racking}</td><td>{r.orientation}</td><td>{r.tilt}</td><td>{r.az}</td><td>{DASH}</td><td>{DASH}</td><td>{DASH}</td><td>{n(r.modules)}</td><td>{isNum(r.kw) ? `${n(r.kw, 2)} kW` : DASH}</td></tr>
           ))}
+          {last && rows.length > 0 && (
+            <tr className="is-total"><td colSpan={8}><b>Total</b>{isNum(runModules) && runModules !== segTotalModules ? <span style={{ color: "#b45309" }}> - Helio memakai {n(runModules)} modul</span> : null}</td><td><b>{n(segTotalModules)}</b></td><td><b>{n(segTotalKw, 2)} kW</b></td></tr>
+          )}
         </tbody>
       </table>
     </Card>
@@ -127,6 +136,7 @@ export default function ProductionReport({ data, projectId, project }: ReportPro
                 <KV k="Annual Production" v={isNum(annual) ? `${n(annual / 1e6, 2)} GWh` : DASH} />
                 <KV k="Performance Ratio" v={pct(summary?.performance_ratio_pct ?? o?.performance_ratio_pct, 1)} />
                 <KV k="kWh/kWp" v={n(summary?.specific_yield_kwh_kwp ?? o?.specific_yield_kwh_kwp, 1)} />
+                <KV k="Export Mode" v={result ? exportModeLabel((result.input as any)?.export_limitation_mode) : DASH} />
                 <KV k="Weather Dataset" v={sourceLabel(result)} />
                 <KV k="Simulator Version" v={text(result?.engine_version ? `Helio engine v${result.engine_version}` : null)} />
               </tbody></table>
@@ -166,7 +176,7 @@ export default function ProductionReport({ data, projectId, project }: ReportPro
                   {groups.map((g) => g.rows.map((row, i) => (
                     <tr key={`${g.section}-${row.key}`} className={isTotalRow(g, i) ? "is-total" : ""}>
                       {i === 0 && <td className="sec" rowSpan={g.rows.length}>{g.section === "irradiance" ? <>Irradiance<br />(kWh/m²)</> : <>Energy<br />(kWh)</>}</td>}
-                      <td className="r" style={isTotalRow(g, i) ? undefined : { textAlign: "right" }}>{text(row.helioscope_label ?? row.label)}</td>
+                      <td className="r" style={isTotalRow(g, i) ? undefined : { textAlign: "right" }}>{helioscopeStageLabel(row)}</td>
                       <td className="r">{n(row.annual, 1)}</td>
                       <td className="r delta">{isNum(row.delta_pct) ? pct(row.delta_pct, 1) : "-"}</td>
                     </tr>
@@ -296,7 +306,7 @@ export default function ProductionReport({ data, projectId, project }: ReportPro
                 </div>
               </Card>
             )}
-            <SegTable rows={rows} />
+            <SegTable rows={rows} last={ci === segChunks.length - 1} />
           </div>
           <Band footer />
         </Sheet>

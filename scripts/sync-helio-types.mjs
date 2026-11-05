@@ -23,7 +23,7 @@ const SEED = [
   "StringingReport", "WireSchedule", "SunPositionDay", "IrrResult", "MonthlyYieldSummary",
   "Circuit", "HorizonProfile", "SiteSummary", "ShortCircuitReport", "EarthingReport",
   "LightningReport", "ProtectionCoordinationReport", "ComplianceReport", "SavedConditionSet", "WeatherDatasetCreated", "WeatherDatasetSummary",
-  "DocumentedDefaults", "UncertaintyReport", "WeatherMeta",
+  "DocumentedDefaults", "UncertaintyReport", "WeatherMeta", "AutoCircuitRequest", "AutoCircuitResponse", "ExportLimitationMode",
   // weather sources panel
   "WeatherSeriesSummary", "WeatherSeriesCreated", "WeatherSeriesMember", "WeatherSourceComparison", "WeatherComparisonEntry",
   "WeatherDatasetDetail", "MonthlyWeatherSummary", "WeatherQcReport", "CsvMapping",

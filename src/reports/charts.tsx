@@ -26,7 +26,7 @@ export function niceMax(v: number): number {
 function ticks(max: number, count = 5) {
   return Array.from({ length: count + 1 }, (_, i) => (max * i) / count);
 }
-const fmtTick = (v: number) => (Math.abs(v) >= 1000 ? `${Math.round(v / 1000)}k` : Number.isInteger(v) ? String(v) : v.toFixed(1));
+const fmtTick = (v: number) => (Math.abs(v) >= 1000 ? `${Math.round(v / 1000)}K` : Number.isInteger(v) ? String(v) : v.toFixed(1));
 
 interface Frame { l: number; r: number; t: number; b: number }
 
@@ -118,7 +118,7 @@ export function StackedBars({ series, labels, yLabel, w = 440, h = 210, ymax, le
 
 const PALETTE = ["#0e7490", "#b45309", "#16a34a", "#6d28d9", "#ea580c", "#2563eb", "#9ca3af", "#be185d", "#0f766e", "#a16207", "#7c3aed", "#dc2626"];
 
-export function Donut({ slices, w = 360, h = 190, decimals = 1 }: { slices: Array<{ label: string; value: number }>; w?: number; h?: number; decimals?: number }) {
+export function Donut({ slices, w = 420, h = 190, decimals = 1 }: { slices: Array<{ label: string; value: number; color?: string }>; w?: number; h?: number; decimals?: number }) {
   const data = slices.filter((s) => isNum(s.value) && s.value > 0);
   if (!data.length) return <ChartEmpty w={w} h={h} />;
   const total = data.reduce((a, s) => a + s.value, 0);
@@ -130,7 +130,7 @@ export function Donut({ slices, w = 360, h = 190, decimals = 1 }: { slices: Arra
     const large = a1 - a0 > Math.PI ? 1 : 0;
     const p = (rad: number, a: number) => `${cx + rad * Math.cos(a)} ${cy + rad * Math.sin(a)}`;
     const d = `M ${p(R, a0)} A ${R} ${R} 0 ${large} 1 ${p(R, a1)} L ${p(r, a1)} A ${r} ${r} 0 ${large} 0 ${p(r, a0)} Z`;
-    const res = { d, mid, color: PALETTE[i % PALETTE.length], label: s.label, value: s.value };
+    const res = { d, mid, color: s.color ?? PALETTE[i % PALETTE.length], label: s.label, value: s.value };
     a0 = a1;
     return res;
   });
@@ -314,7 +314,7 @@ export function SunPathChart({ curves, hourLines, behind, horizon, band, title, 
   const line = (pts: Array<[number, number]>) => pts.map(([a, e]) => `${X(a)},${Y(e)}`).join(" ");
   const clipId = `sp-clip-${title.replace(/\W+/g, "")}`;
   return (
-    <div>
+    <div style={{ breakInside: "avoid", pageBreakInside: "avoid" }}>
       <div style={{ textAlign: "center", fontWeight: 700, fontSize: 12 }}>{title}</div>
       {subtitle && <div style={{ textAlign: "center", fontWeight: 600, fontSize: 9.5, color: "#1d4ed8" }}>{subtitle}</div>}
       {!usable.length ? <ChartEmpty w={w} h={h} note="posisi matahari belum tersedia" /> : (
@@ -332,7 +332,7 @@ export function SunPathChart({ curves, hourLines, behind, horizon, band, title, 
           {(hourLines ?? []).map((hl) => hl.segments.filter((s) => s.length > 1).map((s, i) => (
             <g key={`h${hl.hour}-${i}`}>
               <polyline points={line(s)} fill="none" stroke="#374151" strokeWidth="0.55" />
-              {i === 0 && <text x={X(s[0][0]) + (s[0][0] > 0 ? 2 : -2)} y={Y(s[0][1]) - 2} textAnchor={s[0][0] > 0 ? "start" : "end"} fontSize="7" fill="#111827">{hl.hour}h</text>}
+              {i === 0 && hl.hour !== 12 && <text x={X(s[0][0]) + (s[0][0] > 0 ? 2 : -2)} y={Y(s[0][1]) - 2} textAnchor={s[0][0] > 0 ? "start" : "end"} fontSize="7" fill="#111827">{hl.hour}h</text>}
             </g>
           )))}
           {usable.map((c) => {
