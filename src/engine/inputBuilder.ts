@@ -4,8 +4,10 @@
 // explicit 0 (helio requires the fields). `obstacles`/`bom_items` are explicit empty arrays:
 // obstacles travel inside `scene.keepouts`, the BOM is out of scope.
 import type { SimulationInput, SiteSummary } from "./types";
+import type { Racking } from "./types/Racking";
 import type { EngineInputs } from "./types/local";
 import type { SceneAdapterResult } from "./sceneAdapter";
+import { isRacking } from "./racking";
 
 export type BuildResult = { input: SimulationInput; errors?: undefined } | { input?: undefined; errors: string[] };
 
@@ -36,6 +38,7 @@ export function buildSimulationInput(args: {
   for (const b of adapter.blocking) errors.push(b.message);
   if (!projectName.trim()) errors.push("Nama proyek kosong.");
   if (!regionId) errors.push("Site referensi Helio terdekat tidak dapat ditentukan (daftar site kosong).");
+  if (!isRacking(inputs.racking)) errors.push("Jenis racking wajib dipilih.");
   if (!isPos(inputs.inverter_ac_kw)) errors.push("Kapasitas AC inverter (kW) wajib diisi.");
   if (!inputs.pln_tariff_code?.trim()) errors.push("Golongan tarif PLN wajib diisi.");
   if (!isPos(inputs.contracted_power_kva)) errors.push("Daya tersambung (kVA) wajib diisi.");
@@ -60,6 +63,7 @@ export function buildSimulationInput(args: {
     module_power_wp: adapter.moduleWp as number,
     module_count: adapter.moduleCount,
     inverter_ac_kw: inputs.inverter_ac_kw as number,
+    racking: inputs.racking as Racking,
     bess_capacity_kwh: 0,
     bess_power_kw: 0,
     load_profile_type: inputs.load_profile_type as string,

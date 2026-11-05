@@ -26,7 +26,9 @@
 }
 .rpt-sheet-body { flex: 1 1 auto; min-height: 0; padding: 4mm 5mm; position: relative; }
 /* The app shell's dark theme leaks a muted text color into table cells; reports print black. */
-.rpt-sheet td, .rpt-sheet th { color: #111827; }
+.rpt-sheet td, .rpt-sheet th { color: #111827; white-space: normal; overflow-wrap: break-word; }
+/* ...and a dark background onto th: every th inside a sheet is white unless a report class overrides it. */
+.rpt-sheet th { background: #fff; }
 .rpt-sheet a { color: inherit; }
 .rpt-wm { position: absolute; left: 4mm; bottom: 8mm; width: 46mm; opacity: 0.1; filter: grayscale(1); pointer-events: none; }
 
@@ -39,6 +41,11 @@
   }
   .rpt-sheet:last-child { break-after: auto; page-break-after: auto; }
   .rpt-root .no-print, .rpt-toolbar, .rpt-notice { display: none !important; }
+  /* The app shell wraps the report: its content padding/margin shifted every sheet ~6 mm down and
+     right so 277 mm no longer fit one printed page (the footer band spilled onto a blank page), and
+     its footer printed as a trailing page. Strip both whenever a report is on screen. */
+  body:has(.rpt-root) .page-content { padding: 0 !important; margin: 0 !important; max-width: none !important; width: auto !important; }
+  body:has(.rpt-root) .app-footer, body:has(.rpt-root) footer.app-footer { display: none !important; }
   .rpt-root img, .rpt-root svg { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
 }
 
@@ -62,6 +69,12 @@
 .prd-table td.r, .prd-table th.r { text-align: right; }
 .prd-table tr.is-total td { background: #fde3b4 !important; font-weight: 700; }
 .prd-table td.sec { background: #dde4ec; font-weight: 700; width: 17%; }
+.prd-annual, .prd-monthly { table-layout: fixed; }
+.prd-annual .sec-h { width: 15%; }
+.prd-annual th:nth-child(3), .prd-annual th:nth-child(4) { width: 19%; }
+.prd-monthly { font-size: 8.4px; }
+.prd-monthly th, .prd-monthly td { padding: 4px 4px; }
+.prd-monthly th:first-child { width: 15%; }
 .prd-table td.delta { background: #e6edf4; }
 .prd-sec-head td { background: #dde4ec; font-weight: 700; }
 .prd-mini { border-collapse: collapse; width: 100%; font-size: 8.5px; }
@@ -99,7 +112,7 @@
 .sim-row { display: flex; justify-content: space-between; gap: 6px; line-height: 1.5; }
 .sim-row span:last-child { text-align: right; }
 .sim-table { width: 100%; border-collapse: collapse; font-size: 9px; }
-.sim-table td, .sim-table th { border: 1px solid #111; padding: 2px 5px; text-align: right; }
+.sim-table td, .sim-table th { border: 1px solid #111; padding: 2px 5px; text-align: right; background: #fff; color: #111827; }
 .sim-table td:first-child, .sim-table th:first-child { text-align: left; font-weight: 700; }
 .sim-table .sub th { font-weight: 400; }
 .sim-toc-row { display: flex; align-items: baseline; gap: 4px; line-height: 1.7; }

@@ -244,8 +244,8 @@ export const designFileUrl = (designId: string, path: string) => `${ENGINE_BASE}
 
 // ---------------- weather / sites / sun / horizon ----------------
 export const getSites = (signal?: AbortSignal) => engineJson<SiteSummary[]>("sites", { signal });
-export const getSunPosition = (q: { lat: number; lon: number; day: string; stepMin?: number }, signal?: AbortSignal) =>
-  engineJson<SunPositionDay>(`sun-position${qs({ lat: q.lat, lon: q.lon, day: q.day, step_min: q.stepMin ?? 15 })}`, { signal });
+export const getSunPosition = (q: { lat: number; lon: number; day: string; stepMin?: number; timeBasis?: "solar" | "clock" }, signal?: AbortSignal) =>
+  engineJson<SunPositionDay>(`sun-position${qs({ lat: q.lat, lon: q.lon, day: q.day, step_min: q.stepMin ?? 15, time_basis: q.timeBasis })}`, { signal });
 export const createPvgisWeather = (body: { lat: number; lon: number; utc_offset_h: number; name?: string }, signal?: AbortSignal) =>
   engineJson<WeatherDatasetCreated>("weather/pvgis", { method: "POST", json: body, signal });
 export const getPvgisHorizon = (lat: number, lon: number, signal?: AbortSignal) =>

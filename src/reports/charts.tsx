@@ -265,16 +265,18 @@ export function NormalCurve({ p50, sigma, markers, simul, w = 640, h = 270, unit
   );
 }
 
-export interface SunCurve { label: string; num: string; points: Array<[number, number]> }
+export interface SunCurve { label: string; num: string; /** time-ordered polylines (cut at the +-180 azimuth edge) */ segments: Array<Array<[number, number]>> }
+export interface SunHourLine { hour: number; segments: Array<Array<[number, number]>> }
 
 /** Height / azimuth diagram. Axis: azimuth 180 .. -180 (0 = south), curves are engine sun positions. */
-export function SunPathChart({ curves, horizon, title, subtitle, w = 340, h = 210, extra }: {
-  curves: SunCurve[]; horizon: Array<[number, number]> | null; title: string; subtitle?: string; w?: number; h?: number; extra?: ReactNode;
+export function SunPathChart({ curves, hourLines, behind, horizon, title, subtitle, w = 340, h = 210, extra }: {
+  curves: SunCurve[]; hourLines?: SunHourLine[]; behind?: Array<Array<[number, number]>>; horizon: Array<[number, number]> | null; title: string; subtitle?: string; w?: number; h?: number; extra?: ReactNode;
 }) {
   const f: Frame = { l: 34, r: 8, t: 8, b: 26 };
   const iw = w - f.l - f.r, ih = h - f.t - f.b;
   const X = (az: number) => f.l + ((180 - az) / 360) * iw, Y = (el: number) => f.t + ih - (el / 90) * ih;
-  const usable = curves.filter((c) => c.points.length > 1);
+  const usable = curves.filter((c) => c.segments.some((s) => s.length > 1));
+  const line = (pts: Array<[number, number]>) => pts.map(([a, e]) => `${X(a)},${Y(e)}`).join(" ");
   return (
     <div>
       <div style={{ textAlign: "center", fontWeight: 700, fontSize: 12 }}>{title}</div>
@@ -286,16 +288,25 @@ export function SunPathChart({ curves, horizon, title, subtitle, w = 340, h = 21
           {[180, 150, 120, 90, 60, 30, 0, -30, -60, -90, -120, -150, -180].map((a) => <text key={a} x={X(a)} y={h - f.b + 11} textAnchor="middle" fill="#475569">{a}</text>)}
           <text x={f.l + iw / 2} y={h - 3} textAnchor="middle" fill="#475569">Azimuth [°]</text>
           <text transform={`translate(8 ${f.t + ih / 2}) rotate(-90)`} textAnchor="middle" fill="#475569">Sun height [°]</text>
+          {(hourLines ?? []).map((hl) => hl.segments.filter((s) => s.length > 1).map((s, i) => (
+            <g key={`h${hl.hour}-${i}`}>
+              <polyline points={line(s)} fill="none" stroke="#6b7280" strokeWidth="0.5" />
+              {i === 0 && <text x={X(s[0][0]) + 2} y={Y(s[0][1]) - 2} fontSize="6.5" fill="#374151">{hl.hour}h</text>}
+            </g>
+          )))}
           {usable.map((c) => {
-            const idx = c.points.length >> 1;
+            const longest = c.segments.reduce((a, s) => (s.length > a.length ? s : a), c.segments[0]);
+            const mid = longest[longest.length >> 1];
             return (
               <g key={c.num}>
-                <polyline points={c.points.map(([a, e]) => `${X(a)},${Y(e)}`).join(" ")} fill="none" stroke="#111827" strokeWidth="0.9" />
-                <circle cx={X(c.points[idx][0])} cy={Y(c.points[idx][1])} r="5" fill="#fff" stroke="#111827" strokeWidth="0.6" />
-                <text x={X(c.points[idx][0])} y={Y(c.points[idx][1]) + 3} textAnchor="middle" fontWeight="700" fontSize="7">{c.num}</text>
+                {c.segments.filter((s) => s.length > 1).map((s, i) => <polyline key={i} points={line(s)} fill="none" stroke="#111827" strokeWidth="0.9" />)}
+                <circle cx={X(mid[0])} cy={Y(mid[1])} r="5" fill="#fff" stroke="#111827" strokeWidth="0.6" />
+                <text x={X(mid[0])} y={Y(mid[1]) + 3} textAnchor="middle" fontWeight="700" fontSize="7">{c.num}</text>
               </g>
             );
           })}
+          {(behind ?? []).map((s, i) => <polyline key={`b${i}`} points={line(s)} fill="none" stroke="#1d4ed8" strokeWidth="1.3" />)}
+          {(behind ?? []).length > 0 && <text x={X(behind![0][0][0]) + (behind![0][0][0] > 0 ? -2 : 2)} y={Y(14)} fontSize="7" fill="#1d4ed8" textAnchor={behind![0][0][0] > 0 ? "end" : "start"}>Behind the plane</text>}
           {horizon && horizon.length > 1 && (
             <polyline points={horizon.map(([a, e]) => `${X(a)},${Y(e)}`).join(" ")} fill="none" stroke="#111827" strokeWidth="1.6" />
           )}
