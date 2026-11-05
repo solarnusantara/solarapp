@@ -84,6 +84,15 @@ export interface CircuitAutoRequest {
   manual_min: number | null;
   manual_max: number | null;
   routing: unknown | null;
+  /** Site temperature basis for the string window (helio ELE-30); each needs a source (ADR-0004). */
+  t_min_c: number | null;
+  t_min_source: string | null;
+  t_amb_max_c: number | null;
+  t_amb_max_source: string | null;
+  /** Module NOCT when the characterization has none (every PAN file). */
+  noct_c: number | null;
+  /** Inverter AC voltage when the characterization names none or several. */
+  ac_voltage_v: number | null;
 }
 export interface CircuitAutoResult {
   circuit: unknown;
@@ -144,6 +153,12 @@ export interface EngineInputs {
   inverter_characterization_id?: string;
   inverter_count?: number | "";
   target_dc_ac?: number | "";
+  t_min_c?: number | "";
+  t_min_source?: string;
+  t_amb_max_c?: number | "";
+  t_amb_max_source?: string;
+  noct_c?: number | "";
+  ac_voltage_v?: number | "";
   /** Engine extras that live in SimulationInput, not in ConditionSet. */
   horizon?: HorizonProfile | null;
   horizon_source?: string | null;

@@ -7,7 +7,7 @@ import { buildSimulationInput, nearestRegion } from "./inputBuilder";
 import { layoutToScene, type AdapterWarning } from "./sceneAdapter";
 import type { SavedLayout } from "./layoutStore";
 import type {
-  CircuitAutoResult, ComponentSku, EngineInputs, EngineLink, EngineResultSummary, EngineStateResponse,
+  CircuitAutoRequest, CircuitAutoResult, ComponentSku, EngineInputs, EngineLink, EngineResultSummary, EngineStateResponse,
 } from "./types/local";
 
 export type EngineStatus = "idle" | "loading" | "unavailable" | "unlinked" | "ready" | "linking" | "running" | "error";
@@ -35,17 +35,31 @@ export const toLink = (s: EngineStateResponse | null): EngineLink | null =>
 
 const fmtAdapter = (w: AdapterWarning) => `[${w.code}] ${w.message}`;
 
-/** Exactly one of inverter_count / target_dc_ac must be set. */
-export function circuitRequest(inputs: Partial<EngineInputs>) {
+const numOrNull = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : null);
+const strOrNull = (v: unknown) => (typeof v === "string" && v.trim() !== "" ? v.trim() : null);
+
+/**
+ * Body for helio `circuit/auto`, or `null` when no module/inverter is picked, or `{ error }` when
+ * an input is missing. Exactly one of inverter_count / target_dc_ac; both site temperatures with
+ * their source (helio returns 422 temperature_basis_missing otherwise, and we never invent one).
+ */
+export function circuitRequest(inputs: Partial<EngineInputs>): CircuitAutoRequest | null | { error: string } {
   if (!inputs.module_characterization_id || !inputs.inverter_characterization_id) return null;
-  const count = typeof inputs.inverter_count === "number" ? inputs.inverter_count : null;
-  const dcac = typeof inputs.target_dc_ac === "number" ? inputs.target_dc_ac : null;
-  if ((count === null) === (dcac === null)) return "exactly-one" as const;
+  const count = numOrNull(inputs.inverter_count);
+  const dcac = numOrNull(inputs.target_dc_ac);
+  if ((count === null) === (dcac === null)) return { error: "Isi tepat satu: jumlah inverter atau target DC/AC." };
+  const tMin = numOrNull(inputs.t_min_c), tMinSrc = strOrNull(inputs.t_min_source);
+  const tMax = numOrNull(inputs.t_amb_max_c), tMaxSrc = strOrNull(inputs.t_amb_max_source);
+  if (tMin === null || tMax === null || !tMinSrc || !tMaxSrc) {
+    return { error: "Isi suhu minimum sel dan suhu ambien maksimum situs, masing-masing beserta sumbernya." };
+  }
   return {
     module_characterization_id: inputs.module_characterization_id,
     inverter_characterization_id: inputs.inverter_characterization_id,
     inverter_count: count, target_dc_ac: dcac,
     string_length_method: null, manual_min: null, manual_max: null, routing: null,
+    t_min_c: tMin, t_min_source: tMinSrc, t_amb_max_c: tMax, t_amb_max_source: tMaxSrc,
+    noct_c: numOrNull(inputs.noct_c), ac_voltage_v: numOrNull(inputs.ac_voltage_v),
   };
 }
 
@@ -122,8 +136,8 @@ export function useEngine(args: {
       const p = await prepare(ac.signal);
       if (!p) return false;
       const req = circuitRequest(p.inputs);
-      if (!req || req === "exactly-one") {
-        setErrors([req ? "Isi tepat satu: jumlah inverter atau target DC/AC." : "Pilih modul dan inverter (beserta karakterisasinya) dulu."]);
+      if (!req || "error" in req) {
+        setErrors([req ? req.error : "Pilih modul dan inverter (beserta karakterisasinya) dulu."]);
         setStatus("error"); return false;
       }
       setStep("Membuat sirkuit (Helio)");
@@ -158,8 +172,8 @@ export function useEngine(args: {
 
       let circuitRes: CircuitAutoResult | null = null;
       const req = circuitRequest(p.inputs);
-      if (req === "exactly-one") {
-        setErrors(["Isi tepat satu: jumlah inverter atau target DC/AC."]); setStatus("error"); return false;
+      if (req && "error" in req) {
+        setErrors([req.error]); setStatus("error"); return false;
       }
       if (req) {
         setStep("Membuat sirkuit (Helio)");

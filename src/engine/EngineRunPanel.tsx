@@ -96,6 +96,14 @@ export default function EngineRunPanel({ projectId, projectName, layout, inputs,
           <div style={{ display: "grid", gap: 8, gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", marginTop: 8 }}>
             <NumIn label="Jumlah inverter" value={inputs.inverter_count} onChange={(v) => patch({ inverter_count: v })} hint="Isi salah satu: jumlah inverter ATAU target DC/AC" />
             <NumIn label="Target DC/AC" value={inputs.target_dc_ac} onChange={(v) => patch({ target_dc_ac: v })} />
+            <NumIn label="Suhu minimum sel (°C)" value={inputs.t_min_c} onChange={(v) => patch({ t_min_c: v })} hint="Untuk batas panjang string (Voc dingin)" />
+            <label style={{ display: "grid", gap: 2, fontSize: 12 }}>Sumber suhu minimum
+              <input style={inp} value={inputs.t_min_source ?? ""} onChange={(e) => patch({ t_min_source: e.target.value })} placeholder="mis. data BMKG stasiun …" /></label>
+            <NumIn label="Suhu ambien maks (°C)" value={inputs.t_amb_max_c} onChange={(v) => patch({ t_amb_max_c: v })} hint="Untuk Vmp panas" />
+            <label style={{ display: "grid", gap: 2, fontSize: 12 }}>Sumber suhu maksimum
+              <input style={inp} value={inputs.t_amb_max_source ?? ""} onChange={(e) => patch({ t_amb_max_source: e.target.value })} /></label>
+            <NumIn label="NOCT modul (°C)" value={inputs.noct_c} onChange={(v) => patch({ noct_c: v })} hint="Wajib bila file PAN tidak memuat NOCT (datasheet)" />
+            <NumIn label="Tegangan AC inverter (V)" value={inputs.ac_voltage_v} onChange={(v) => patch({ ac_voltage_v: v })} hint="Hanya bila karakterisasi tidak menyebut satu tegangan" />
           </div>
         </div>
       )}
