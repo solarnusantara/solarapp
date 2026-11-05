@@ -3,10 +3,11 @@
 // moves JSON. Every failure becomes an EngineError so callers never crash standalone (no backend).
 import type {
   ConditionSet, DocumentedDefaults, SavedConditionSet, Scene, SimulationInput, SimulationOutput,
-  SiteSummary, SunPositionDay, WeatherDatasetCreated, HorizonProfile,
+  SiteSummary, SunPositionDay, WeatherDatasetCreated, HorizonProfile, CsvMapping, WeatherDatasetDetail, WeatherDatasetSummary,
+  WeatherQcReport, WeatherRef, WeatherSeriesCreated, WeatherSeriesSummary, WeatherSourceComparison,
 } from "./types";
 import type {
-  CircuitAutoRequest, CircuitAutoResult, ComponentCharacterization, ComponentKind, ComponentSku, EngineLink, EngineOutputSlim,
+  CsvTemplate, CircuitAutoRequest, CircuitAutoResult, ComponentCharacterization, ComponentKind, ComponentSku, EngineLink, EngineOutputSlim,
   EngineResultSummary, EngineStateResponse, HourlyResponse, ReportMeta,
 } from "./types/local";
 
@@ -250,11 +251,110 @@ export const createPvgisWeather = (body: { lat: number; lon: number; utc_offset_
 export const getPvgisHorizon = (lat: number, lon: number, signal?: AbortSignal) =>
   engineJson<{ horizon: HorizonProfile; source: string; lat: number; lon: number }>(`horizon/pvgis${qs({ lat, lon })}`, { signal });
 
+// ---------------- weather sources (helio routes/weather.rs, ENG-04 / #17) ----------------
+/** helio `HELIO_WEATHER_UPLOAD_MAX_BYTES` default (config.rs). A larger file is a 413 `weather_file_too_large`. */
+export const WEATHER_UPLOAD_MAX_BYTES = 8 * 1024 * 1024;
+
+export const listWeather = (includeArchived = false, signal?: AbortSignal) =>
+  engineJson<WeatherDatasetSummary[]>(`weather${qs({ include_archived: includeArchived ? true : undefined })}`, { signal });
+export const listWeatherSeries = (includeArchived = false, signal?: AbortSignal) =>
+  engineJson<WeatherSeriesSummary[]>(`weather/series${qs({ include_archived: includeArchived ? true : undefined })}`, { signal });
+export const getWeatherSeries = (id: string, signal?: AbortSignal) =>
+  engineJson<WeatherSeriesSummary>(`weather/series/${enc(id)}`, { signal });
+export const getWeatherDetail = (id: string, signal?: AbortSignal) =>
+  engineJson<WeatherDatasetDetail>(`weather/${enc(id)}`, { signal });
+/** 2..8 dataset ids (helio 422 `weather_comparison_invalid` otherwise). `vs_first_pct` is relative to the first id. */
+export const getWeatherComparison = (datasetIds: string[], signal?: AbortSignal) =>
+  engineJson<WeatherSourceComparison>(`weather/comparison?dataset_ids=${datasetIds.map(enc).join(",")}`, { signal });
+export interface WeatherProvidersResponse { providers: Array<{ provider: string; configured: boolean; updated_at: string | null }> }
+export const getWeatherProviders = (signal?: AbortSignal) => engineJson<WeatherProvidersResponse>("weather/providers", { signal });
+export const getWeatherQc = (id: string, q: { lat?: number; lon?: number; elevation_m?: number; project_id?: string } = {}, signal?: AbortSignal) =>
+  engineJson<WeatherQcReport>(`weather/${enc(id)}/qc${qs({ ...q })}`, { signal });
+export const weatherCsvUrl = (id: string) => `${ENGINE_BASE}weather/${enc(id)}/hourly.csv`;
+
+/** Multi-year PVGIS `seriescalc`; needs an existing PVGIS TMY dataset (its radiation DB and default year range are reused). */
+export const createPvgisSeries = (body: { tmy_dataset_id: string; year_first?: number; year_last?: number; name?: string }, signal?: AbortSignal) =>
+  engineJson<WeatherSeriesCreated>("weather/pvgis-series", { method: "POST", json: body, signal });
+/** `start`/`end` are `YYYYMMDD`, both or neither (neither = last complete calendar year). */
+export const createNasaPowerWeather = (body: { lat: number; lon: number; utc_offset_h: number; name?: string; start?: string; end?: string }, signal?: AbortSignal) =>
+  engineJson<WeatherDatasetCreated>("weather/nasa-power", { method: "POST", json: body, signal });
+/** `start`/`end` are `YYYY-MM-DD`. Needs the org's Solcast key (422 `weather_provider_not_configured` otherwise; shown verbatim). */
+export const createSolcastWeather = (body: { lat: number; lon: number; utc_offset_h: number; elevation_m?: number; name?: string; start: string; end: string }, signal?: AbortSignal) =>
+  engineJson<WeatherDatasetCreated>("weather/solcast", { method: "POST", json: body, signal });
+
+export type WeatherUploadFormat = "epw" | "tmy3" | "csv";
+export interface WeatherUploadOptions {
+  name: string;
+  format: WeatherUploadFormat;
+  utc_offset_h?: number | null;
+  wind_height_m?: number | null;
+  lat?: number | null;
+  lon?: number | null;
+  elevation_m?: number | null;
+  /** CSV only: explicit column mapping (helio `CsvMapping`), or a vendor `template`; exactly one. */
+  mapping?: CsvMapping | null;
+  template?: CsvTemplate | null;
+}
+/** helio's CSV importer needs these (csv_mapped.rs `need`): reported before the upload instead of as a 422. */
+export function weatherUploadProblems(file: Pick<File, "size"> | null, o: WeatherUploadOptions): string[] {
+  const p: string[] = [];
+  if (!file) p.push("Pilih berkas dulu.");
+  else if (file.size > WEATHER_UPLOAD_MAX_BYTES) p.push(`Berkas melebihi ${WEATHER_UPLOAD_MAX_BYTES / 1024 / 1024} MiB (batas helio).`);
+  const n = o.name.trim().length;
+  if (n < 1 || n > 120) p.push("Nama harus 1–120 karakter.");
+  if (o.format === "csv") {
+    if (!o.mapping && !o.template) p.push("CSV butuh pemetaan kolom atau template vendor.");
+    if (o.mapping && o.template) p.push("Isi pemetaan kolom ATAU template, tidak keduanya.");
+    for (const [k, v] of [["lat", o.lat], ["lon", o.lon], ["elevation_m", o.elevation_m], ["utc_offset_h", o.utc_offset_h], ["wind_height_m", o.wind_height_m]] as const) {
+      if (typeof v !== "number" || !Number.isFinite(v)) p.push(`${k} wajib diisi untuk CSV.`);
+    }
+  } else if (o.mapping || o.template) p.push("Pemetaan/template hanya untuk CSV.");
+  return p;
+}
+/** Multipart upload. Content-Type is left to the browser (it must carry the boundary); never set it here. */
+export async function uploadWeather(file: File, o: WeatherUploadOptions, signal?: AbortSignal): Promise<WeatherDatasetCreated> {
+  const problems = weatherUploadProblems(file, o);
+  if (problems.length) throw new EngineError(0, "weather_upload_invalid", null, problems.join(" "));
+  const fd = new FormData();
+  fd.append("file", file, file.name);
+  fd.append("name", o.name.trim());
+  fd.append("format", o.format);
+  for (const [k, v] of [["utc_offset_h", o.utc_offset_h], ["wind_height_m", o.wind_height_m], ["lat", o.lat], ["lon", o.lon], ["elevation_m", o.elevation_m]] as const) {
+    if (typeof v === "number" && Number.isFinite(v)) fd.append(k, String(v));
+  }
+  if (o.mapping) fd.append("mapping", JSON.stringify(o.mapping));
+  if (o.template) fd.append("template", o.template);
+  return engineJson<WeatherDatasetCreated>("weather/upload", { method: "POST", raw: fd, signal });
+}
+
+/**
+ * Points the stored condition set at a weather source (its `weather` field decides the file).
+ * helio refuses `weather_*_id` on `simulate` together with `condition_set_id` (422 conflicting_weather),
+ * so the choice travels through the set. No write (and no version bump) when it already matches.
+ */
+export async function setConditionSetWeather(conditionSetId: string, weather: WeatherRef, signal?: AbortSignal): Promise<boolean> {
+  const cur = await engineJson<SavedConditionSet & { name?: string; version?: number }>(`condition-sets/${enc(conditionSetId)}`, { signal });
+  if (JSON.stringify(cur.params.weather) === JSON.stringify(weather)) return false;
+  await engineJson<unknown>(`condition-sets/${enc(conditionSetId)}`, {
+    method: "PUT", signal, json: { name: cur.name, version: cur.version, params: { ...cur.params, weather } },
+  });
+  return true;
+}
+
 // ---------------- condition sets ----------------
 export const getConditionSet = (id: string, signal?: AbortSignal) =>
   engineJson<SavedConditionSet>(`condition-sets/${enc(id)}`, { signal });
-export const putConditionSet = (id: string, params: ConditionSet, name?: string) =>
-  engineJson<SavedConditionSet>(`condition-sets/${enc(id)}`, { method: "PUT", json: name ? { name, params } : { params } });
+/**
+ * helio `PUT condition-sets/{id}` requires `name` and the current `version` (optimistic lock,
+ * `UpdatePayload` in routes/condition_sets.rs); a stale version answers 409 `version_conflict`.
+ * Reads the stored set first so the caller only supplies params (and optionally a new name).
+ */
+export async function putConditionSet(id: string, params: ConditionSet, name?: string, signal?: AbortSignal) {
+  const cur = await engineJson<SavedConditionSet & { name?: string; version?: number }>(`condition-sets/${enc(id)}`, { signal });
+  return engineJson<SavedConditionSet>(`condition-sets/${enc(id)}`, {
+    method: "PUT", signal, json: { name: name ?? cur.name, version: cur.version, params },
+  });
+}
 export const getConditionDefaults = (projectId: string, signal?: AbortSignal) =>
   engineJson<DocumentedDefaults>(`projects/${enc(projectId)}/condition-sets/defaults`, { signal });
 

@@ -5,6 +5,7 @@ import ComponentPicker, { type PickerValue } from "./ComponentPicker";
 import ConditionForm from "./ConditionForm";
 import { UNAVAILABLE_MESSAGE } from "./client";
 import { useEngine } from "./useEngine";
+import WeatherPanel from "./WeatherPanel";
 import { layoutToScene } from "./sceneAdapter";
 import type { SavedLayout } from "./layoutStore";
 import type { EngineInputs } from "./types/local";
@@ -106,6 +107,10 @@ export default function EngineRunPanel({ projectId, projectName, layout, inputs,
             <NumIn label="Tegangan AC inverter (V)" value={inputs.ac_voltage_v} onChange={(v) => patch({ ac_voltage_v: v })} hint="Hanya bila karakterisasi tidak menyebut satu tegangan" />
           </div>
         </div>
+      )}
+
+      {section !== "electrical" && (
+        <WeatherPanel latLon={latLon} choice={inputs.weather_choice} onChoice={(c) => patch({ weather_choice: c })} />
       )}
 
       {section !== "electrical" && (

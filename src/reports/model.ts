@@ -4,6 +4,7 @@ import type { ConditionSet, StageSummary, StringingReport } from "../engine/type
 import type { EngineResultSummary } from "../engine/types/local";
 import type { SolarYieldResult } from "../gisSolarService";
 import type { SavedLayout } from "../engine/layoutStore";
+import { weatherLabel } from "../engine/weather";
 import { firstOf, isNum, pick } from "./format";
 
 export const out = (r: EngineResultSummary | null | undefined): any => r?.output ?? null;
@@ -88,10 +89,26 @@ export function horizonPoints(r: EngineResultSummary | null | undefined, layout:
   return Array.isArray(pts) ? (pts as Array<{ azimuth_deg: number; elevation_deg: number }>) : null;
 }
 
+/**
+ * Weather source as printed in reports: the source the run recorded (`weather_used`, incl. series years),
+ * else the weather meta helio echoed in the output (results from before the weather panel). "—" if neither.
+ */
 export function sourceLabel(r: EngineResultSummary | null | undefined): string {
-  const w = out(r)?.weather;
-  if (!w) return "—";
-  return [w.name, w.source].filter(Boolean).join(", ") || "—";
+  return weatherLabel(r?.weather_used, out(r)?.weather);
+}
+
+/** Inter-annual variability helio returned in `output.uncertainty`; every field null when absent. */
+export function weatherVariability(r: EngineResultSummary | null | undefined) {
+  const u = out(r)?.uncertainty;
+  const num = (v: unknown): number | null => (isNum(v) ? v : null);
+  return {
+    sigmaIavPct: num(u?.sigma_iav_pct),
+    fromSeries: u?.iav_source === "multi_year_series",
+    fromUser: u?.iav_from_user === true,
+    yearCount: Array.isArray(u?.years) && u.years.length ? (u.years.length as number) : null,
+    medianKwh: num(u?.p50_multiyear_median_kwh),
+    medianDeltaPct: num(u?.p50_multiyear_delta_pct),
+  };
 }
 
 /** Total wire length of string conductors from the engine wire schedule (sum of engine entries). */

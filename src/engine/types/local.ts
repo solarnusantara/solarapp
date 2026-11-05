@@ -33,6 +33,26 @@ export interface ComponentSku {
   characterizations: ComponentCharacterization[];
 }
 
+// ---------------- weather sources ----------------
+/** Vendor CSV layouts helio documents (`template` upload field). Not ts-rs generated at the pinned SHA. */
+export type CsvTemplate = "solcast" | "solargis" | "meteonorm";
+
+/**
+ * The weather the engineer picked for this project, saved in `engine_inputs.weather_choice`.
+ * `id` is a helio weather dataset id (kind "dataset") or weather series id (kind "series").
+ * `source` is helio's `WeatherSource` (datasets) or the series `provider`; the year fields are only
+ * set for a series and come from helio's series summary.
+ */
+export interface WeatherChoice {
+  kind: "dataset" | "series";
+  id: string;
+  label: string;
+  source: string;
+  year_first?: number | null;
+  year_last?: number | null;
+  year_count?: number | null;
+}
+
 // ---------------- erpsonus proxy ----------------
 export interface EngineLink {
   helio_project_slug: string;
@@ -57,6 +77,8 @@ export interface EngineResultSummary {
   input: Omit<SimulationInput, "scene" | "obstacles" | "bom_items"> | null;
   /** Scene-adapter + engine warnings, verbatim. */
   warnings: string[];
+  /** Weather the run was actually computed on (absent: reference site, or a result from before this field). */
+  weather_used?: WeatherChoice | null;
   /** circuit/auto response (null when no module+inverter was chosen). */
   circuit_auto: CircuitAutoResult | null;
   /** Component SKUs resolved at run time, so reports need no extra fetches. */
@@ -164,6 +186,8 @@ export interface EngineInputs {
   horizon_source?: string | null;
   uncertainty?: UncertaintyInput | null;
   client_name?: string;
+  /** Weather source chosen in the weather panel; absent = fetch a PVGIS TMY at run time. */
+  weather_choice?: WeatherChoice | null;
 }
 export const EMPTY_ENGINE_INPUTS: EngineInputs = {
   inverter_ac_kw: "", pln_tariff_code: "", contracted_power_kva: "", monthly_consumption_kwh: "",

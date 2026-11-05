@@ -24,6 +24,9 @@ const SEED = [
   "Circuit", "HorizonProfile", "SiteSummary", "ShortCircuitReport", "EarthingReport",
   "LightningReport", "ProtectionCoordinationReport", "ComplianceReport", "SavedConditionSet", "WeatherDatasetCreated", "WeatherDatasetSummary",
   "DocumentedDefaults", "UncertaintyReport", "WeatherMeta",
+  // weather sources panel
+  "WeatherSeriesSummary", "WeatherSeriesCreated", "WeatherSeriesMember", "WeatherSourceComparison", "WeatherComparisonEntry",
+  "WeatherDatasetDetail", "MonthlyWeatherSummary", "WeatherQcReport", "CsvMapping",
 ];
 
 const git = (...a) => execFileSync("git", ["-C", repo, ...a], { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });

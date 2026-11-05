@@ -8,7 +8,7 @@ import { monthlyBalance, dailyInOut, powerHistogram, horizonAverage, toSouthZero
 import { NormalCurve, Scatter, StackedBars, StepHistogram, SunPathChart, Waterfall, BarChart, type SunCurve, type WaterfallItem } from "./charts";
 import { DASH, MONTHS_SHORT, MONTHS_EN, dateLong, dateTime, isNum, monthlyUniform, n, pct, plain, text } from "./format";
 import { viewport3DProps } from "./layoutGeometry";
-import { conditionSet, horizonPoints, iamTable, lossGroups, orientations, out, prod, sourceLabel, stringingReports, uncertaintyRows } from "./model";
+import { conditionSet, horizonPoints, iamTable, lossGroups, orientations, out, prod, sourceLabel, stringingReports, uncertaintyRows, weatherVariability } from "./model";
 import { LogoImg, Sheet, SOLAR_NUSANTARA_LOGO, SourceNotice, type ReportProps } from "./parts";
 import { SUN_DATES } from "./useReportData";
 
@@ -404,13 +404,15 @@ export default function EngineeringCalc({ data, projectId, project }: ReportProp
   const sigmaPct = h1?.sigma_pct ?? unc?.sigma_1y_pct;
   const sigmaMwh = isNum(p50) && isNum(sigmaPct) ? (p50 * sigmaPct) / 100 : null;
   const urows = uncertaintyRows(result);
+  const wv = weatherVariability(result);
   sim("P50 - P90 evaluation", (
     <Box title="P50 - P90 evaluation">
       <div className="sim-cols" style={{ gridTemplateColumns: "1fr 1fr" }}>
         <div>
           <h5>Weather data</h5>
-          <Row k="Source" v={text(w?.source)} />
-          <Row k="Year-to-year variability (IAV)" v={isNum(unc?.sigma_iav_pct) ? pct(unc.sigma_iav_pct, 1) : DASH} />
+          <Row k="Source" v={sourceLabel(result)} />
+          <Row k="Year-to-year variability (IAV)" v={isNum(wv.sigmaIavPct) ? `${pct(wv.sigmaIavPct, 1)}${wv.fromSeries ? ` (multi-year series${wv.yearCount ? `, ${wv.yearCount} years` : ""})` : wv.fromUser ? " (user input)" : ""}` : DASH} />
+          {wv.fromSeries && isNum(wv.medianKwh) && <Row k="Multi-year median energy" v={`${n(wv.medianKwh / 1000, 1, { group: false })} MWh${isNum(wv.medianDeltaPct) ? ` (${n(wv.medianDeltaPct, 1, { group: false })}% vs TMY P50)` : ""}`} />}
           <h5 style={{ marginTop: 6 }}>Global variability (weather data + system)</h5>
           <Row k="Variability (quadratic sum)" v={isNum(sigmaPct) ? pct(sigmaPct, 1) : DASH} />
         </div>

@@ -5,9 +5,10 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import * as C from "./client";
 import { buildSimulationInput, nearestRegion } from "./inputBuilder";
 import { layoutToScene, type AdapterWarning } from "./sceneAdapter";
+import { choiceFromDataset, planWeather, weatherRefOf } from "./weather";
 import type { SavedLayout } from "./layoutStore";
 import type {
-  CircuitAutoRequest, CircuitAutoResult, ComponentSku, EngineInputs, EngineLink, EngineResultSummary, EngineStateResponse,
+  CircuitAutoRequest, CircuitAutoResult, ComponentSku, EngineInputs, EngineLink, EngineResultSummary, EngineStateResponse, WeatherChoice,
 } from "./types/local";
 
 export type EngineStatus = "idle" | "loading" | "unavailable" | "unlinked" | "ready" | "linking" | "running" | "error";
@@ -156,18 +157,35 @@ export function useEngine(args: {
       if (!p) return false;
       const all = [...p.adapter.warnings.map(fmtAdapter)];
 
-      // Weather: PVGIS TMY at the project point; on failure the run uses helio's labelled reference site.
-      let weatherId: string | null = null;
-      setStep("Mengambil cuaca PVGIS");
-      try {
-        const site = p.sites.find((s) => s.id === p.regionId);
-        if (site) {
-          const w = await C.createPvgisWeather({ lat: p.input.latitude, lon: p.input.longitude, utc_offset_h: site.utc_offset_h, name: projectName }, ac.signal);
-          weatherId = (w.dataset as { id?: string }).id ?? null;
+      // Weather: the source picked in the weather panel wins (series -> multi-year IAV/P90). Only when
+      // nothing is picked does the run fetch a PVGIS TMY at the project point; if that fails too, the
+      // condition set keeps helio's labelled reference site.
+      const choice = p.inputs.weather_choice ?? null;
+      let auto: WeatherChoice | null = null;
+      if (!weatherRefOf(choice)) {
+        setStep("Mengambil cuaca PVGIS");
+        try {
+          const site = p.sites.find((s) => s.id === p.regionId);
+          if (site) {
+            const w = await C.createPvgisWeather({ lat: p.input.latitude, lon: p.input.longitude, utc_offset_h: site.utc_offset_h, name: projectName }, ac.signal);
+            auto = choiceFromDataset(w.dataset);
+          }
+        } catch (e) {
+          if (e instanceof C.EngineError && e.code === "aborted") throw e;
+          all.push(`[WEATHER_FALLBACK] Cuaca PVGIS gagal (${C.verbatimError(e)}); simulasi memakai site referensi ${p.regionId}.`);
         }
-      } catch (e) {
-        if (e instanceof C.EngineError && e.code === "aborted") throw e;
-        all.push(`[WEATHER_FALLBACK] Cuaca PVGIS gagal (${C.verbatimError(e)}); simulasi memakai site referensi ${p.regionId}.`);
+      }
+      const plan = planWeather(choice, auto);
+      // helio rejects weather_*_id together with condition_set_id, so the weather goes into the set.
+      if (plan.ref) {
+        setStep("Menerapkan sumber cuaca");
+        try { await C.setConditionSetWeather(p.link.helio_condition_set_id, plan.ref, ac.signal); }
+        catch (e) {
+          if (plan.mode === "auto" && !(e instanceof C.EngineError && e.code === "aborted")) {
+            all.push(`[WEATHER_FALLBACK] Cuaca PVGIS tidak bisa diterapkan (${C.verbatimError(e)}); simulasi memakai cuaca tersimpan di condition set.`);
+            plan.used = null;
+          } else throw e; // a source the engineer picked is never swapped silently
+        }
       }
 
       let circuitRes: CircuitAutoResult | null = null;
@@ -184,7 +202,7 @@ export function useEngine(args: {
 
       setStep("Menjalankan simulasi 8760 jam");
       setStatus("running");
-      const sim = await C.simulate(p.input, { weather_dataset_id: weatherId, condition_set_id: p.link.helio_condition_set_id }, { signal: ac.signal, onStatus: (s) => setStep(`Simulasi: ${s}`) });
+      const sim = await C.simulate(p.input, { condition_set_id: p.link.helio_condition_set_id }, { signal: ac.signal, onStatus: (s) => setStep(`Simulasi: ${s}`) });
       for (const w of sim.warnings) all.push(w);
 
       let report: Awaited<ReturnType<typeof C.createReport>> | null = null;
@@ -208,6 +226,7 @@ export function useEngine(args: {
         production: (report?.production as EngineResultSummary["production"]) ?? null,
         input: inputNoScene,
         warnings: all,
+        weather_used: plan.used,
         circuit_auto: circuitRes,
         components: { module: await sku(p.inputs.module_sku_id), inverter: await sku(p.inputs.inverter_sku_id) },
       };
