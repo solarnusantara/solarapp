@@ -80,7 +80,8 @@ export default function PVLayout3D({
   projectId?: string | null;
   projectName?: string | null;
 }) {
-  const scopedStorageKey = `${STORAGE_KEY}:${userId}:${projectId ?? "unassigned"}`;
+  const scopedStorageKey = `${STORAGE_KEY}:project:${projectId ?? "unassigned"}`;
+  const userScopedStorageKey = `${STORAGE_KEY}:${userId}:${projectId ?? "unassigned"}`;
   const hostRef = useRef<HTMLDivElement>(null);
   const [surfaceMode, setSurfaceMode] = useState<"auto" | "flat" | "terrain" | "roof-flat" | "roof-single" | "roof-gable" | "roof-hip">("auto");
   const [surfaceSlope, setSurfaceSlope] = useState(5);
@@ -122,7 +123,7 @@ export default function PVLayout3D({
   async function fetchDem() {
     let saved: SavedLayout = {};
     try {
-      saved = JSON.parse(localStorage.getItem(scopedStorageKey) || "{}");
+      saved = JSON.parse(localStorage.getItem(scopedStorageKey) || localStorage.getItem(userScopedStorageKey) || "{}");
     } catch { /* ignore */ }
     let site = saved.site;
     if (!site?.coordinates) {

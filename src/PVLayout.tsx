@@ -124,6 +124,39 @@ function storageKey(userId: string, projectId: string | null) {
   return `${STORAGE_KEY}:${userId}:${projectId ?? "unassigned"}`;
 }
 
+function projectStorageKey(projectId: string | null) {
+  return `${STORAGE_KEY}:project:${projectId ?? "unassigned"}`;
+}
+
+function countLayoutPanels(data: any): number {
+  if (!data || typeof data !== "object") return 0;
+  if (Array.isArray(data.panels) && data.panels.length > 0) return data.panels.length;
+  if (Array.isArray(data.segments)) {
+    return data.segments.reduce((acc: number, s: any) => acc + (Array.isArray(s?.panels) ? s.panels.length : 0), 0);
+  }
+  return 0;
+}
+
+function isLayoutRicher(candidate: any, baseline: any): boolean {
+  if (!candidate || typeof candidate !== "object") return false;
+  if (!baseline || typeof baseline !== "object") return true;
+
+  const countC = countLayoutPanels(candidate);
+  const countB = countLayoutPanels(baseline);
+
+  if (countC > countB) return true;
+  if (countC < countB) return false;
+
+  if (candidate.backgroundImage && !baseline.backgroundImage) return true;
+  if (!candidate.backgroundImage && baseline.backgroundImage) return false;
+
+  const segsC = Array.isArray(candidate.segments) ? candidate.segments.length : 0;
+  const segsB = Array.isArray(baseline.segments) ? baseline.segments.length : 0;
+  if (segsC > segsB) return true;
+
+  return false;
+}
+
 const SEGMENT_PALETTE = ["#3b82f6", "#8b5cf6", "#f97316", "#10b981", "#f43f5e", "#06b6d4", "#eab308"];
 
 /**
@@ -265,12 +298,42 @@ export function generatePanelsForSegment(
 
 function loadSaved(userId: string, projectId: string | null): any {
   try {
+    // 1. Try project-scoped shared key first
+    if (projectId) {
+      const projRaw = localStorage.getItem(projectStorageKey(projectId));
+      if (projRaw) {
+        const parsed = JSON.parse(projRaw);
+        if (parsed?.settings || parsed?.segments || (Array.isArray(parsed?.panels) && parsed.panels.length > 0)) {
+          return parsed;
+        }
+      }
+    }
+    // 2. Try current user scoped key
     const raw = localStorage.getItem(storageKey(userId, projectId));
     if (raw) {
       const parsed = JSON.parse(raw);
       if (parsed?.settings || parsed?.segments || (Array.isArray(parsed?.panels) && parsed.panels.length > 0)) {
         return parsed;
       }
+    }
+    // 3. Scan localStorage for ANY user draft for this project
+    if (projectId) {
+      let richest: any = null;
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (k && k.startsWith(`${STORAGE_KEY}:`) && k.endsWith(`:${projectId}`)) {
+          const itemRaw = localStorage.getItem(k);
+          if (itemRaw) {
+            try {
+              const parsed = JSON.parse(itemRaw);
+              if (isLayoutRicher(parsed, richest)) {
+                richest = parsed;
+              }
+            } catch {}
+          }
+        }
+      }
+      if (richest) return richest;
     }
   } catch { /* ignore */ }
   const defaultData = getProjectDefaultLayout(projectId);
@@ -301,16 +364,119 @@ export default function PVLayout({
   const isId = lang === "id";
 
     const [isSaving, setIsSaving] = useState(false);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [cloudSynced, setCloudSynced] = useState(false);
   const [lastSavedTime, setLastSavedTime] = useState<string>("");
+
+  // Helper to apply loaded layout from server or local store
+  const applyLayoutData = (data: any) => {
+    if (!data || typeof data !== "object") return;
+
+    if (data.settings) {
+      setSettings((prev: any) => ({
+        ...prev,
+        ...data.settings,
+        system: projectType ?? data.settings.system ?? prev.system
+      }));
+    }
+
+    if (Array.isArray(data.segments) && data.segments.length > 0) {
+      setSegments(data.segments);
+      setActiveSegmentId((prev: string) => (data.segments.some((s: FieldSegment) => s.id === prev) ? prev : data.segments[0].id));
+    } else if (Array.isArray(data.panels) && data.panels.length > 0) {
+      const fallbackSeg: FieldSegment = {
+        id: "seg-a",
+        name: "Segment A",
+        color: "#3b82f6",
+        polygon: data.site?.polygonCorners ?? [
+          { x: 0, y: 0 },
+          { x: data.settings?.areaWidth ?? defaults.areaWidth, y: 0 },
+          { x: data.settings?.areaWidth ?? defaults.areaWidth, y: data.settings?.areaHeight ?? defaults.areaHeight },
+          { x: 0, y: data.settings?.areaHeight ?? defaults.areaHeight },
+        ],
+        orientation: (data.settings?.orientation ?? defaults.orientation) as "landscape" | "portrait",
+        tilt: data.settings?.tilt ?? defaults.tilt,
+        azimuth: data.settings?.azimuth ?? 0,
+        gap: data.settings?.gap ?? defaults.gap,
+        setback: data.settings?.setback ?? defaults.setback,
+        moduleWatts: data.settings?.panelWatts ?? data.settings?.watts ?? defaults.watts,
+        moduleWidth: data.settings?.panelWidth ?? data.settings?.moduleWidth ?? defaults.moduleWidth,
+        moduleHeight: data.settings?.panelHeight ?? data.settings?.moduleHeight ?? defaults.moduleHeight,
+        panels: data.panels,
+        visible: true,
+      };
+      setSegments([fallbackSeg]);
+      setActiveSegmentId("seg-a");
+    }
+
+    if (Array.isArray(data.walkways)) setWalkways(data.walkways);
+    if (Array.isArray(data.obstacles)) setObstacles(data.obstacles);
+    if (data.site) setSite(data.site);
+    if (typeof data.backgroundImage === "string") setBackgroundImage(data.backgroundImage);
+    if (typeof data.backgroundOpacity === "number") setBackgroundOpacity(data.backgroundOpacity);
+    if (data.layers) setLayers(prev => ({ ...prev, ...data.layers }));
+  };
+
+  // Remote Cloud Sync on Mount & Project Switch
+  useEffect(() => {
+    if (!projectId) return;
+
+    let isMounted = true;
+    setIsSyncing(true);
+
+    api.fetchProjectLayout(projectId).then(async (remoteLayout) => {
+      if (!isMounted) return;
+      setIsSyncing(false);
+
+      const localCandidate = saved;
+
+      if (remoteLayout && isLayoutRicher(remoteLayout, localCandidate)) {
+        // Server has richer layout (e.g. team member worked on it from another device)
+        applyLayoutData(remoteLayout);
+        setCloudSynced(true);
+        if (remoteLayout.savedAt) setLastSavedTime(remoteLayout.savedAt);
+        try {
+          localStorage.setItem(storageKey(userId, projectId), JSON.stringify(remoteLayout));
+          localStorage.setItem(projectStorageKey(projectId), JSON.stringify(remoteLayout));
+        } catch {}
+        setNotice(isId ? "✅ Desain terbaru berhasil disinkronkan dari Cloud Server Sonus." : "Latest layout synced from Sonus Cloud Server.");
+      } else if (localCandidate && isLayoutRicher(localCandidate, remoteLayout)) {
+        // Local machine has richer work than server (e.g. local draft had panels before server had it)
+        // Automatically sync UP to server so the whole team can see it!
+        setNotice(isId ? "🔄 Memulihkan data desain lengkap ke Cloud Server agar bisa dilihat tim..." : "Restoring rich local layout to Cloud Server for team access...");
+        const ok = await api.saveProjectLayout(projectId, localCandidate);
+        if (ok && isMounted) {
+          setCloudSynced(true);
+          const nowStr = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+          setLastSavedTime(nowStr);
+          setNotice(isId ? `✅ Desain lengkap berhasil disinkronkan ke Cloud Server (${nowStr})!` : `Complete design synced to Cloud Server (${nowStr})!`);
+        }
+      } else if (remoteLayout) {
+        applyLayoutData(remoteLayout);
+        setCloudSynced(true);
+        if (remoteLayout.savedAt) setLastSavedTime(remoteLayout.savedAt);
+      }
+    }).catch(err => {
+      console.warn("Could not sync remote layout:", err);
+      if (isMounted) setIsSyncing(false);
+    });
+
+    return () => { isMounted = false; };
+  }, [projectId]);
 
   const handleManualSave = async () => {
     setIsSaving(true);
-    saveDraft(segments, obstacles, walkways, site, backgroundImage, backgroundOpacity);
     const now = new Date();
     const timeStr = now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
-    setLastSavedTime(timeStr);
+    const ok = await saveDraft(segments, obstacles, walkways, site, backgroundImage, backgroundOpacity);
     setIsSaving(false);
-    setNotice(isId ? `✅ Desain tata letak proyek berhasil disimpan (${timeStr})!` : `Project layout saved successfully (${timeStr})!`);
+    setLastSavedTime(timeStr);
+    if (ok) {
+      setCloudSynced(true);
+      setNotice(isId ? `✅ Desain berhasil disimpan ke Cloud Server & Komputer (${timeStr})!` : `Layout saved to Cloud Server & Local Storage (${timeStr})!`);
+    } else {
+      setNotice(isId ? `💾 Desain tersimpan di komputer (${timeStr}). Sinkronisasi cloud gagal.` : `Saved locally (${timeStr}). Cloud sync failed.`);
+    }
   };
 
   const [settings, setSettings] = useState({
@@ -349,7 +515,7 @@ export default function PVLayout({
       }];
     }
     // Default 3 segments if fresh Mas Silueta project
-    if (projectId === "proj-mas-silueta-224kwp") {
+    if (projectId === "proj-mas-silueta-224kwp" || projectId?.includes("mas-silueta")) {
       const defaultLayout = getProjectDefaultLayout(projectId) as any;
       if (defaultLayout?.segments) return defaultLayout.segments;
     }
@@ -484,16 +650,17 @@ export default function PVLayout({
     return Math.min(100, (totalModuleArea / totalRoofArea) * 100);
   }, [totalModuleArea, totalRoofArea]);
 
-  // Auto-save layout
-  const saveDraft = (
+  // Auto-save layout with LocalStorage + Server Cloud Persistence
+  const saveDraft = async (
     nextSegments: FieldSegment[] = segments,
     nextObstacles: Obstacle[] = obstacles,
     nextWalkways: Walkway[] = walkways,
     nextSite: Site | null = site,
     nextBg: string = backgroundImage,
     nextBgOpacity: number = backgroundOpacity
-  ) => {
+  ): Promise<boolean> => {
     const flattened = nextSegments.filter(s => s.visible).flatMap(s => s.panels);
+    const nowStr = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
     const payload = {
       projectId,
       settings,
@@ -505,13 +672,20 @@ export default function PVLayout({
       backgroundImage: nextBg,
       backgroundOpacity: nextBgOpacity,
       layers,
+      savedAt: nowStr,
     };
     try {
       localStorage.setItem(storageKey(userId, projectId), JSON.stringify(payload));
+      if (projectId) {
+        localStorage.setItem(projectStorageKey(projectId), JSON.stringify(payload));
+      }
     } catch { /* ignore storage error */ }
     if (projectId) {
-      api.saveProjectLayout(projectId, payload);
+      const ok = await api.saveProjectLayout(projectId, payload);
+      if (ok) setCloudSynced(true);
+      return ok;
     }
+    return true;
   };
 
   const pushHistory = (nextSegs: FieldSegment[], nextObs: Obstacle[], nextWalks: Walkway[]) => {
@@ -984,6 +1158,31 @@ export default function PVLayout({
         </button>
 
         <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 10 }}>
+          {isSyncing ? (
+            <span style={{ fontSize: 11, color: "#94a3b8", display: "flex", alignItems: "center", gap: 5 }}>
+              <RotateCw size={12} className="animate-spin" />
+              Sinkronisasi Cloud...
+            </span>
+          ) : cloudSynced ? (
+            <span
+              style={{
+                fontSize: 10,
+                color: "#6ee7b7",
+                background: "#064e3b44",
+                border: "1px solid #05966955",
+                padding: "3px 8px",
+                borderRadius: 4,
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 5,
+                fontWeight: 700,
+              }}
+              title="Tersinkronisasi dengan Cloud Server Sonus (Semua anggota tim dapat melihat hasil ini)"
+            >
+              <Globe size={11} />
+              Cloud Synced
+            </span>
+          ) : null}
           {lastSavedTime && (
             <span style={{ fontSize: 11, color: "var(--green, #b8f36b)", display: "flex", alignItems: "center", gap: 4, fontWeight: 700 }}>
               <Check size={13} />
@@ -1008,7 +1207,7 @@ export default function PVLayout({
               cursor: "pointer",
               boxShadow: "0 2px 8px rgba(184, 243, 107, 0.25)",
             }}
-            title="Simpan desain & tata letak saat ini (Ctrl+S)"
+            title="Simpan desain ke Cloud Server Sonus & Komputer (Ctrl+S)"
           >
             <Save size={13} />
             {isSaving ? "Menyimpan..." : "Simpan Desain"}

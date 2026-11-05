@@ -322,7 +322,7 @@ export const PROJECT_TEST_LAYOUT = {
 };
 
 export function getProjectDefaultLayout(projectId: string | null) {
-  if (projectId === "proj-mas-silueta-224kwp") return MAS_SILUETA_LAYOUT;
+  if (projectId === "proj-mas-silueta-224kwp" || projectId?.includes("mas-silueta")) return MAS_SILUETA_LAYOUT;
   if (projectId === "proj-cikarang-500kwp") return CIKARANG_LAYOUT;
   if (projectId === "proj-karawang-2mwp") return KARAWANG_LAYOUT;
   if (projectId?.includes("proj-project-test")) return PROJECT_TEST_LAYOUT;

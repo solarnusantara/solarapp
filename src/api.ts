@@ -145,8 +145,9 @@ export async function fetchProjectLayout(projectId: string): Promise<any | null>
     const res = await fetch(`/api/design/projects/${projectId}/layout`, { credentials: "same-origin" });
     if (res.ok) {
       const data = await res.json();
-      if (data && (data.panels || data.settings || data.layout_data)) {
-        return data.layout_data || data;
+      if (data && typeof data === "object") {
+        if (data.layout_data) return data.layout_data;
+        if (data.segments || data.panels || data.settings || data.site) return data;
       }
     }
   } catch (err) {
