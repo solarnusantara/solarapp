@@ -14,6 +14,8 @@ import {
   RotateCcw,
   Compass,
   Crop,
+  Undo2,
+  Redo2,
 } from "lucide-react";
 import { fetchGoogleSolarInsights } from "./gisSolarService";
 import type { GoogleSolarInsights } from "./gisSolarService";
@@ -184,8 +186,29 @@ export default function GoogleMapsModal({
     },
   ]);
   const [activeBoxId, setActiveBoxId] = useState<string>("box-1");
+  const activeBoxIdRef = useRef<string>(activeBoxId);
+  activeBoxIdRef.current = activeBoxId;
+
   const boxesRef = useRef<RoofBox[]>(boxes);
   boxesRef.current = boxes;
+
+  // History State for Undo / Redo
+  interface ModalHistoryEntry {
+    boxes: Array<{
+      id: string;
+      name: string;
+      color: string;
+      center: { lat: number; lng: number };
+      widthM: number;
+      heightM: number;
+      rotationAngle: number;
+    }>;
+    activeBoxId: string;
+    cropPaddingM: number;
+  }
+  const [history, setHistory] = useState<ModalHistoryEntry[]>([]);
+  const [historyIndex, setHistoryIndex] = useState<number>(-1);
+  const isRestoringHistoryRef = useRef<boolean>(false);
 
   // Google Solar API Integration State
   const [solarDetecting, setSolarDetecting] = useState(false);
@@ -336,16 +359,22 @@ export default function GoogleMapsModal({
         center: newCenter,
         poly: poly,
       };
-      setBoxes(prev => prev.map(b => b.id === box.id ? updatedBox : b));
-      if (box.id === activeBoxId) {
+      const nextBoxes = boxesRef.current.map(b => b.id === box.id ? updatedBox : b);
+      boxesRef.current = nextBoxes;
+      setBoxes(nextBoxes);
+      if (box.id === activeBoxIdRef.current) {
         syncHandlesForActiveBox(updatedBox);
       }
       syncCropBoundary();
+      pushModalHistory(nextBoxes, activeBoxIdRef.current, cropPaddingM);
     });
 
     // Click to select active box
     poly.addListener("click", () => {
+      activeBoxIdRef.current = box.id;
       setActiveBoxId(box.id);
+      const cur = boxesRef.current.find(b => b.id === box.id);
+      syncHandlesForActiveBox(cur || box);
     });
 
     return poly;
@@ -421,7 +450,26 @@ export default function GoogleMapsModal({
     }
 
     setBoxes(loadedBoxes);
-    setActiveBoxId(loadedBoxes[0]?.id || "box-1");
+    const initialId = loadedBoxes[0]?.id || "box-1";
+    activeBoxIdRef.current = initialId;
+    setActiveBoxId(initialId);
+
+    // Initial history entry
+    const initialEntry: ModalHistoryEntry = {
+      boxes: loadedBoxes.map(b => ({
+        id: b.id,
+        name: b.name,
+        color: b.color,
+        center: { ...b.center },
+        widthM: b.widthM,
+        heightM: b.heightM,
+        rotationAngle: b.rotationAngle,
+      })),
+      activeBoxId: initialId,
+      cropPaddingM: initialCropPaddingM ?? 5,
+    };
+    setHistory([initialEntry]);
+    setHistoryIndex(0);
 
     // Setup Places Autocomplete
     if (searchInputRef.current && win.google.maps.places?.Autocomplete) {
@@ -535,7 +583,8 @@ export default function GoogleMapsModal({
         });
 
         marker.addListener("drag", (e: any) => {
-          const curBox = boxesRef.current.find(b => b.id === activeBoxId);
+          const targetId = activeBoxIdRef.current;
+          const curBox = boxesRef.current.find(b => b.id === targetId);
           if (!curBox) return;
           const curRad = (curBox.rotationAngle * Math.PI) / 180;
           const dEast = (e.latLng.lng() - curBox.center.lng) * mLng;
@@ -544,7 +593,11 @@ export default function GoogleMapsModal({
           const ry = -dEast * Math.sin(curRad) + dNorth * Math.cos(curRad);
           const newW = Math.max(4, Math.round(Math.abs(rx) * 2 * 2) / 2);
           const newH = Math.max(4, Math.round(Math.abs(ry) * 2 * 2) / 2);
-          updateActiveBoxProps({ widthM: newW, heightM: newH });
+          updateBoxProps(targetId, { widthM: newW, heightM: newH });
+        });
+
+        marker.addListener("dragend", () => {
+          pushModalHistory(boxesRef.current, activeBoxIdRef.current, cropPaddingM);
         });
 
         return marker;
@@ -582,13 +635,18 @@ export default function GoogleMapsModal({
       });
 
       rotMarker.addListener("drag", (e: any) => {
-        const curBox = boxesRef.current.find(b => b.id === activeBoxId);
+        const targetId = activeBoxIdRef.current;
+        const curBox = boxesRef.current.find(b => b.id === targetId);
         if (!curBox) return;
         const dEast = (e.latLng.lng() - curBox.center.lng) * mLng;
         const dNorth = (e.latLng.lat() - curBox.center.lat) * M_PER_DEG_LAT;
         let angle = -Math.atan2(dEast, dNorth) * (180 / Math.PI);
         angle = Math.round(((angle % 360) + 360) % 360);
-        updateActiveBoxProps({ rotationAngle: angle });
+        updateBoxProps(targetId, { rotationAngle: angle });
+      });
+
+      rotMarker.addListener("dragend", () => {
+        pushModalHistory(boxesRef.current, activeBoxIdRef.current, cropPaddingM);
       });
 
       handlesRef.current.rotMarker = rotMarker;
@@ -720,31 +778,175 @@ export default function GoogleMapsModal({
     }
   }, [isOpen]);
 
-  // Update active box dimensions or rotation
-  function updateActiveBoxProps(updates: Partial<Pick<RoofBox, "widthM" | "heightM" | "rotationAngle">>) {
-    if (!activeBox || !activeBox.poly) return;
-    const nextW = updates.widthM ?? activeBox.widthM;
-    const nextH = updates.heightM ?? activeBox.heightM;
-    const nextAngle = updates.rotationAngle !== undefined ? ((updates.rotationAngle % 360) + 360) % 360 : activeBox.rotationAngle;
+  
+  // History recording
+  function pushModalHistory(nextBoxes: RoofBox[], nextActiveId: string, nextCropPad: number) {
+    if (isRestoringHistoryRef.current) return;
+    const entry: ModalHistoryEntry = {
+      boxes: nextBoxes.map(b => ({
+        id: b.id,
+        name: b.name,
+        color: b.color,
+        center: { ...b.center },
+        widthM: b.widthM,
+        heightM: b.heightM,
+        rotationAngle: b.rotationAngle,
+      })),
+      activeBoxId: nextActiveId,
+      cropPaddingM: nextCropPad,
+    };
+    setHistory(prev => {
+      const sliced = prev.slice(0, historyIndex + 1);
+      return [...sliced, entry].slice(-40);
+    });
+    setHistoryIndex(prev => prev + 1);
+  }
 
-    const coords = computeStrict90BoxCoords(activeBox.center, nextW, nextH, nextAngle);
-    activeBox.poly.setPath(coords);
+  function handleUndo() {
+    if (historyIndex <= 0) return;
+    const targetIdx = historyIndex - 1;
+    setHistoryIndex(targetIdx);
+    restoreHistoryEntry(history[targetIdx]);
+  }
 
-    const updatedBox = {
-      ...activeBox,
+  function handleRedo() {
+    if (historyIndex >= history.length - 1) return;
+    const targetIdx = historyIndex + 1;
+    setHistoryIndex(targetIdx);
+    restoreHistoryEntry(history[targetIdx]);
+  }
+
+  function restoreHistoryEntry(entry: ModalHistoryEntry) {
+    const win = window as any;
+    if (!mapInstance || !win.google?.maps || !entry) return;
+    isRestoringHistoryRef.current = true;
+
+    const entryIds = new Set(entry.boxes.map(b => b.id));
+
+    // Remove polygons of boxes that do not exist in entry
+    boxesRef.current.forEach(b => {
+      if (!entryIds.has(b.id) && b.poly) {
+        b.poly.setMap(null);
+      }
+    });
+
+    // Reconstruct boxes
+    const nextBoxes: RoofBox[] = entry.boxes.map(b => {
+      const existing = boxesRef.current.find(eb => eb.id === b.id);
+      let poly = existing?.poly;
+      const coords = computeStrict90BoxCoords(b.center, b.widthM, b.heightM, b.rotationAngle);
+
+      if (poly) {
+        poly.setMap(mapInstance);
+        poly.setPath(coords);
+        poly.setOptions({
+          strokeColor: b.color,
+          fillColor: b.color,
+          strokeWeight: b.id === entry.activeBoxId ? 3.5 : 2,
+          strokeOpacity: b.id === entry.activeBoxId ? 1.0 : 0.75,
+          fillOpacity: b.id === entry.activeBoxId ? 0.32 : 0.15,
+          zIndex: b.id === entry.activeBoxId ? 100 : 10,
+        });
+      } else {
+        const tempBox: RoofBox = {
+          id: b.id,
+          name: b.name,
+          color: b.color,
+          center: b.center,
+          widthM: b.widthM,
+          heightM: b.heightM,
+          rotationAngle: b.rotationAngle,
+        };
+        poly = createPolygonForBox(mapInstance, tempBox);
+      }
+
+      return {
+        id: b.id,
+        name: b.name,
+        color: b.color,
+        center: b.center,
+        widthM: b.widthM,
+        heightM: b.heightM,
+        rotationAngle: b.rotationAngle,
+        poly,
+      };
+    });
+
+    boxesRef.current = nextBoxes;
+    setBoxes(nextBoxes);
+    activeBoxIdRef.current = entry.activeBoxId;
+    setActiveBoxId(entry.activeBoxId);
+    setCropPaddingM(entry.cropPaddingM);
+
+    const activeB = nextBoxes.find(b => b.id === entry.activeBoxId) || nextBoxes[0] || null;
+    syncHandlesForActiveBox(activeB);
+    syncCropBoundary();
+
+    isRestoringHistoryRef.current = false;
+  }
+
+  // Update a specific box by ID (fixes multi-box stale closure bug!)
+  function updateBoxProps(boxId: string, updates: Partial<Pick<RoofBox, "widthM" | "heightM" | "rotationAngle">>) {
+    const curBox = boxesRef.current.find(b => b.id === boxId);
+    if (!curBox || !curBox.poly) return;
+    const nextW = updates.widthM ?? curBox.widthM;
+    const nextH = updates.heightM ?? curBox.heightM;
+    const nextAngle = updates.rotationAngle !== undefined ? ((updates.rotationAngle % 360) + 360) % 360 : curBox.rotationAngle;
+
+    const coords = computeStrict90BoxCoords(curBox.center, nextW, nextH, nextAngle);
+    curBox.poly.setPath(coords);
+
+    const updatedBox: RoofBox = {
+      ...curBox,
       widthM: nextW,
       heightM: nextH,
       rotationAngle: nextAngle,
     };
 
-    setBoxes(prev => prev.map(b => b.id === activeBox.id ? updatedBox : b));
-    syncHandlesForActiveBox(updatedBox);
+    setBoxes(prev => prev.map(b => b.id === boxId ? updatedBox : b));
+    boxesRef.current = boxesRef.current.map(b => b.id === boxId ? updatedBox : b);
+
+    if (boxId === activeBoxIdRef.current) {
+      syncHandlesForActiveBox(updatedBox);
+    }
     syncCropBoundary();
   }
 
+    // Keyboard Undo (Ctrl+Z) & Redo (Ctrl+Y) Listener
+  useEffect(() => {
+    if (!isOpen) return;
+    function handleKeyDown(e: KeyboardEvent) {
+      const activeEl = document.activeElement;
+      if (activeEl && (activeEl.tagName === "INPUT" || activeEl.tagName === "TEXTAREA")) return;
+
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") {
+        e.preventDefault();
+        if (e.shiftKey) {
+          handleRedo();
+        } else {
+          handleUndo();
+        }
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "y") {
+        e.preventDefault();
+        handleRedo();
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isOpen, historyIndex, history]);
+
+  // Update active box dimensions or rotation
+  function updateActiveBoxProps(updates: Partial<Pick<RoofBox, "widthM" | "heightM" | "rotationAngle">>) {
+    updateBoxProps(activeBoxIdRef.current, updates);
+  }
+
   function rotateActiveBoxBy(deltaDeg: number) {
-    if (!activeBox) return;
-    updateActiveBoxProps({ rotationAngle: activeBox.rotationAngle + deltaDeg });
+    const curBox = boxesRef.current.find(b => b.id === activeBoxIdRef.current);
+    if (!curBox) return;
+    const nextRot = curBox.rotationAngle + deltaDeg;
+    updateActiveBoxProps({ rotationAngle: nextRot });
+    pushModalHistory(boxesRef.current, activeBoxIdRef.current, cropPaddingM);
   }
 
   // Add new box (e.g. for small roofs)
@@ -789,8 +991,14 @@ export default function GoogleMapsModal({
     const poly = createPolygonForBox(mapInstance, newBox);
     newBox.poly = poly;
 
-    setBoxes(prev => [...prev, newBox]);
+    const nextBoxes = [...boxesRef.current, newBox];
+    boxesRef.current = nextBoxes;
+    setBoxes(nextBoxes);
+    activeBoxIdRef.current = newId;
     setActiveBoxId(newId);
+    syncHandlesForActiveBox(newBox);
+    syncCropBoundary();
+    pushModalHistory(nextBoxes, newId, cropPaddingM);
   }
 
   function handleDeleteBox(id: string) {
@@ -800,10 +1008,15 @@ export default function GoogleMapsModal({
       target.poly.setMap(null);
     }
     const remaining = boxes.filter(b => b.id !== id);
+    boxesRef.current = remaining;
     setBoxes(remaining);
-    if (activeBoxId === id) {
-      setActiveBoxId(remaining[0]?.id || "");
-    }
+    const nextActiveId = activeBoxIdRef.current === id ? (remaining[0]?.id || "") : activeBoxIdRef.current;
+    activeBoxIdRef.current = nextActiveId;
+    setActiveBoxId(nextActiveId);
+    const nextActive = remaining.find(b => b.id === nextActiveId) || null;
+    syncHandlesForActiveBox(nextActive);
+    syncCropBoundary();
+    pushModalHistory(remaining, nextActiveId, cropPaddingM);
   }
 
   // Apply to PV Layout 2D Canvas
@@ -1083,6 +1296,54 @@ export default function GoogleMapsModal({
             </div>
           </div>
 
+          {/* Undo / Redo Buttons */}
+          <div style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={handleUndo}
+              disabled={historyIndex <= 0}
+              style={{
+                padding: "3px 8px",
+                fontSize: 11,
+                height: 27,
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 4,
+                background: historyIndex > 0 ? "#19281d" : "#0d140f",
+                border: "1px solid " + (historyIndex > 0 ? "#2f5238" : "#1a261d"),
+                color: historyIndex > 0 ? "#edf5ef" : "#495a4e",
+                cursor: historyIndex > 0 ? "pointer" : "default",
+                borderRadius: 5,
+              }}
+              title="Undo perubahan box (Ctrl+Z)"
+            >
+              <Undo2 size={12} /> Undo
+            </button>
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={handleRedo}
+              disabled={historyIndex >= history.length - 1}
+              style={{
+                padding: "3px 8px",
+                fontSize: 11,
+                height: 27,
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 4,
+                background: historyIndex < history.length - 1 ? "#19281d" : "#0d140f",
+                border: "1px solid " + (historyIndex < history.length - 1 ? "#2f5238" : "#1a261d"),
+                color: historyIndex < history.length - 1 ? "#edf5ef" : "#495a4e",
+                cursor: historyIndex < history.length - 1 ? "pointer" : "default",
+                borderRadius: 5,
+              }}
+              title="Redo perubahan box (Ctrl+Y)"
+            >
+              <Redo2 size={12} /> Redo
+            </button>
+          </div>
+
           {/* Active Box Size Controls */}
           {activeBox && (
             <div style={{ display: "flex", alignItems: "center", gap: 10, background: "#0c140f", padding: "4px 10px", borderRadius: 6, border: "1px solid #233829" }}>
@@ -1241,7 +1502,12 @@ export default function GoogleMapsModal({
           {boxes.map((b, idx) => (
             <div
               key={b.id}
-              onClick={() => setActiveBoxId(b.id)}
+              onClick={() => {
+                activeBoxIdRef.current = b.id;
+                setActiveBoxId(b.id);
+                const cur = boxesRef.current.find(box => box.id === b.id);
+                syncHandlesForActiveBox(cur || b);
+              }}
               style={{
                 display: "inline-flex",
                 alignItems: "center",
