@@ -15,7 +15,7 @@ export default function ReportsHost({ lang = "id", projectId, project, initialVi
 }) {
   const [view, setView] = useState<ReportView>(initialView);
   const pid = projectId ?? project?.id ?? null;
-  const data = useReportData(pid, { hourly: view !== "meta", sun: view === "calc", shade: view === "calc" });
+  const data = useReportData(pid, { hourly: view !== "meta", sun: view === "calc", shade: view === "calc", iso: view === "calc" });
   const isId = lang === "id";
 
   const title = `SolarApp - ${project?.name?.trim() || "Laporan Rekayasa PLTS"}`;

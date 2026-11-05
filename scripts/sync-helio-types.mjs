@@ -27,6 +27,8 @@ const SEED = [
   // weather sources panel
   "WeatherSeriesSummary", "WeatherSeriesCreated", "WeatherSeriesMember", "WeatherSourceComparison", "WeatherComparisonEntry",
   "WeatherDatasetDetail", "MonthlyWeatherSummary", "WeatherQcReport", "CsvMapping",
+  // iso-shading diagram
+  "IsoShadingResult",
 ];
 
 const git = (...a) => execFileSync("git", ["-C", repo, ...a], { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });

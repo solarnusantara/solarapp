@@ -2,18 +2,18 @@
 // status, so a page with no backend still renders its skeleton with "—".
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  EngineError, getEngineState, getHourly, getReportMeta, getShade, getSunPosition, engineErrorMessage,
+  EngineError, getEngineState, getHourly, getIsoShading, getReportMeta, getShade, getSunPosition, engineErrorMessage,
   isUnavailable, UNAVAILABLE_MESSAGE,
 } from "../engine/client";
 import { loadLayout, type SavedLayout } from "../engine/layoutStore";
-import type { SunPositionDay } from "../engine/types";
+import type { IsoShadingResult, SunPositionDay } from "../engine/types";
 import {
   EMPTY_REPORT_META, type EngineResultSummary, type EngineStateResponse, type HourlyResponse, type ReportMeta,
 } from "../engine/types/local";
 
 export type SourceStatus = "idle" | "loading" | "ok" | "unavailable" | "empty" | "error";
 
-export interface SourceState<T> { status: SourceStatus; data: T | null; message?: string }
+export interface SourceState<T> { status: SourceStatus; data: T | null; message?: string; /** helio error code, verbatim */ code?: string }
 const idle = <T,>(): SourceState<T> => ({ status: "idle", data: null });
 
 /** The 7 standard sun-path curves (each pair of mirrored dates shares one curve). */
@@ -56,18 +56,20 @@ export interface ReportData {
   hourly: SourceState<HourlyResponse>;
   sun: SourceState<Record<string, SunPositionDay | null>>;
   shade: SourceState<unknown>;
+  iso: SourceState<IsoShadingResult>;
   reload: () => void;
   setMeta: (m: ReportMeta) => void;
 }
 
-export function useReportData(projectId: string | null | undefined, opts: { hourly?: boolean; sun?: boolean; shade?: boolean } = {}): ReportData {
-  const { hourly: wantHourly = true, sun: wantSun = false, shade: wantShade = false } = opts;
+export function useReportData(projectId: string | null | undefined, opts: { hourly?: boolean; sun?: boolean; shade?: boolean; iso?: boolean } = {}): ReportData {
+  const { hourly: wantHourly = true, sun: wantSun = false, shade: wantShade = false, iso: wantIso = false } = opts;
   const [engine, setEngine] = useState<SourceState<EngineStateResponse>>(idle);
   const [layout, setLayout] = useState<SourceState<SavedLayout>>(idle);
   const [meta, setMetaState] = useState<SourceState<ReportMeta>>(idle);
   const [hourly, setHourly] = useState<SourceState<HourlyResponse>>(idle);
   const [sun, setSun] = useState<SourceState<Record<string, SunPositionDay | null>>>(idle);
   const [shade, setShade] = useState<SourceState<unknown>>(idle);
+  const [iso, setIso] = useState<SourceState<IsoShadingResult>>(idle);
   const [tick, setTick] = useState(0);
   const reload = useCallback(() => setTick((t) => t + 1), []);
   const setMeta = useCallback((m: ReportMeta) => setMetaState({ status: "ok", data: m }), []);
@@ -137,5 +139,17 @@ export function useReportData(projectId: string | null | undefined, opts: { hour
     return () => ac.abort();
   }, [wantShade, simId, tick]);
 
-  return { engine, result, layout, meta, hourly, sun, shade, reload, setMeta };
+  // iso-shadings diagram (per design; needs a linked project)
+  const designId = engine.data?.helio_design_id ?? null;
+  useEffect(() => {
+    if (!wantIso || !designId) { setIso(idle); return; }
+    const ac = new AbortController();
+    setIso({ status: "loading", data: null });
+    getIsoShading(designId, { azStep: 5, elStep: 2 }, ac.signal)
+      .then((r) => setIso({ status: "ok", data: r }))
+      .catch((e) => { if (!ac.signal.aborted) setIso({ ...toState<IsoShadingResult>(e), code: e instanceof EngineError && e.status >= 400 && !isUnavailable(e) ? e.code || undefined : undefined }); });
+    return () => ac.abort();
+  }, [wantIso, designId, tick]);
+
+  return { engine, result, layout, meta, hourly, sun, shade, iso, reload, setMeta };
 }

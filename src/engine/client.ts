@@ -2,7 +2,7 @@
 // (`/api/design/engine/<rest>` -> helio `/api/v1/<rest>`). No physics here (ADR-0007): this only
 // moves JSON. Every failure becomes an EngineError so callers never crash standalone (no backend).
 import type {
-  ConditionSet, DocumentedDefaults, SavedConditionSet, Scene, SimulationInput, SimulationOutput,
+  IsoShadingResult, ConditionSet, DocumentedDefaults, SavedConditionSet, Scene, SimulationInput, SimulationOutput,
   SiteSummary, SunPositionDay, WeatherDatasetCreated, HorizonProfile, CsvMapping, WeatherDatasetDetail, WeatherDatasetSummary,
   WeatherQcReport, WeatherRef, WeatherSeriesCreated, WeatherSeriesSummary, WeatherSourceComparison,
 } from "./types";
@@ -372,6 +372,9 @@ export const getHourly = (simulationId: string, signal?: AbortSignal) =>
   engineJson<HourlyResponse>(`simulations/${enc(simulationId)}/hourly`, { signal });
 export const getShade = (simulationId: string, signal?: AbortSignal) =>
   engineJson<unknown>(`simulations/${enc(simulationId)}/shade`, { signal });
+/** PVsyst iso-shadings data of one design (helio `GET designs/{id}/iso-shading`). */
+export const getIsoShading = (designId: string, opts: { azStep?: number; elStep?: number } = {}, signal?: AbortSignal) =>
+  engineJson<IsoShadingResult>(`designs/${enc(designId)}/iso-shading${qs({ az_step: opts.azStep ?? 5, el_step: opts.elStep ?? 2 })}`, { signal });
 export const createReport = (simulationId: string, body: { design_id?: string | null } = {}, signal?: AbortSignal) =>
   engineJson<{ report: { id?: string } & Record<string, unknown>; production: unknown | null; links?: Record<string, string> }>(
     `simulations/${enc(simulationId)}/reports`, { method: "POST", json: body, signal });
