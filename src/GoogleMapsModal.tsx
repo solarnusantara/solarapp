@@ -1113,9 +1113,9 @@ export default function GoogleMapsModal({
       });
 
       // 6. Calculate optimal Google Static Map to encompass all boxes
-      const maxDimM = Math.max(siteWidthM, siteHeightM);
-      const targetPx = 1100;
-      const val = (targetPx * 156543.03392 * cosLat) / Math.max(10, maxDimM);
+      const diagonalM = Math.hypot(siteWidthM, siteHeightM) * 1.35;
+      const targetPx = 950;
+      const val = (targetPx * 156543.03392 * cosLat) / Math.max(10, diagonalM);
       const targetZoom = Math.min(21, Math.max(14, Math.floor(Math.log2(val))));
       const staticUrl = `https://maps.googleapis.com/maps/api/staticmap?center=${siteCenterLat},${siteCenterLng}&zoom=${targetZoom}&size=640x640&scale=2&maptype=satellite&key=${apiKey}`;
 

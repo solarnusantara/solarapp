@@ -225,10 +225,107 @@ export const KARAWANG_BOQ = [
   { id: "k-gnd-2", category: "Grounding", description: "Deep earth grounding pit & copper rod", specification: "Inspection pit with test disconnect link", unit: "set", quantity: 20, unitPrice: 350000 }
 ];
 
+
+export const PROJECT_TEST_LAYOUT = {
+  projectId: "proj-project-test-1793754927",
+  settings: {
+    areaWidth: 115000,
+    areaHeight: 69000,
+    panelWidth: 2278,
+    panelHeight: 1134,
+    panelWatts: 580,
+    panelCost: 1650000,
+    tilt: 10,
+    azimuth: 0,
+    orientation: "landscape",
+    rowPitch: 1200,
+    rows: 13,
+    cols: 24,
+    gap: 20,
+    system: "Rooftop",
+    obstacleWidth: 4000,
+    obstacleHeight: 3000,
+  },
+  site: {
+    coordinates: { lat: -6.83083, lng: 112.00027 },
+    address: "Pabrik / Kompleks Atap Industri Tuban, Jawa Timur (-6.8308, 112.0003)",
+    rotationDeg: 334,
+    imageSpanM: 140,
+    cropPaddingM: 20,
+    boxes: [
+      {
+        id: "box-1",
+        name: "Box A (Atap Utama) (75m × 29m)",
+        color: "#3b82f6",
+        center: { lat: -6.83083, lng: 112.00027 },
+        widthM: 75,
+        heightM: 29,
+        rotationAngle: 334,
+      },
+      {
+        id: "box-2",
+        name: "Box B (38m × 8.5m)",
+        color: "#8b5cf6",
+        center: { lat: -6.83095, lng: 112.00018 },
+        widthM: 38,
+        heightM: 8.5,
+        rotationAngle: 334,
+      },
+    ],
+  },
+  backgroundImage: "https://maps.googleapis.com/maps/api/staticmap?center=-6.83083,112.00027&zoom=19&size=640x640&scale=2&maptype=satellite&key=AIzaSyC6TAjg7EBuCmkaWRwl-ih0PQ_Be07rc3o",
+  backgroundOpacity: 0.85,
+  segments: [
+    {
+      id: "seg-1",
+      name: "Segment A (75m × 29m)",
+      color: "#3b82f6",
+      polygon: [
+        { x: 20000, y: 20000 },
+        { x: 95000, y: 20000 },
+        { x: 95000, y: 49000 },
+        { x: 20000, y: 49000 },
+      ],
+      orientation: "landscape",
+      tilt: 10,
+      azimuth: 0,
+      gap: 20,
+      setback: 300,
+      moduleWatts: 580,
+      moduleWidth: 2278,
+      moduleHeight: 1134,
+      panels: [],
+      visible: true,
+    },
+    {
+      id: "seg-2",
+      name: "Segment B (38m × 8.5m)",
+      color: "#8b5cf6",
+      polygon: [
+        { x: 20000, y: 50500 },
+        { x: 58000, y: 50500 },
+        { x: 58000, y: 59000 },
+        { x: 20000, y: 59000 },
+      ],
+      orientation: "landscape",
+      tilt: 10,
+      azimuth: 0,
+      gap: 20,
+      setback: 300,
+      moduleWatts: 580,
+      moduleWidth: 2278,
+      moduleHeight: 1134,
+      panels: [],
+      visible: true,
+    },
+  ],
+};
+
 export function getProjectDefaultLayout(projectId: string | null) {
   if (projectId === "proj-mas-silueta-224kwp") return MAS_SILUETA_LAYOUT;
   if (projectId === "proj-cikarang-500kwp") return CIKARANG_LAYOUT;
   if (projectId === "proj-karawang-2mwp") return KARAWANG_LAYOUT;
+  if (projectId?.includes("proj-project-test")) return PROJECT_TEST_LAYOUT;
   return null;
 }
 

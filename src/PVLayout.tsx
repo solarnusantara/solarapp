@@ -33,6 +33,7 @@ import {
   Table,
   Activity,
   CheckCircle2,
+  Save,
   Share2
 } from "lucide-react";
 import GoogleMapsModal from "./GoogleMapsModal";
@@ -298,6 +299,19 @@ export default function PVLayout({
 }) {
   const saved = useMemo(() => loadSaved(userId, projectId), [userId, projectId]);
   const isId = lang === "id";
+
+    const [isSaving, setIsSaving] = useState(false);
+  const [lastSavedTime, setLastSavedTime] = useState<string>("");
+
+  const handleManualSave = async () => {
+    setIsSaving(true);
+    saveDraft(segments, obstacles, walkways, site, backgroundImage, backgroundOpacity);
+    const now = new Date();
+    const timeStr = now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+    setLastSavedTime(timeStr);
+    setIsSaving(false);
+    setNotice(isId ? `✅ Desain tata letak proyek berhasil disimpan (${timeStr})!` : `Project layout saved successfully (${timeStr})!`);
+  };
 
   const [settings, setSettings] = useState({
     ...defaults,
@@ -725,6 +739,11 @@ export default function PVLayout({
     const handleKeyDown = (e: KeyboardEvent) => {
       const activeEl = document.activeElement;
       if (activeEl && (activeEl.tagName === "INPUT" || activeEl.tagName === "SELECT" || activeEl.tagName === "TEXTAREA")) return;
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
+        e.preventDefault();
+        handleManualSave();
+        return;
+      }
       if (e.code === "Space" && !e.repeat) {
         isSpacePressedRef.current = true;
       }
@@ -963,6 +982,38 @@ export default function PVLayout({
           <Sliders size={14} />
           <span>Advanced</span>
         </button>
+
+        <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 10 }}>
+          {lastSavedTime && (
+            <span style={{ fontSize: 11, color: "var(--green, #b8f36b)", display: "flex", alignItems: "center", gap: 4, fontWeight: 700 }}>
+              <Check size={13} />
+              Tersimpan {lastSavedTime}
+            </span>
+          )}
+          <button
+            type="button"
+            className="primary-button"
+            onClick={handleManualSave}
+            disabled={isSaving}
+            style={{
+              padding: "5px 14px",
+              fontSize: 11,
+              fontWeight: 800,
+              background: "var(--green, #b8f36b)",
+              color: "#09140c",
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 6,
+              borderRadius: 6,
+              cursor: "pointer",
+              boxShadow: "0 2px 8px rgba(184, 243, 107, 0.25)",
+            }}
+            title="Simpan desain & tata letak saat ini (Ctrl+S)"
+          >
+            <Save size={13} />
+            {isSaving ? "Menyimpan..." : "Simpan Desain"}
+          </button>
+        </div>
       </nav>
 
       {/* ─── 3-COLUMN STUDIO WORKSPACE ─── */}
@@ -1709,7 +1760,7 @@ export default function PVLayout({
                   const rotDeg = site?.rotationDeg || 0;
                   const centerX = originX + (siteW * scale) / 2;
                   const centerY = originY + (siteH * scale) / 2;
-                  const spanM = site?.imageSpanM || (Math.max(siteW, siteH) / 1000) * 1.5;
+                  const spanM = (site?.imageSpanM ? site.imageSpanM * 1.25 : (Math.hypot(siteW, siteH) / 1000) * 1.35);
                   const imgPixelSize = spanM * 1000 * scale;
 
                   // Normalize angle to [-180, 180]: e.g. 334° becomes -26° (counter-clockwise up to level)
@@ -2222,6 +2273,30 @@ export default function PVLayout({
 
             {/* Ekspor Button */}
             <div style={{ marginTop: 14 }}>
+              <button
+                type="button"
+                style={{
+                  width: "100%",
+                  marginBottom: 8,
+                  background: "#1a3221",
+                  color: "var(--green, #b8f36b)",
+                  border: "1.5px solid #2f5637",
+                  borderRadius: 7,
+                  padding: "9px 12px",
+                  fontSize: 12,
+                  fontWeight: 800,
+                  cursor: "pointer",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: 7,
+                }}
+                onClick={handleManualSave}
+                disabled={isSaving}
+              >
+                <Save size={14} /> {isSaving ? "Menyimpan Desain..." : "Simpan Desain (Ctrl+S)"}
+              </button>
+
               <button
                 type="button"
                 style={{
