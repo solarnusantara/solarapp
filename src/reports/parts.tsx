@@ -1,3 +1,4 @@
+import { moduleCountMismatch } from "../engine/moduleCount";
 import type { ReactNode } from "react";
 import type { Project } from "../api";
 import type { ReportData } from "./useReportData";
@@ -24,7 +25,11 @@ export function SourceNotice({ data }: { data: ReportData }) {
   if (e.status === "unavailable") return <p className="rpt-notice is-warn">Engine Helio tidak tersedia — halaman ditampilkan dengan “—” sampai hasil tersedia.</p>;
   if (e.status === "empty") return <p className="rpt-notice is-warn">{e.message ?? "Belum dihitung — buka PV Layout lalu klik Hitung (Helio)"}</p>;
   if (e.status === "error") return <p className="rpt-notice is-warn">{e.message}</p>;
-  return null;
+  // Variant kWp and field-segment module counts must agree with the run: warn when helio used another module count.
+  const lay = data.layout.data;
+  const layoutModules = (lay?.segments ?? []).filter((s) => s.visible !== false).reduce((a, s) => a + (s.panels?.length ?? 0), 0);
+  const mm = moduleCountMismatch(layoutModules, data.result);
+  return mm ? <p className="rpt-notice is-warn" role="alert">{mm.message}</p> : null;
 }
 
 export function EmptyNote({ children }: { children: ReactNode }) {

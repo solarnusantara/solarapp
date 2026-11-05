@@ -234,15 +234,22 @@ function isPointInPolygon(
   return inside;
 }
 
+/** Tolerance (mm) for a module that fits the setback polygon exactly. */
+const FIT_EPS_MM = 0.5;
+
 function isPanelInsidePolygon(
   p: Pick<Panel, "x" | "y" | "w" | "h">,
   poly: Array<{ x: number; y: number }>
 ): boolean {
+  // A module that fits the inset polygon exactly has its corners ON the edge, where even-odd
+  // ray casting is unreliable (float noise decides). Test the rectangle shrunk by FIT_EPS_MM so an
+  // exact fit counts as inside; 0.5 mm is far below any real clearance.
+  const e = FIT_EPS_MM;
   const corners = [
-    { x: p.x, y: p.y },
-    { x: p.x + p.w, y: p.y },
-    { x: p.x + p.w, y: p.y + p.h },
-    { x: p.x, y: p.y + p.h },
+    { x: p.x + e, y: p.y + e },
+    { x: p.x + p.w - e, y: p.y + e },
+    { x: p.x + p.w - e, y: p.y + p.h - e },
+    { x: p.x + e, y: p.y + p.h - e },
   ];
   return corners.every(c => isPointInPolygon(c.x, c.y, poly));
 }
@@ -287,8 +294,8 @@ export function generatePanelsForSegment(
     return false;
   };
 
-  for (let y = minY; y <= maxY - modH; y += stepY) {
-    for (let x = minX; x <= maxX - modW; x += stepX) {
+  for (let y = minY; y <= maxY - modH + FIT_EPS_MM; y += stepY) {
+    for (let x = minX; x <= maxX - modW + FIT_EPS_MM; x += stepX) {
       const candidate: Panel = { id: ++idCounter, x, y, w: modW, h: modH, segmentId: seg.id };
       if (isPanelInsidePolygon(candidate, setbackPoly) && !collidesWithObsOrWalk(candidate)) {
         result.push(candidate);

@@ -10,6 +10,7 @@ import { layoutToScene } from "./sceneAdapter";
 import type { SavedLayout } from "./layoutStore";
 import type { EngineInputs } from "./types/local";
 import { RACKING_OPTIONS } from "./racking";
+import { moduleCountMismatch } from "./moduleCount";
 
 const inp: React.CSSProperties = { padding: "5px 8px", borderRadius: 6, border: "1px solid #364b38", background: "#0d1410", color: "inherit", width: "100%" };
 const card: React.CSSProperties = { border: "1px solid #233527", borderRadius: 10, padding: 12, marginTop: 10 };
@@ -133,6 +134,7 @@ export default function EngineRunPanel({ projectId, projectName, layout, inputs,
         {eng.step && <span style={{ fontSize: 12 }}>{eng.step}</span>}
         {!projectId && <span style={{ fontSize: 12, color: "#fbbf24" }}>Simpan proyek di server dulu untuk memakai engine.</span>}
       </div>
+      {(() => { const mc = moduleCountMismatch(ad.moduleCount, eng.result); return mc ? <div role="alert" style={{ color: "#fbbf24", fontSize: 12, marginTop: 6 }}>{mc.message}</div> : null; })()}
       {eng.error && <div style={{ color: "#f87171", fontSize: 12, marginTop: 6 }}>{eng.error}</div>}
       {eng.errors.length > 0 && <ul style={{ color: "#f87171", fontSize: 12 }}>{eng.errors.map((e, i) => <li key={i}>{e}</li>)}</ul>}
       {eng.circuit && (

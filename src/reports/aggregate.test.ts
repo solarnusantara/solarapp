@@ -123,3 +123,64 @@ describe("format", () => {
     expect(withUnit(744, "kW", 0)).toContain("744");
   });
 });
+
+import { horizonDiffuseFactor, pvsystAzimuth, sunBandQuads } from "./aggregate";
+describe("horizon diffuse factor and sun band", () => {
+  it("flat horizon -> 1; constant 30 deg horizon -> 1 - sin^2(30) = 0.75", () => {
+    expect(horizonDiffuseFactor([{ azimuth_deg: 0, elevation_deg: 0 }, { azimuth_deg: 180, elevation_deg: 0 }])).toBeCloseTo(1, 9);
+    expect(horizonDiffuseFactor([{ azimuth_deg: 0, elevation_deg: 30 }, { azimuth_deg: 180, elevation_deg: 30 }])).toBeCloseTo(0.75, 6);
+    expect(horizonDiffuseFactor([])).toBeNull();
+  });
+  it("band is built from quads between neighbouring dates and consecutive times, unwrapped across +-180", () => {
+    const mk = (m: number, az: number, el: number) => ({ minute_of_day: m, azimuth_deg: az, elevation_deg: el });
+    const d1 = [mk(420, 60, 10), mk(430, 62, 12), mk(440, 64, 14)];
+    const d2 = [mk(420, 70, 10), mk(430, 72, 12), mk(440, 74, 14)];
+    const d3 = [mk(420, 80, 10), mk(430, 82, 12), mk(440, 84, 14)];
+    expect(sunBandQuads([d1, d2, d3], 1)).toHaveLength(4); // 2 date pairs x 2 time steps
+    const wrap = sunBandQuads([[mk(420, 170, 10), mk(430, 190, 12)], [mk(420, 175, 10), mk(430, 195, 12)]], 1);
+    expect(wrap).toHaveLength(1);
+    for (const q of wrap) for (const p of q) expect(Math.abs(p[0] - q[0][0])).toBeLessThan(180);
+    expect(sunBandQuads([d1], 1)).toEqual([]);
+    expect(sunBandQuads([null, d1], 1)).toEqual([]);
+  });
+});
+
+// Reference sun position (helio convention: azimuth 0 = N, 90 = E) to test the hemisphere axis.
+function sunAt(latDeg: number, month: number, day: number, solarHour: number) {
+  const n = Math.floor(30.4 * (month - 1)) + day;
+  const dec = (23.45 * Math.sin(((2 * Math.PI) / 365) * (284 + n)) * Math.PI) / 180;
+  const ha = ((solarHour - 12) * 15 * Math.PI) / 180, lat = (latDeg * Math.PI) / 180;
+  const el = Math.asin(Math.sin(lat) * Math.sin(dec) + Math.cos(lat) * Math.cos(dec) * Math.cos(ha));
+  const az = Math.atan2(-Math.cos(dec) * Math.sin(ha), Math.sin(dec) * Math.cos(lat) - Math.cos(dec) * Math.cos(ha) * Math.sin(lat));
+  return { azimuth_deg: (((az * 180) / Math.PI) + 360) % 360, elevation_deg: (el * 180) / Math.PI };
+}
+
+describe("PVsyst azimuth axis follows the hemisphere", () => {
+  it("formulas: south = -a, north = a - 180, range (-180, 180]", () => {
+    expect(pvsystAzimuth(90, -7)).toBe(-90);   // east negative
+    expect(pvsystAzimuth(270, -7)).toBe(90);   // west positive
+    expect(pvsystAzimuth(0, -7)).toBe(0);      // north = 0 in the south
+    expect(pvsystAzimuth(180, -7)).toBe(180);  // south = +-180
+    expect(pvsystAzimuth(180, 7)).toBe(0);     // north hemisphere: south = 0
+    expect(pvsystAzimuth(90, 7)).toBe(-90);
+    expect(pvsystAzimuth(0, 7)).toBe(180);
+    expect(pvsystAzimuth(196.7, -7)).toBeCloseTo(163.3, 9);
+  });
+  it("lat -6.96: Dec-22 noon is at +-180 near 73.6 deg, Jun-22 noon at 0 near 59.6 deg, mornings negative", () => {
+    const lat = -6.96;
+    const dec = sunAt(lat, 12, 22, 12), jun = sunAt(lat, 6, 22, 12);
+    expect(Math.abs(pvsystAzimuth(dec.azimuth_deg, lat))).toBeGreaterThan(179);
+    expect(dec.elevation_deg).toBeCloseTo(73.6, 0);
+    expect(Math.abs(pvsystAzimuth(jun.azimuth_deg, lat))).toBeLessThan(1);
+    expect(jun.elevation_deg).toBeCloseTo(59.6, 0);
+    for (const m of [[12, 22], [6, 22], [3, 20]]) {
+      expect(pvsystAzimuth(sunAt(lat, m[0], m[1], 8).azimuth_deg, lat)).toBeLessThan(0); // 08:00 = east = negative
+      expect(pvsystAzimuth(sunAt(lat, m[0], m[1], 16).azimuth_deg, lat)).toBeGreaterThan(0);
+    }
+  });
+  it("northern site: noon is at 0 (south) and mornings are negative", () => {
+    const lat = 40, s = sunAt(lat, 3, 20, 12);
+    expect(Math.abs(pvsystAzimuth(s.azimuth_deg, lat))).toBeLessThan(1);
+    expect(pvsystAzimuth(sunAt(lat, 3, 20, 8).azimuth_deg, lat)).toBeLessThan(0);
+  });
+});
