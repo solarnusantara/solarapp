@@ -13,7 +13,8 @@ import { hasIsoData, isoAttenuationText, isoContourSegments, isoMissingNote } fr
 import LossDiagram from "./LossFunnel";
 import { exportModeLabel } from "../engine/exportMode";
 import { sigmaEnergy, Z } from "./probability";
-import { conditionSet, engineering, horizonPoints, iamTable, lossGroups, lossTree, orientations, out, prod, sourceLabel, stringingReports, uncertaintyRows, weatherVariability } from "./model";
+import { conditionSet, engineering, horizonPoints, inverterRatings, iamTable, lossGroups, lossTree, orientations, out, prod, sourceLabel, stringingReports, uncertaintyRows, weatherVariability } from "./model";
+import { mountingPhrase, thermalRows, usersNeedsLabel } from "./labels";
 import { LogoImg, Sheet, SOLAR_NUSANTARA_LOGO, SourceNotice, type ReportProps } from "./parts";
 import { SUN_DATES } from "./useReportData";
 
@@ -22,8 +23,6 @@ const Box = ({ title, children }: { title: string; children: ReactNode }) => (
   <div className="sim-box"><div className="sim-box-title">{title}</div>{children}</div>
 );
 
-/** PVsyst-style mounting phrase per helio Racking. */
-const MOUNTING: Record<string, string> = { fixed_tilt: "Tables on a building", flush_mount: "Flush mounted on a building roof", east_west: "East-West tables on a building", carport: "Carport (shed) structure" };
 
 export default function EngineeringCalc({ data, projectId, project }: ReportProps) {
   const { result, layout, meta, hourly, sun, shade, iso } = data;
@@ -42,13 +41,18 @@ export default function EngineeringCalc({ data, projectId, project }: ReportProp
   // PVsyst measures azimuth from the direction of the equator (south hemisphere: 0 = north, east negative).
   const latDeg: number | null = isNum(result?.output?.weather?.latitude) ? result.output.weather.latitude : isNum(lay?.site?.coordinates?.lat) ? lay.site.coordinates.lat : null;
   const azP = (a: number) => pvsystAzimuth(a, latDeg);
-  const rackKey = p?.design?.racking ?? o?.thermal?.racking ?? null;
-  const mountingText = rackKey ? MOUNTING[String(rackKey)] ?? String(rackKey).replace(/_/g, " ") : DASH;
-  const needsTxt = text(o?.consumption_source) === DASH ? "Unlimited load (grid)" : text(o?.consumption_source);
-  const exportTxt = result ? exportModeLabel((result.input as any)?.export_limitation_mode) : DASH;
+  // helio spells the racking `flush_mount` (input, thermal) but `flushmount` (production.design): normalised in labels.ts
+  const rackKey = o?.thermal?.racking ?? (result?.input as any)?.racking ?? p?.design?.racking ?? null;
+  const mountingText = mountingPhrase(rackKey) ?? DASH;
+  const exportMode = (result?.input as any)?.export_limitation_mode ?? o?.export_limitation_mode;
+  const needsTxt = usersNeedsLabel(exportMode, o?.consumption_source);
+  const exportTxt = result ? exportModeLabel(exportMode) : DASH;
   const reports = stringingReports(result);
   const invs: any[] = Array.isArray(o?.inverters_summary) ? o.inverters_summary : [];
   const mod = result?.components?.module, inv = result?.components?.inverter;
+  const ratings = inverterRatings(result);
+  const nomAcKw = ratings.nomAcKw, pMaxAcKw = ratings.pMaxAcKw;
+  const mpptWindow = (id: string): string | null => { const w2 = ratings.mpptWindow(id); return w2 ? `${n(w2.minV, 0, { group: false })}-${n(w2.maxV, 0, { group: false })} V` : null; };
   const horizon = horizonPoints(result, lay);
   const hr = hourly.data?.hourly, cols = hourly.data?.columns;
   const eng = engineering(result);
@@ -165,8 +169,8 @@ export default function EngineeringCalc({ data, projectId, project }: ReportProp
           <Row k="Number of inverters" v={`${a.r.mppt_string_counts.length} MPPT, 1 unit`} />
           <Row k="Total power" v={isNum(a.iv?.nominal_ac_kw) ? `${n(a.iv.nominal_ac_kw, 0)} kWac` : DASH} />
           <h5 style={{ marginTop: 3 }}>&nbsp;</h5>
-          <Row k="Operating voltage" v={a.er ? `${n(a.er.mppt_v_min_v, 0, { group: false })}-${n(a.er.mppt_v_max_v, 0, { group: false })} V` : DASH} />
-          <Row k="Max. power (=>30°C)" v={DASH} />
+          <Row k="Operating voltage" v={a.er ? `${n(a.er.mppt_v_min_v, 0, { group: false })}-${n(a.er.mppt_v_max_v, 0, { group: false })} V` : mpptWindow(a.r.inverter_id) ?? DASH} />
+          <Row k="Max. power (=>30°C)" v={isNum(pMaxAcKw) ? `${n(pMaxAcKw, 0)} kWac` : DASH} />
           <Row k="Pnom ratio (DC:AC)" v={a.er ? n(a.er.dc_ac_ratio, 2) : isNum(a.iv?.nominal_ac_kw) && a.iv.nominal_ac_kw > 0 ? n(a.r.strung_dc_kwp / a.iv.nominal_ac_kw, 2) : DASH} />
         </div>
       </div>
@@ -186,7 +190,7 @@ export default function EngineeringCalc({ data, projectId, project }: ReportProp
         <h5>Inverter</h5>
         <Row k="Manufacturer" v={text(inv?.manufacturer)} />
         <Row k="Model" v={text(inv?.model)} />
-        <Row k="Unit Nom. Power" v={isNum(inv?.p_max_ac_w) ? `${n(inv.p_max_ac_w / 1000, 0)} kWac` : DASH} />
+        <Row k="Unit Nom. Power" v={isNum(nomAcKw) ? `${n(nomAcKw, 0)} kWac` : DASH} />
         <Row k="Number of inverters" v={invs.length ? `${invs.length} units` : DASH} />
         <Row k="Total power" v={isNum(ac) ? `${n(ac, 0)} kWac` : DASH} />
       </div>
@@ -240,6 +244,7 @@ export default function EngineeringCalc({ data, projectId, project }: ReportProp
       customOthers: custom.filter((c) => !/quality|kualitas|string/i.test(c.name)),
     };
   })();
+  const tmRows = thermalRows(cs?.temperature_model);
   const iam = iamTable(result);
   const IAM_ANGLES = [0, 30, 50, 60, 70, 75, 80, 85, 90];
   const ws = o?.wire_schedule;
@@ -250,8 +255,7 @@ export default function EngineeringCalc({ data, projectId, project }: ReportProp
         <div className="sim-cols" style={{ gridTemplateColumns: "1fr 1fr 1fr" }}>
           <div><h5>Array Soiling Losses</h5><Row k="Loss Fraction" v={lossRowsCS?.soiling ?? DASH} /></div>
           <div><h5>Thermal Loss factor</h5>
-            <div>{lossRowsCS ? `Model: ${lossRowsCS.tm.model}` : DASH}</div>
-            {lossRowsCS && Object.entries(lossRowsCS.tm).filter(([k]) => k !== "model").map(([k, v]) => <Row key={k} k={k} v={text(v)} />)}
+            {tmRows ? <><div>{tmRows.heading}</div>{tmRows.rows.map(([k, v]) => <Row key={k} k={k} v={v} />)}</> : <div>{DASH}</div>}
           </div>
           <div><h5>DC wiring losses</h5><Row k="Loss Fraction" v={lossRowsCS?.dcw ?? DASH} /></div>
           <div><h5>LID - Light Induced Degradation</h5><Row k="Loss Fraction" v={lossRowsCS?.lid ?? DASH} /></div>
@@ -276,7 +280,7 @@ export default function EngineeringCalc({ data, projectId, project }: ReportProp
         <h5>Inv. output line up to injection point</h5>
         <Row k="Inverter voltage" v={isNum(ws?.ac_line_voltage_v) && ws.ac_line_voltage_v > 0 ? `${n(ws.ac_line_voltage_v, 0)} Vac${ws.ac_phase_system ? ` ${/^three_phase/.test(String(ws.ac_phase_system)) ? "tri" : /^single_phase/.test(String(ws.ac_phase_system)) ? "mono" : String(ws.ac_phase_system).replace(/_/g, " ")}` : ""}` : DASH} />
         <Row k="Loss Fraction" v={lossRowsCS?.acl ?? DASH} />
-        <Row k="AC wiring loss at STC" v={isNum(ws?.ac_wiring_loss_stc_kw) ? `${n(ws.ac_wiring_loss_stc_kw, 2)} kW` : DASH} />
+        <Row k="AC wiring loss at STC" v={isNum(ws?.ac_wiring_loss_stc_kw) && !(ws.ac_wiring_loss_stc_kw === 0 && cs?.ac_loss?.mode === "pct") ? `${n(ws.ac_wiring_loss_stc_kw, 2)} kW` : DASH} />
         <Row k="Wire section" v={acEntries.length ? `${text(acEntries[0].material)} ${n(acEntries[0].num_conductors, 0)} x ${n(acEntries[0].cross_section_mm2, 0)} mm²` : DASH} />
         <Row k="Average wires length" v={acEntries.length ? `${n(acEntries.reduce((a, e) => a + (isNum(e.one_way_length_m) ? e.one_way_length_m : 0), 0) / acEntries.length, 0)} m` : DASH} />
       </Box>
@@ -439,7 +443,7 @@ export default function EngineeringCalc({ data, projectId, project }: ReportProp
       <h5 style={{ textAlign: "center" }}>Daily Input/Output diagram</h5>
       <Scatter points={dio ? dio.map((q) => ({ x: q.x, y: q.y / 1000 })) : null} xLabel="Global incident in coll. plane [kWh/m²/day]" yLabel="Useful out system energy [MWh/day]" legend="Values from 01/01 to 31/12" h={225} />
       <h5 style={{ textAlign: "center", marginTop: 8 }}>System Output Power Distribution</h5>
-      <StepHistogram bins={hist ? hist.map((b) => ({ from: b.from, to: b.to, value: b.energyMwh })) : null} xLabel="Useful out system energy [kW]" yLabel="Useful out system energy [MWh / class of 5 kW]" legend="Values from 01/01 to 31/12" h={225} />
+      <StepHistogram bins={hist ? hist.map((b) => ({ from: b.from, to: b.to, value: b.energyMwh })) : null} xLabel="Useful out system energy [kW]" yLabel="Useful out system energy [MWh / class of 5 kW]" legend="Values from 01/01 to 31/12" h={225} note={hourly.status === "loading" ? "memuat data per jam dari engine…" : hourly.status === "ok" ? undefined : "data per jam tidak tersedia dari engine"} />
     </Box>
   ));
 

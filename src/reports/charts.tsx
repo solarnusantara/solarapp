@@ -239,10 +239,10 @@ export function Scatter({ points, xLabel, yLabel, w = 640, h = 270, legend }: {
   );
 }
 
-export function StepHistogram({ bins, xLabel, yLabel, w = 640, h = 270, legend }: {
-  bins: Array<{ from: number; to: number; value: number }> | null; xLabel: string; yLabel: string; w?: number; h?: number; legend?: string;
+export function StepHistogram({ bins, xLabel, yLabel, w = 640, h = 270, legend, note }: {
+  bins: Array<{ from: number; to: number; value: number }> | null; xLabel: string; yLabel: string; w?: number; h?: number; legend?: string; note?: string;
 }) {
-  if (!bins || !bins.length) return <ChartEmpty w={w} h={h} />;
+  if (!bins || !bins.length) return <ChartEmpty w={w} h={h} note={note} />;
   const f: Frame = { l: 48, r: 10, t: 10, b: 32 };
   const ax = histogramAxes(bins);
   const xm = ax.xMax, ym = ax.yMax;
@@ -307,7 +307,9 @@ export interface SunHourLine { hour: number; segments: Array<Array<[number, numb
  */
 export interface SunPathCtx { X: (az: number) => number; Y: (el: number) => number; f: Frame; iw: number; ih: number }
 
-export function SunPathChart({ curves, hourLines, behind, horizon, band, title, subtitle, w = 340, h = 210, extra }: {
+export function SunPathChart({ curves, hourLines, behind, horizon, band, title, subtitle, caption, w = 340, h = 210, extra }: {
+  /** Lines printed between the title and the plot (outside the plot area). */
+  caption?: string[];
   curves: SunCurve[]; hourLines?: SunHourLine[]; behind?: Array<Array<[number, number]>>; band?: Array<Array<[number, number]>>; horizon: Array<[number, number]> | null; title: string; subtitle?: string; w?: number; h?: number; extra?: ReactNode | ((c: SunPathCtx) => ReactNode);
 }) {
   const f: Frame = { l: 34, r: 8, t: 8, b: 26 };
@@ -321,6 +323,7 @@ export function SunPathChart({ curves, hourLines, behind, horizon, band, title, 
     <div style={{ breakInside: "avoid", pageBreakInside: "avoid" }}>
       <div style={{ textAlign: "center", fontWeight: 700, fontSize: 12 }}>{title}</div>
       {subtitle && <div style={{ textAlign: "center", fontWeight: 600, fontSize: 9.5, color: "#1d4ed8" }}>{subtitle}</div>}
+      {caption?.map((ln, i) => <div key={i} data-testid="sun-caption" style={{ textAlign: "center", fontWeight: 700, fontSize: 10.5, color: "#111827", marginBottom: i === caption.length - 1 ? 2 : 0 }}>{ln}</div>)}
       {!usable.length ? <ChartEmpty w={w} h={h} note="posisi matahari belum tersedia" /> : (
         <svg viewBox={`0 0 ${w} ${h}`} width="100%" role="img" fontFamily={FONT} fontSize="8.5">
           <defs><clipPath id={clipId}><rect x={f.l} y={f.t} width={iw} height={ih} /></clipPath></defs>
@@ -362,16 +365,33 @@ export function SunPathChart({ curves, hourLines, behind, horizon, band, title, 
           {(behind ?? []).length > 0 && (() => {
             const pts = behind!.flat();
             const mid = pts.reduce((a, p) => (p[1] > a[1] ? p : a), pts[0]);
-            return <text x={X(mid[0])} y={Y(mid[1]) - 3} fontSize="7" fill="#1d4ed8" textAnchor="middle">Behind the plane</text>;
+            // keep the label inside the plot: the apex can sit at the very edge of the azimuth range
+            const mx = X(mid[0]), anchor = mx < f.l + 34 ? "start" : mx > f.l + iw - 34 ? "end" : "middle";
+            return <text x={anchor === "start" ? f.l + 3 : anchor === "end" ? f.l + iw - 3 : mx} y={Y(mid[1]) - 3} fontSize="7" fill="#1d4ed8" textAnchor={anchor}>Behind the plane</text>;
           })()}
           {horizon && horizon.length > 1 && (
             <polyline points={horizon.map(([a, e]) => `${X(a)},${Y(e)}`).join(" ")} fill="none" stroke="#111827" strokeWidth="1.6" />
           )}
-          <g fill="#111827" fontSize="8">
-            {usable.map((c, i) => <text key={`lg${c.num}`} x={X(0) - 36} y={Y(46) + i * 9}>{c.num}: {c.label}</text>)}
-          </g>
+          {iw >= 400 && (() => {
+            // Wide plots only: date legend inside the arch, centred on the south meridian, clear of the hour labels.
+            // Narrow plots (the arch is too tight for the text) print it below the plot instead.
+            const ft = Math.max(5.5, Math.min(8, iw / 62)), lh = ft * 1.2;
+            const lw = Math.max(...usable.map((c) => `${c.num}: ${c.label}`.length)) * ft * 0.52 + 8;
+            const x0 = X(0) - lw / 2, top = Y(34);
+            return (
+              <g fill="#111827" fontSize={ft} data-testid="sun-date-legend">
+                <rect x={x0} y={top - ft - 2} width={lw} height={usable.length * lh + 4} fill="#fff" />
+                {usable.map((c, i) => <text key={`lg${c.num}`} x={x0 + 4} y={top + i * lh}>{c.num}: {c.label}</text>)}
+              </g>
+            );
+          })()}
           {typeof extra === "function" ? extra({ X, Y, f, iw, ih }) : extra}
         </svg>
+      )}
+      {usable.length > 0 && iw < 400 && (
+        <div data-testid="sun-date-legend" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", columnGap: 8, fontSize: 8, color: "#111827", padding: "1px 6px 0" }}>
+          {usable.map((c) => <span key={c.num}>{c.num}: {c.label}</span>)}
+        </div>
       )}
     </div>
   );
@@ -387,6 +407,7 @@ export function IsoShadingChart({ contours, attenuation, ...sun }: { contours: I
   return (
     <SunPathChart
       {...sun}
+      caption={attenuation.split(" and ").map((ln, i) => (i === 0 ? ln : `and ${ln}`))}
       extra={({ X, Y, f, iw }) => (
         <g data-testid="iso-overlay">
           {contours.map((c) => {
@@ -396,6 +417,7 @@ export function IsoShadingChart({ contours, attenuation, ...sun }: { contours: I
             ));
           })}
           <g fontSize="8.5" fill="#111827" data-testid="iso-legend">
+            <rect x={f.l + 2} y={f.t + 2} width={118} height={ISO_LEVEL_STYLES.length * 10 + 6} fill="#fff" stroke="#9ca3af" strokeWidth="0.6" />
             {ISO_LEVEL_STYLES.map((st, i) => (
               <g key={st.level}>
                 <line x1={f.l + 6} x2={f.l + 36} y1={f.t + 9 + i * 10} y2={f.t + 9 + i * 10} stroke="#000" strokeWidth={st.width} strokeDasharray={st.dash} />
@@ -403,9 +425,6 @@ export function IsoShadingChart({ contours, attenuation, ...sun }: { contours: I
               </g>
             ))}
           </g>
-          <text x={f.l + iw / 2} y={f.t + 14} textAnchor="middle" fontSize="10" fontWeight="700" fill="#111827" data-testid="iso-attenuation">
-            {attenuation.split(" and ").map((ln, i) => <tspan key={i} x={f.l + iw / 2} dy={i === 0 ? 0 : 12}>{i === 0 ? ln : `and ${ln}`}</tspan>)}
-          </text>
         </g>
       )}
     />

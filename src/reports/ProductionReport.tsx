@@ -5,7 +5,7 @@ import { BarChart, Donut } from "./charts";
 import { DASH, MONTHS_EN, MONTHS_SHORT, dateTime, firstOf, isNum, monthlyUniform, n, pct, text } from "./format";
 import { producingMean, monthlyEnergy } from "./aggregate";
 import { conditionSet, donutSlices, engineering, isTotalRow, lossGroups, out, prod, sourceLabel, wireSummary } from "./model";
-import { helioscopeStageLabel } from "./labels";
+import { helioscopeStageLabel, normalizeRacking } from "./labels";
 import { exportModeLabel } from "../engine/exportMode";
 import { renderModel } from "./layoutGeometry";
 import { Sheet, SONUS_ID_LOGO, SourceNotice, type ReportProps } from "./parts";
@@ -38,7 +38,7 @@ export default function ProductionReport({ data, projectId, project }: ReportPro
   const summary = p?.summary;
   // Engine echo of the input first, else the choice stored with the layout (engine_inputs.racking).
   const rackingKey: string | null = design?.racking || lay?.engine_inputs?.racking || null;
-  const rackingLabel = rackingKey ? RACKING[rackingKey] ?? rackingKey : DASH;
+  const rackingLabel = rackingKey ? RACKING[normalizeRacking(rackingKey) ?? rackingKey] ?? rackingKey : DASH;
 
   const name = text(design?.project_name ?? project?.name);
   const client = m?.client || m?.owner_name || "";
