@@ -83,3 +83,17 @@ export function viewport3DProps(l: SavedLayout | null | undefined, projectId: st
     camera,
   };
 }
+
+/**
+ * Collector area of the layout: sum of every visible panel's footprint (mm canvas -> m2).
+ * Efficiency at STC = module nameplate / (module area x 1000 W/m2), from the PAN Pnom the caller passes.
+ */
+export function moduleAreaStats(l: SavedLayout | null | undefined, nameplateW: number | null | undefined): { areaM2: number | null; effPct: number | null } {
+  if (!l) return { areaM2: null, effPct: null };
+  const panels = allPanels(l);
+  if (!panels.length) return { areaM2: null, effPct: null };
+  const areaM2 = panels.reduce((a, p) => a + (p.w * p.h) / 1e6, 0);
+  const per = areaM2 / panels.length;
+  const effPct = isNum(nameplateW) && nameplateW > 0 && per > 0 ? (nameplateW / (per * 1000)) * 100 : null;
+  return { areaM2, effPct };
+}

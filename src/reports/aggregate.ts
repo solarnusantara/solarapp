@@ -134,13 +134,22 @@ export function horizonAverage(points: Array<{ azimuth_deg: number; elevation_de
   return area / 360;
 }
 
-/** helio azimuth (0 = N, 90 = E) to the plot axis used by the reference (0 = S, east negative). */
-export const toSouthZeroAzimuth = (azHelio: number) => {
-  let a = azHelio - 180;
-  while (a > 180) a -= 360;
-  while (a <= -180) a += 360;
-  return a;
+const norm180 = (a: number) => {
+  let x = a;
+  while (x > 180) x -= 360;
+  while (x <= -180) x += 360;
+  return x === 0 ? 0 : x; // no -0
 };
+
+/**
+ * helio azimuth (0 = N, 90 = E) to the PVsyst plot axis, which is measured from the direction of the
+ * EQUATOR, east negative, west positive: northern hemisphere 0 = south, southern hemisphere 0 = north.
+ * Range (-180, 180]. Unknown latitude is treated as northern.
+ */
+export const pvsystAzimuth = (azHelio: number, latDeg?: number | null) => (isNum(latDeg) && latDeg < 0 ? norm180(-azHelio) : norm180(azHelio - 180));
+
+/** Northern-hemisphere form of {@link pvsystAzimuth} (0 = south). */
+export const toSouthZeroAzimuth = (azHelio: number) => pvsystAzimuth(azHelio, 1);
 
 type XY = [number, number];
 
@@ -150,11 +159,11 @@ type XY = [number, number];
  * that crosses it is cut there (end point interpolated onto the edge) instead of being drawn as
  * one line across the whole chart.
  */
-export function sunPathSegments(samples: Array<{ azimuth_deg: number; elevation_deg: number; minute_of_day?: number }> | null | undefined): XY[][] {
+export function sunPathSegments(samples: Array<{ azimuth_deg: number; elevation_deg: number; minute_of_day?: number }> | null | undefined, latDeg?: number | null): XY[][] {
   const pts = (samples ?? [])
     .filter((s) => isNum(s.azimuth_deg) && isNum(s.elevation_deg) && s.elevation_deg > 0)
     .sort((a, b) => (a.minute_of_day ?? 0) - (b.minute_of_day ?? 0))
-    .map((s): XY => [toSouthZeroAzimuth(s.azimuth_deg), s.elevation_deg]);
+    .map((s): XY => [pvsystAzimuth(s.azimuth_deg, latDeg), s.elevation_deg]);
   return splitAtAzimuthWrap(pts);
 }
 
@@ -213,7 +222,8 @@ export function monthlyBalance(h: HourlyTable | null | undefined, columns: Hourl
   const globHor = monthlyEnergy(h, columns, "ghi");
   const diffHor = monthlyEnergy(h, columns, "dhi");
   const globInc = monthlyEnergy(h, columns, "poa_irradiance");
-  const globEff = monthlyEnergy(h, columns, "effective_irradiance");
+  // PVsyst GlobEff = effective global corrected for IAM, shadings AND soiling: the after-soiling column.
+  const globEff = monthlyEnergy(h, columns, "soiled_irradiance");
   const eArray = monthlyEnergy(h, columns, "optimal_dc_power") ?? monthlyEnergy(h, columns, "module_power");
   const eGrid = monthlyEnergy(h, columns, "grid_power");
   const tAmb = monthlyMean(h, "temp_air");
@@ -224,4 +234,74 @@ export function monthlyBalance(h: HourlyTable | null | undefined, columns: Hourl
   const ls = ok && eGrid && eArray ? perDay(eArray.map((v, i) => v - eGrid[i])) : null;
   const lc = ok && eGrid && eArray && globInc ? globInc.map((g, i) => (g - eArray[i] / dcKwp!) / NONLEAP_DAYS[i]) : null;
   return { globHor, diffHor, tAmb, globInc, globEff, eArray, eGrid, pr, lc, ls, yf };
+}
+
+type SunSample = { azimuth_deg: number; elevation_deg: number; minute_of_day?: number };
+
+/**
+ * Yellow region of the sun-path chart: the area swept by the daily paths. `days` are the sun-position
+ * samples of consecutive dates ordered from one solstice to the other. For every pair of neighbouring
+ * dates and every pair of consecutive same-minute samples (all four above the horizon) one quad is
+ * produced; the union of those quads is the swept region, so there is no polygon between two curves
+ * that could self-intersect. A quad that straddles the +-180 azimuth edge is unwrapped (its points are
+ * made continuous) and the chart draws it again shifted by +-360, clipped to the plot.
+ */
+export function sunBandQuads(days: Array<SunSample[] | null | undefined>, latDeg?: number | null): XY[][] {
+  const usable = days.filter((d): d is SunSample[] => !!d && d.length > 0);
+  if (usable.length < 2) return [];
+  const maps = usable.map((d) => { const m = new Map<number, SunSample>(); for (const x of d) if (isNum(x.minute_of_day)) m.set(x.minute_of_day, x); return m; });
+  const minutes = [...maps[0].keys()].sort((a, b) => a - b);
+  const pt = (x: SunSample): XY => [pvsystAzimuth(x.azimuth_deg, latDeg), x.elevation_deg];
+  const quads: XY[][] = [];
+  for (let k = 0; k + 1 < maps.length; k++) {
+    for (let i = 0; i + 1 < minutes.length; i++) {
+      const m0 = minutes[i], m1 = minutes[i + 1];
+      if (m1 - m0 > 60) continue;
+      const c = [maps[k].get(m0), maps[k].get(m1), maps[k + 1].get(m1), maps[k + 1].get(m0)];
+      if (c.some((x) => !x || !(x.elevation_deg > 0))) continue;
+      const q = (c as SunSample[]).map(pt);
+      // unwrap relative to the first corner so the quad is continuous
+      for (let j = 1; j < 4; j++) { while (q[j][0] - q[0][0] > 180) q[j][0] -= 360; while (q[j][0] - q[0][0] < -180) q[j][0] += 360; }
+      quads.push(q);
+    }
+  }
+  return quads;
+}
+
+/**
+ * Sky-view (diffuse) factor of a horizon profile for a horizontal plane under an isotropic sky:
+ * 1 - mean over azimuth of sin^2(height). Pure geometry on the profile the engine used; no profile -> null.
+ */
+export function horizonDiffuseFactor(points: Array<{ azimuth_deg: number; elevation_deg: number }> | null | undefined): number | null {
+  if (!points || points.length === 0 || !points.every((p) => isNum(p.azimuth_deg) && isNum(p.elevation_deg))) return null;
+  const pts = points.map((p) => ({ a: ((p.azimuth_deg % 360) + 360) % 360, e: Math.max(0, p.elevation_deg) })).sort((x, y) => x.a - y.a);
+  const at = (az: number) => {
+    if (pts.length === 1) return pts[0].e;
+    let i = pts.findIndex((p) => p.a > az);
+    if (i === -1) i = 0;
+    const q = pts[i], p = pts[(i - 1 + pts.length) % pts.length];
+    const pa = p.a > az ? p.a - 360 : p.a, qa = q.a < az ? q.a + 360 : q.a;
+    return qa === pa ? q.e : p.e + ((az - pa) / (qa - pa)) * (q.e - p.e);
+  };
+  let acc = 0;
+  for (let az = 0; az < 360; az += 0.5) { const h = (at(az) * Math.PI) / 180; acc += Math.sin(h) ** 2; }
+  return 1 - acc / 720;
+}
+
+/** Monthly balance straight from helio's production.engineering.monthly_balance (same numbers the engine computed). */
+export function monthlyBalanceFromEngineering(rows: Array<{ month: number; glob_hor_kwh_m2: number; diff_hor_kwh_m2: number | null; t_amb_c: number; glob_inc_kwh_m2: number; glob_eff_kwh_m2: number; e_array_kwh: number | null; e_grid_kwh: number; pr_pct: number | null }> | null | undefined, dcKwp: number | null): MonthlyBalance | null {
+  if (!rows || rows.length !== 12) return null;
+  const by = [...rows].sort((a, b) => a.month - b.month);
+  const all = <T,>(f: (r: (typeof by)[number]) => T | null): T[] | null => { const v = by.map(f); return v.every((x) => x !== null && (typeof x !== "number" || Number.isFinite(x))) ? (v as T[]) : null; };
+  const ok = isNum(dcKwp) && dcKwp > 0;
+  const eGrid = by.map((r) => r.e_grid_kwh), globInc = by.map((r) => r.glob_inc_kwh_m2);
+  const eArray = all((r) => r.e_array_kwh);
+  const perDay = (a: number[]) => a.map((v, i) => v / dcKwp! / NONLEAP_DAYS[i]);
+  return {
+    globHor: by.map((r) => r.glob_hor_kwh_m2), diffHor: all((r) => r.diff_hor_kwh_m2), tAmb: by.map((r) => r.t_amb_c), globInc,
+    globEff: by.map((r) => r.glob_eff_kwh_m2), eArray, eGrid, pr: all((r) => (r.pr_pct === null ? null : r.pr_pct / 100)),
+    yf: ok ? perDay(eGrid) : null,
+    ls: ok && eArray ? perDay(eArray.map((v, i) => v - eGrid[i])) : null,
+    lc: ok && eArray ? globInc.map((g, i) => (g - eArray[i] / dcKwp!) / NONLEAP_DAYS[i]) : null,
+  };
 }

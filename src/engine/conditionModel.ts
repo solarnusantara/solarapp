@@ -51,6 +51,20 @@ export interface PresetResult {
   source: string;
 }
 
+/** The ten rows helio needs before it reports P90 (UncertaintyRow keys, helio order). */
+export const UNCERTAINTY_ROWS: ReadonlyArray<{ key: string; label: string }> = [
+  { key: "resource_long_term", label: "Resource jangka panjang" },
+  { key: "iav", label: "Variabilitas antar-tahun (IAV)" },
+  { key: "transposition", label: "Transposisi" },
+  { key: "module_model", label: "Model modul" },
+  { key: "temperature", label: "Suhu" },
+  { key: "soiling", label: "Soiling" },
+  { key: "mismatch", label: "Mismatch" },
+  { key: "inverter", label: "Inverter" },
+  { key: "degradation", label: "Degradasi" },
+  { key: "availability", label: "Ketersediaan" },
+];
+
 export const PVSYST_PRESET_SOURCE = "PLTS-MAS-E-CS-001-00 Rev.00";
 export const PVSYST_PRESET_LABEL = `Sonus PVsyst — sumber: ${PVSYST_PRESET_SOURCE}`;
 
@@ -95,16 +109,20 @@ export function applyPvsystPreset(base: ConditionSet): PresetResult {
       { name: "String mismatch", description: `Strings Mismatch loss 1.5% (${src})`, stage: "dc", monthly_pct: m12(1.5) },
     ],
   };
+  const absent = "tidak dicantumkan di PLTS-MAS-E-CS-001-00 (PVsyst hanya memakai 5 komponen)";
+  const given: Record<string, { sigma_pct: number; source: string }> = {
+    iav: { sigma_pct: 5.5, source: `${src}: year-to-year variability` },
+    module_model: { sigma_pct: 1, source: `${src}: PV module modelling/parameters` },
+    inverter: { sigma_pct: 0.5, source: `${src}: inverter efficiency uncertainty` },
+    soiling: { sigma_pct: 1, source: `${src}: soiling and mismatch uncertainties (gabungan)` },
+    degradation: { sigma_pct: 1, source: `${src}: degradation uncertainty` },
+  };
+  // helio returns no P90 (p90_status = needs_uncertainty_inputs) unless ALL 10 rows carry a sigma, so the
+  // five components PVsyst does not list are sent explicitly as 0 with that stated as the source.
   const uncertainty: UncertaintyInput = {
     horizon_years: 1,
     combination: "rss",
-    components: [
-      { key: "iav", sigma_pct: 5.5, source: `${src}: year-to-year variability` },
-      { key: "module_model", sigma_pct: 1, source: `${src}: PV module modelling/parameters` },
-      { key: "inverter", sigma_pct: 0.5, source: `${src}: inverter efficiency uncertainty` },
-      { key: "soiling", sigma_pct: 1, source: `${src}: soiling and mismatch uncertainties (gabungan)` },
-      { key: "degradation", sigma_pct: 1, source: `${src}: degradation uncertainty` },
-    ],
+    components: UNCERTAINTY_ROWS.map((r) => ({ key: r.key, ...(given[r.key] ?? { sigma_pct: 0, source: absent }) })),
   };
   return { params, uncertainty, unsupported, needsInput, source: PVSYST_PRESET_LABEL };
 }

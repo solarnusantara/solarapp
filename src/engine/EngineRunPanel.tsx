@@ -10,6 +10,8 @@ import { layoutToScene } from "./sceneAdapter";
 import type { SavedLayout } from "./layoutStore";
 import type { EngineInputs } from "./types/local";
 import { RACKING_OPTIONS } from "./racking";
+import { EXPORT_MODE_DEFAULT_LABEL, EXPORT_MODE_OPTIONS } from "./exportMode";
+import { moduleCountMismatch } from "./moduleCount";
 
 const inp: React.CSSProperties = { padding: "5px 8px", borderRadius: 6, border: "1px solid #364b38", background: "#0d1410", color: "inherit", width: "100%" };
 const card: React.CSSProperties = { border: "1px solid #233527", borderRadius: 10, padding: 12, marginTop: 10 };
@@ -79,6 +81,11 @@ export default function EngineRunPanel({ projectId, projectName, layout, inputs,
                 <option value="">— pilih —</option>
                 {RACKING_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
               </select></label>
+            <label style={{ display: "grid", gap: 2, fontSize: 12 }}>Mode ekspor
+              <select style={inp} value={inputs.export_limitation_mode ?? ""} onChange={(e) => patch({ export_limitation_mode: (e.target.value || undefined) as EngineInputs["export_limitation_mode"] })}>
+                <option value="">{EXPORT_MODE_DEFAULT_LABEL}</option>
+                {EXPORT_MODE_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+              </select></label>
             <NumIn label="Kapasitas AC inverter (kW)" value={inputs.inverter_ac_kw} onChange={(v) => patch({ inverter_ac_kw: v })} />
             <label style={{ display: "grid", gap: 2, fontSize: 12 }}>Golongan tarif PLN (mis. I-3, B-2)
               <input style={inp} value={inputs.pln_tariff_code} onChange={(e) => patch({ pln_tariff_code: e.target.value })} /></label>
@@ -122,7 +129,7 @@ export default function EngineRunPanel({ projectId, projectName, layout, inputs,
       {section !== "electrical" && (
         <div style={card}><b>Asumsi simulasi</b>
           <ConditionForm projectHelioId={eng.link?.helio_project_id ?? null} conditionSetId={eng.link?.helio_condition_set_id ?? null}
-            engineInputs={inputs} onEngineInputs={patch} latLon={latLon} />
+            engineInputs={inputs} onEngineInputs={patch} latLon={latLon} p90Status={(eng.result?.output as any)?.uncertainty?.p90_status ?? null} />
         </div>
       )}
 
@@ -133,6 +140,7 @@ export default function EngineRunPanel({ projectId, projectName, layout, inputs,
         {eng.step && <span style={{ fontSize: 12 }}>{eng.step}</span>}
         {!projectId && <span style={{ fontSize: 12, color: "#fbbf24" }}>Simpan proyek di server dulu untuk memakai engine.</span>}
       </div>
+      {(() => { const mc = moduleCountMismatch(ad.moduleCount, eng.result); return mc ? <div role="alert" style={{ color: "#fbbf24", fontSize: 12, marginTop: 6 }}>{mc.message}</div> : null; })()}
       {eng.error && <div style={{ color: "#f87171", fontSize: 12, marginTop: 6 }}>{eng.error}</div>}
       {eng.errors.length > 0 && <ul style={{ color: "#f87171", fontSize: 12 }}>{eng.errors.map((e, i) => <li key={i}>{e}</li>)}</ul>}
       {eng.circuit && (

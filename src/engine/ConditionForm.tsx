@@ -5,11 +5,12 @@ import {
   engineErrorMessage, getConditionDefaults, getConditionSet, getPvgisHorizon, isUnavailable, putConditionSet, UNAVAILABLE_MESSAGE, verbatimError,
 } from "./client";
 import {
-  applyPvsystPreset, MAX_CUSTOM_LOSSES, PVSYST_PRESET_LABEL, serializeConditionSet, type UnsupportedItem,
+  applyPvsystPreset, MAX_CUSTOM_LOSSES, PVSYST_PRESET_LABEL, serializeConditionSet, UNCERTAINTY_ROWS, type UnsupportedItem,
 } from "./conditionModel";
 import type { ConditionSet, CustomLoss } from "./types";
 import type { EngineInputs } from "./types/local";
 
+const isNum = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Agu", "Sep", "Okt", "Nov", "Des"];
 const inp: React.CSSProperties = { padding: "4px 6px", borderRadius: 6, border: "1px solid #364b38", background: "#0d1410", color: "inherit", width: "100%", minWidth: 0 };
 const sec: React.CSSProperties = { border: "1px solid #233527", borderRadius: 8, padding: 10, marginTop: 10 };
@@ -55,8 +56,10 @@ function Derate({ label, value, onChange }: { label: string; value: { mode: "not
   );
 }
 
-export default function ConditionForm({ projectHelioId, conditionSetId, engineInputs, onEngineInputs, latLon = null }: {
+export default function ConditionForm({ projectHelioId, conditionSetId, engineInputs, onEngineInputs, latLon = null, p90Status = null }: {
   latLon?: { lat: number; lon: number } | null;
+  /** `uncertainty.p90_status` of the last run; anything but "ready" is shown next to the uncertainty form. */
+  p90Status?: string | null;
   projectHelioId: string | null;
   conditionSetId: string | null;
   engineInputs: Partial<EngineInputs>;
@@ -112,7 +115,6 @@ export default function ConditionForm({ projectHelioId, conditionSetId, engineIn
 
   const unc = engineInputs.uncertainty ?? { horizon_years: 1, combination: "rss" as const, components: [] };
   const setUnc = (components: typeof unc.components) => onEngineInputs({ uncertainty: { ...unc, components } });
-  const uncKeys = ["resource_long_term", "iav", "transposition", "module_model", "temperature", "soiling", "mismatch", "inverter", "degradation", "availability", "custom"];
 
   const tm = cs.temperature_model;
   const setLoss = (i: number, patch: Partial<CustomLoss>) => set({ custom_losses: cs.custom_losses.map((c, j) => (j === i ? { ...c, ...patch } : c)) });
@@ -220,14 +222,23 @@ export default function ConditionForm({ projectHelioId, conditionSetId, engineIn
           <Num label="Horizon (tahun)" value={unc.horizon_years} onChange={(v) => onEngineInputs({ uncertainty: { ...unc, horizon_years: v ?? 1 } })} />
           <Sel label="Penggabungan" value={unc.combination} options={["rss", "linear"]} onChange={(v) => onEngineInputs({ uncertainty: { ...unc, combination: v } })} />
         </div>
-        <div style={{ ...grid, marginTop: 6 }}>
-          {uncKeys.map((k) => {
+        {p90Status && p90Status !== "ready" && (
+          <div role="alert" style={{ color: "#fbbf24", fontSize: 12, marginTop: 6 }}>Status P90 dari Helio: <b>{p90Status}</b>{p90Status === "needs_uncertainty_inputs" ? " - isi sigma dan sumber untuk ke-10 komponen di bawah." : ""}</div>
+        )}
+        <div style={{ fontSize: 11, opacity: 0.8, marginTop: 6 }}>Sepuluh komponen wajib diisi (nilai dan sumber). Helio tidak menghitung P90 bila ada yang kosong; isi 0 beserta alasannya bila memang tidak dipakai.</div>
+        <div style={{ display: "grid", gap: 6, marginTop: 6 }}>
+          {UNCERTAINTY_ROWS.map(({ key: k, label }) => {
             const row = unc.components.find((c) => c.key === k);
+            const missing = !isNum(row?.sigma_pct) || !row?.source;
+            const upd = (patch: { sigma_pct?: number | null; source?: string | null }) =>
+              setUnc([...unc.components.filter((c) => c.key !== k), { key: k, sigma_pct: row?.sigma_pct ?? null, source: row?.source ?? "", ...patch }]);
             return (
-              <Num key={k} label={`σ ${k} (%)`} value={row?.sigma_pct ?? null} onChange={(v) => {
-                const rest = unc.components.filter((c) => c.key !== k);
-                setUnc(v === null ? rest : [...rest, { key: k, sigma_pct: v, source: row?.source ?? "input pengguna" }]);
-              }} />
+              <div key={k} style={{ display: "grid", gridTemplateColumns: "minmax(120px, 1fr) 90px 2fr", gap: 6, alignItems: "end", borderLeft: missing ? "3px solid #f59e0b" : "3px solid transparent", paddingLeft: 6 }}>
+                <span style={{ fontSize: 12 }}>{label} <code style={{ opacity: 0.6 }}>{k}</code></span>
+                <Num label="σ (%)" value={row?.sigma_pct ?? null} onChange={(v) => upd({ sigma_pct: v })} />
+                <label style={{ display: "grid", gap: 2, fontSize: 12 }}>Sumber
+                  <input style={inp} value={row?.source ?? ""} onChange={(e) => upd({ source: e.target.value })} /></label>
+              </div>
             );
           })}
         </div>

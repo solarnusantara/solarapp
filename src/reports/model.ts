@@ -6,6 +6,7 @@ import type { SolarYieldResult } from "../gisSolarService";
 import type { SavedLayout } from "../engine/layoutStore";
 import { weatherLabel } from "../engine/weather";
 import { firstOf, isNum, pick } from "./format";
+import { LOSS_SLICES, helioscopeStageLabel } from "./labels";
 
 export const out = (r: EngineResultSummary | null | undefined): any => r?.output ?? null;
 export const prod = (r: EngineResultSummary | null | undefined): any => r?.production ?? null;
@@ -24,11 +25,24 @@ export interface LossGroup {
   rows: StageSummary[];
 }
 
-/** Rows that carry a value, grouped by section in engine order. `not_modeled` / null annual are dropped. */
+/** Stages that exist only for designs that use them; hidden when not modelled (monofacial / no optimizer). */
+const OPTIONAL_STAGES = new Set(["effective_rear_irradiance", "optimizer_output_power"]);
+
+/**
+ * Rows of the Annual Production table grouped by section in engine order. Stages with a value are shown;
+ * a stage HelioScope always lists (it has a `helioscope_label`) is kept even when not modelled, so it
+ * prints "-" instead of vanishing; optional stages (rear side, optimizer) and anything else unmodelled are dropped.
+ */
 export function lossGroups(r: EngineResultSummary | null | undefined, onlyShown = true): LossGroup[] {
   const groups: LossGroup[] = [];
   for (const s of ["irradiance", "energy"] as const) {
-    const rows = lossTree(r).filter((x) => x.section === s && (!onlyShown || (x.status !== "not_modeled" && isNum(x.annual))));
+    const rows = lossTree(r).filter((x) => {
+      if (x.section !== s) return false;
+      if (!onlyShown) return true;
+      if (OPTIONAL_STAGES.has(x.key)) return x.status !== "not_modeled" && isNum(x.annual) && x.annual !== 0; // monofacial / no optimizer: absent
+      if (x.status !== "not_modeled" && isNum(x.annual)) return true;
+      return !!x.helioscope_label && !OPTIONAL_STAGES.has(x.key);
+    });
     if (rows.length) groups.push({ section: s, rows });
   }
   return groups;
@@ -37,17 +51,21 @@ export function lossGroups(r: EngineResultSummary | null | undefined, onlyShown 
 /** The last row of each section is the section total (Total Collector Irradiance / Energy to Grid). */
 export const isTotalRow = (g: LossGroup, i: number) => i === g.rows.length - 1;
 
-export interface DonutSlice { label: string; value: number }
-/** System-loss donut: |delta_pct| of every loss row (totals and base rows excluded). */
+export interface DonutSlice { label: string; value: number; color: string }
+/**
+ * System-loss donut: exactly HelioScope's ten slices (Shading, Reflection, Soiling, Irradiance, Temperature,
+ * Mismatch, Wiring, Clipping, Inverter, AC System), each |delta_pct| of its own stage (% of the previous
+ * stage). The GHI -> POA transposition step is never a slice. Stages without a loss are left out.
+ */
 export function donutSlices(r: EngineResultSummary | null | undefined): DonutSlice[] {
-  const slices: DonutSlice[] = [];
-  for (const g of lossGroups(r)) {
-    g.rows.forEach((row, i) => {
-      if (isTotalRow(g, i) || !isNum(row.delta_pct) || row.delta_pct >= 0) return;
-      slices.push({ label: row.label || row.helioscope_label || row.key, value: Math.abs(row.delta_pct) });
-    });
+  const tree = lossTree(r);
+  const out: DonutSlice[] = [];
+  for (const sl of LOSS_SLICES) {
+    const st = tree.find((x) => x.key === sl.key);
+    if (!st || st.status === "not_modeled" || !isNum(st.delta_pct) || st.delta_pct >= 0 || Math.abs(st.delta_pct) < 0.05) continue; // a slice below the printed 0.1 % precision is not drawn
+    out.push({ label: sl.name, value: Math.abs(st.delta_pct), color: sl.color });
   }
-  return slices;
+  return out;
 }
 
 export const stringingReports = (r: EngineResultSummary | null | undefined): StringingReport[] => {
@@ -166,7 +184,7 @@ export function lossLines(r: EngineResultSummary | null | undefined): LossLine[]
   for (const g of lossGroups(r)) {
     g.rows.forEach((row, i) => {
       if (isTotalRow(g, i) || !isNum(row.delta_pct) || row.delta_pct === 0) return;
-      lines.push({ label: row.helioscope_label || row.label || row.key, pct: row.delta_pct });
+      lines.push({ label: helioscopeStageLabel(row), pct: row.delta_pct });
     });
   }
   return lines;
@@ -180,12 +198,20 @@ export function uncertaintyRows(r: EngineResultSummary | null | undefined): Arra
 
 /** IAM table [{angle_deg, value}] if present under any of the names the engine may use. */
 export function iamTable(r: EngineResultSummary | null | undefined): Array<{ angle: number; value: number }> | null {
+  const eng = prod(r)?.engineering?.iam_table?.rows;
+  if (Array.isArray(eng) && eng.length) {
+    const rows = eng.map((x: any) => ({ angle: x?.aoi_deg, value: x?.factor })).filter((x: any) => isNum(x.angle) && isNum(x.value));
+    if (rows.length) return rows;
+  }
   const t = firstOf(out(r), "iam_table", "iam_profile", "module_model.iam_table") ?? firstOf(prod(r), "iam_table", "iam_profile", "design.iam_table");
   if (!Array.isArray(t)) return null;
   const rows = t.map((x: any) => (Array.isArray(x) ? { angle: x[0], value: x[1] } : { angle: x?.angle_deg ?? x?.angle, value: x?.value ?? x?.iam ?? x?.factor }))
     .filter((x) => isNum(x.angle) && isNum(x.value));
   return rows.length ? rows : null;
 }
+
+/** production.engineering (helio >= 9fd4da8) or null. */
+export const engineering = (r: EngineResultSummary | null | undefined) => (prod(r)?.engineering ?? null) as import("../engine/types/local").EngineeringCalc | null;
 
 export const mean = (a: number[]) => a.reduce((x, y) => x + y, 0) / a.length;
 export const pickNum = (o: unknown, ...p: Array<string | number>) => { const v = pick(o, ...p); return isNum(v) ? v : null; };

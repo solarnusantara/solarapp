@@ -1,1 +1,1 @@
-export const HELIO_TYPES_SHA = "8818a57";
+export const HELIO_TYPES_SHA = "9fd4da8";

@@ -3,12 +3,16 @@
 // comes from the engine result / hourly table / sun-position / report-meta; missing -> "—".
 import { createContext, useContext, type ReactNode } from "react";
 import { reportAssetUrl } from "../engine/client";
-import { Report3DViewport } from "../EngineeringReport";
-import { monthlyBalance, dailyInOut, powerHistogram, horizonAverage, toSouthZeroAzimuth, sunPathSegments, splitAtAzimuthWrap, behindPlaneSegments, col, type MonthlyBalance } from "./aggregate";
+import { monthlyBalance, monthlyBalanceFromEngineering, dailyInOut, powerHistogram, horizonAverage, horizonDiffuseFactor, pvsystAzimuth, sunPathSegments, splitAtAzimuthWrap, behindPlaneSegments, sunBandQuads, col, type MonthlyBalance } from "./aggregate";
 import { NormalCurve, Scatter, StackedBars, StepHistogram, SunPathChart, Waterfall, BarChart, type SunCurve, type SunHourLine, type WaterfallItem } from "./charts";
-import { DASH, MONTHS_SHORT, MONTHS_EN, dateLong, dateTime, isNum, monthlyUniform, n, pct, plain, text } from "./format";
-import { viewport3DProps } from "./layoutGeometry";
-import { conditionSet, horizonPoints, iamTable, lossGroups, orientations, out, prod, sourceLabel, stringingReports, uncertaintyRows, weatherVariability } from "./model";
+import { DASH, MONTHS_SHORT, MONTHS_EN, dateLong, firstOf, dateTime, isNum, monthlyUniform, n, pct, plain, text } from "./format";
+import { moduleAreaStats } from "./layoutGeometry";
+import NearShadingScene from "./NearShadingScene";
+import { buildIsoScene } from "./isoProjection";
+import LossDiagram from "./LossFunnel";
+import { exportModeLabel } from "../engine/exportMode";
+import { sigmaEnergy, Z } from "./probability";
+import { conditionSet, engineering, horizonPoints, iamTable, lossGroups, lossTree, orientations, out, prod, sourceLabel, stringingReports, uncertaintyRows, weatherVariability } from "./model";
 import { LogoImg, Sheet, SOLAR_NUSANTARA_LOGO, SourceNotice, type ReportProps } from "./parts";
 import { SUN_DATES } from "./useReportData";
 
@@ -16,6 +20,9 @@ const Row = ({ k, v }: { k: string; v: ReactNode }) => (<div className="sim-row"
 const Box = ({ title, children }: { title: string; children: ReactNode }) => (
   <div className="sim-box"><div className="sim-box-title">{title}</div>{children}</div>
 );
+
+/** PVsyst-style mounting phrase per helio Racking. */
+const MOUNTING: Record<string, string> = { fixed_tilt: "Tables on a building", flush_mount: "Flush mounted on a building roof", east_west: "East-West tables on a building", carport: "Carport (shed) structure" };
 
 export default function EngineeringCalc({ data, projectId, project }: ReportProps) {
   const { result, layout, meta, hourly, sun, shade } = data;
@@ -31,12 +38,20 @@ export default function EngineeringCalc({ data, projectId, project }: ReportProp
   const ver = result?.engine_version ? `Helio engine v${result.engine_version}` : "Helio engine";
   const simDate = dateTime(result?.ran_at);
   const ords = orientations(result, lay);
+  // PVsyst measures azimuth from the direction of the equator (south hemisphere: 0 = north, east negative).
+  const latDeg: number | null = isNum(result?.output?.weather?.latitude) ? result.output.weather.latitude : isNum(lay?.site?.coordinates?.lat) ? lay.site.coordinates.lat : null;
+  const azP = (a: number) => pvsystAzimuth(a, latDeg);
+  const rackKey = p?.design?.racking ?? o?.thermal?.racking ?? null;
+  const mountingText = rackKey ? MOUNTING[String(rackKey)] ?? String(rackKey).replace(/_/g, " ") : DASH;
+  const needsTxt = text(o?.consumption_source) === DASH ? "Unlimited load (grid)" : text(o?.consumption_source);
+  const exportTxt = result ? exportModeLabel((result.input as any)?.export_limitation_mode) : DASH;
   const reports = stringingReports(result);
   const invs: any[] = Array.isArray(o?.inverters_summary) ? o.inverters_summary : [];
   const mod = result?.components?.module, inv = result?.components?.inverter;
   const horizon = horizonPoints(result, lay);
   const hr = hourly.data?.hourly, cols = hourly.data?.columns;
-  const bal: MonthlyBalance = monthlyBalance(hr, cols, isNum(dc) ? dc : null);
+  const eng = engineering(result);
+  const bal: MonthlyBalance = monthlyBalanceFromEngineering(eng?.monthly_balance, isNum(dc) ? dc : null) ?? monthlyBalance(hr, cols, isNum(dc) ? dc : null);
   const monthlyProd: any[] = Array.isArray(p?.monthly) ? p.monthly : [];
   const arrOr = (a: number[] | null, key: string): Array<number | null> => (a ?? MONTHS_SHORT.map((_, i) => (isNum(monthlyProd[i]?.[key]) ? monthlyProd[i][key] : null)));
   const globHor = arrOr(bal.globHor, "ghi_kwh_m2"), globInc = arrOr(bal.globInc, "poa_kwh_m2"), eGrid = arrOr(bal.eGrid, "energy_to_grid_kwh");
@@ -65,7 +80,7 @@ export default function EngineeringCalc({ data, projectId, project }: ReportProp
       <div style={{ fontSize: 16, display: "inline-block", borderBottom: "1px solid #111", padding: "0 20mm 3px", marginTop: 6 }}>Grid-Connected System</div>
       <div style={{ fontSize: 18, marginTop: "7mm" }}>Project: {name}</div>
       <div style={{ fontSize: 14, marginTop: 4 }}>Variant: {variant}</div>
-      <div style={{ fontSize: 14, marginTop: 4 }}>{text(p?.design?.racking ? String(p.design.racking).replace("_", " ") : null)}</div>
+      <div style={{ fontSize: 14, marginTop: 4 }}>{mountingText}</div>
       <div style={{ fontSize: 14, marginTop: 4 }}>System power: {variant}</div>
       <div style={{ fontSize: 13, marginTop: 4 }}>{text(m?.owner_name || m?.client)}</div>
       <div style={{ fontSize: 10, color: "#475569", marginTop: "12mm" }}>Dihasilkan oleh {ver}</div>
@@ -90,14 +105,14 @@ export default function EngineeringCalc({ data, projectId, project }: ReportProp
       </Box>
       <Box title="System summary">
         <div className="sim-cols" style={{ gridTemplateColumns: "1fr 1fr 1fr" }}>
-          <div><h5>Grid-Connected System</h5><div>{text(p?.design?.racking ? String(p.design.racking).replace("_", " ") : null)}</div></div>
+          <div><h5>Grid-Connected System</h5><div>{mountingText}</div></div>
           <div /><div />
           <div><h5>PV Field Orientation</h5>
             <Row k="Planes" v={ords.length ? `${ords.length} orientation${ords.length > 1 ? "s" : ""}` : DASH} />
-            <Row k="Tilts/azimuths" v={ords.length ? <>{ords.map((x, i) => <div key={i}>{n(x.tilt, 0, { group: false })} / {n(x.azimuth, 0, { group: false })} °</div>)}</> : DASH} />
+            <Row k="Tilts/azimuths" v={ords.length ? <>{ords.map((x, i) => <div key={i}>{n(x.tilt, 0, { group: false })} / {isNum(x.azimuth) ? n(azP(x.azimuth), 0, { group: false }) : DASH} °</div>)}</> : DASH} />
           </div>
           <div><h5>Near Shadings</h5><div>{text(cs ? "3D scene (Helio engine)" : null)}</div></div>
-          <div><h5>User's needs</h5><div>{text(o?.consumption_source)}</div></div>
+          <div><h5>User's needs</h5><div>{needsTxt}</div><div>Export mode: {exportTxt}</div></div>
         </div>
         <div className="sim-cols" style={{ gridTemplateColumns: "1fr 1fr", marginTop: 8 }}>
           <div><h5>PV Array</h5><Row k="Nb. of modules" v={`${n(p?.design?.module_count, 0)} units`} /><Row k="Pnom total" v={isNum(dc) ? `${n(dc, 0)} kWp` : DASH} /></div>
@@ -121,8 +136,13 @@ export default function EngineeringCalc({ data, projectId, project }: ReportProp
     const len = r.strings?.map((s) => s.module_count) ?? [];
     const series = len.length && len.every((x) => x === len[0]) ? String(len[0]) : DASH;
     const o1 = ords.length === 1 ? ords[0] : null;
-    const op50: any = (r as any).operating_50c ?? (r as any).operating_conditions ?? null;
-    return { i, r, iv, series, o1, op50 };
+    const er = eng?.arrays?.find((x) => x.inverter_id === r.inverter_id) ?? null;
+    const op50 = er ? { p_mpp_kw: er.pmpp_50c_kw, u_mpp_v: er.umpp_50c_v, i_mpp_a: er.impp_50c_a } : null;
+    // plane of this array = the design array that owns its first string
+    const sid = r.strings?.[0]?.string_id;
+    const da = sid ? (prod(result)?.design?.arrays ?? []).find((x: any) => Array.isArray(x.string_ids) && x.string_ids.includes(sid)) : null;
+    const plane = da && isNum(da.tilt_deg) && isNum(da.azimuth_deg) ? { tilt: da.tilt_deg, az: da.azimuth_deg } : null;
+    return { i, r, iv, series, o1, op50, er, plane };
   });
   const ArrayBlock = ({ a }: { a: (typeof arrayRows)[number] }) => (
     <div style={{ marginBottom: 8 }}>
@@ -130,7 +150,7 @@ export default function EngineeringCalc({ data, projectId, project }: ReportProp
         <div>
           <h5>Array #{a.i + 1} - {a.r.inverter_id}</h5>
           <Row k="Orientation" v={a.o1 ? `#${a.o1.id}` : DASH} />
-          <Row k="Tilt/Azimuth" v={a.o1 ? `${n(a.o1.tilt, 0, { group: false })}/${n(a.o1.azimuth, 0, { group: false })} °` : DASH} />
+          <Row k="Tilt/Azimuth" v={a.plane ? `${n(a.plane.tilt, 0, { group: false })}/${n(azP(a.plane.az), 0, { group: false })} °` : a.o1 ? `${n(a.o1.tilt, 0, { group: false })}/${isNum(a.o1.azimuth) ? n(azP(a.o1.azimuth), 0, { group: false }) : DASH} °` : DASH} />
           <Row k="Number of PV modules" v={`${n(a.r.strung_module_count)} units`} />
           <Row k="Nominal (STC)" v={`${n(a.r.strung_dc_kwp, 0)} kWp`} />
           <Row k="Modules" v={`${n(a.r.string_count)} string x ${a.series} in series`} />
@@ -144,9 +164,9 @@ export default function EngineeringCalc({ data, projectId, project }: ReportProp
           <Row k="Number of inverters" v={`${a.r.mppt_string_counts.length} MPPT, 1 unit`} />
           <Row k="Total power" v={isNum(a.iv?.nominal_ac_kw) ? `${n(a.iv.nominal_ac_kw, 0)} kWac` : DASH} />
           <h5 style={{ marginTop: 3 }}>&nbsp;</h5>
-          <Row k="Operating voltage" v={DASH} />
+          <Row k="Operating voltage" v={a.er ? `${n(a.er.mppt_v_min_v, 0, { group: false })}-${n(a.er.mppt_v_max_v, 0, { group: false })} V` : DASH} />
           <Row k="Max. power (=>30°C)" v={DASH} />
-          <Row k="Pnom ratio (DC:AC)" v={isNum(a.iv?.nominal_ac_kw) && a.iv.nominal_ac_kw > 0 ? n(a.r.strung_dc_kwp / a.iv.nominal_ac_kw, 2) : DASH} />
+          <Row k="Pnom ratio (DC:AC)" v={a.er ? n(a.er.dc_ac_ratio, 2) : isNum(a.iv?.nominal_ac_kw) && a.iv.nominal_ac_kw > 0 ? n(a.r.strung_dc_kwp / a.iv.nominal_ac_kw, 2) : DASH} />
         </div>
       </div>
     </div>
@@ -174,7 +194,7 @@ export default function EngineeringCalc({ data, projectId, project }: ReportProp
   const FIRST_ARR = 3, REST_ARR = 5;
   const arrChunks = [arrayRows.slice(0, FIRST_ARR)];
   for (let i = FIRST_ARR; i < arrayRows.length; i += REST_ARR) arrChunks.push(arrayRows.slice(i, i + REST_ARR));
-  const orientTxt = ords.length ? ords.map((x) => `${n(x.tilt, 0, { group: false })} / ${n(x.azimuth, 0, { group: false })} °`) : [];
+  const orientTxt = ords.length ? ords.map((x) => `${n(x.tilt, 0, { group: false })} / ${isNum(x.azimuth) ? n(azP(x.azimuth), 0, { group: false }) : DASH} °`) : [];
   arrChunks.forEach((chunk, ci) => sim(ci === 0 ? "General parameters, PV Array Characteristics, System losses" : undefined, (
     <>
       {ci === 0 && (
@@ -189,7 +209,7 @@ export default function EngineeringCalc({ data, projectId, project }: ReportProp
             </div>
             <div><h5>Horizon</h5><Row k="Average Height" v={isNum(horizonAverage(horizon)) ? `${n(horizonAverage(horizon), 1)} °` : DASH} /></div>
             <div><h5>Near Shadings</h5><div>{text(cs ? "3D scene (Helio engine)" : null)}</div></div>
-            <div><h5>User's needs</h5><div>{text(o?.consumption_source)}</div></div>
+            <div><h5>User's needs</h5><div>{needsTxt}</div><div>Export mode: {exportTxt}</div></div>
           </div>
         </Box>
       )}
@@ -253,7 +273,7 @@ export default function EngineeringCalc({ data, projectId, project }: ReportProp
       </Box>
       <Box title="AC wiring losses">
         <h5>Inv. output line up to injection point</h5>
-        <Row k="Inverter voltage" v={isNum(ws?.ac_line_voltage_v) && ws.ac_line_voltage_v > 0 ? `${n(ws.ac_line_voltage_v, 0)} Vac${ws.ac_phase_system ? ` ${String(ws.ac_phase_system).replace(/_/g, " ")}` : ""}` : DASH} />
+        <Row k="Inverter voltage" v={isNum(ws?.ac_line_voltage_v) && ws.ac_line_voltage_v > 0 ? `${n(ws.ac_line_voltage_v, 0)} Vac${ws.ac_phase_system ? ` ${/^three_phase/.test(String(ws.ac_phase_system)) ? "tri" : /^single_phase/.test(String(ws.ac_phase_system)) ? "mono" : String(ws.ac_phase_system).replace(/_/g, " ")}` : ""}` : DASH} />
         <Row k="Loss Fraction" v={lossRowsCS?.acl ?? DASH} />
         <Row k="AC wiring loss at STC" v={isNum(ws?.ac_wiring_loss_stc_kw) ? `${n(ws.ac_wiring_loss_stc_kw, 2)} kW` : DASH} />
         <Row k="Wire section" v={acEntries.length ? `${text(acEntries[0].material)} ${n(acEntries[0].num_conductors, 0)} x ${n(acEntries[0].cross_section_mm2, 0)} mm²` : DASH} />
@@ -263,20 +283,22 @@ export default function EngineeringCalc({ data, projectId, project }: ReportProp
   ));
 
   // horizon + sun paths
-  const hProfile = horizon ? [...horizon].map((q) => ({ az: Math.round(toSouthZeroAzimuth(q.azimuth_deg)), el: q.elevation_deg })).sort((a, b) => a.az - b.az) : null;
+  const hProfile = horizon ? [...horizon].map((q) => ({ az: Math.round(azP(q.azimuth_deg)), el: q.elevation_deg })).sort((a, b) => a.az - b.az) : null;
   const horizonLine: Array<[number, number]> | null = hProfile ? hProfile.map((q) => [q.az, q.el] as [number, number]) : null;
-  const curves: SunCurve[] = SUN_DATES.map((d) => ({ label: d.label, num: d.key, segments: sunPathSegments(sun.data?.[d.key]?.samples) }));
+  const curves: SunCurve[] = SUN_DATES.map((d) => ({ label: d.label, num: d.key, segments: sunPathSegments(sun.data?.[d.key]?.samples, latDeg) }));
   // Hour lines join the same solar hour across the dates; only drawn when the engine answered in solar time.
   const hourLines: SunHourLine[] = [];
   if (SUN_DATES.every((d) => sun.data?.[d.key]?.time_basis === "solar")) {
-    for (let hour = 5; hour <= 19; hour++) {
+    for (let hour = 7; hour <= 17; hour++) {
       const pts = SUN_DATES.map((d) => sun.data?.[d.key]?.samples.find((s) => s.minute_of_day === hour * 60))
         .filter((s): s is NonNullable<typeof s> => !!s && s.elevation_deg > 0)
-        .map((s): [number, number] => [toSouthZeroAzimuth(s.azimuth_deg), s.elevation_deg]);
+        .map((s): [number, number] => [azP(s.azimuth_deg), s.elevation_deg]);
       const segments = splitAtAzimuthWrap(pts);
       if (segments.length) hourLines.push({ hour, segments });
     }
   }
+  const albedoFactor = firstOf(shade.data, "albedo_factor", "horizon.albedo_factor") ?? firstOf(out(result), "horizon_albedo_factor");
+  const sunBand = sunBandQuads(SUN_DATES.map((d) => sun.data?.[d.key]?.samples), latDeg);
   const horizonChunks: Array<typeof hProfile> = [];
   if (hProfile) for (let i = 0; i < hProfile.length; i += 14) horizonChunks.push(hProfile.slice(i, i + 14));
   sim("Horizon definition", (
@@ -284,6 +306,8 @@ export default function EngineeringCalc({ data, projectId, project }: ReportProp
       <div style={{ fontWeight: 700, marginBottom: 4 }}>Horizon: {horizon ? text((result?.input as any)?.horizon_source ?? lay?.engine_inputs?.horizon_source ?? "profil dari input simulasi") : DASH}</div>
       <div className="sim-cols" style={{ gridTemplateColumns: "1fr 1fr", marginBottom: 6 }}>
         <Row k="Average Height" v={isNum(horizonAverage(horizon)) ? `${n(horizonAverage(horizon), 1)} °` : DASH} />
+        <Row k="Diffuse Factor" v={isNum(horizonDiffuseFactor(horizon)) ? n(horizonDiffuseFactor(horizon), 2, { group: false }) : DASH} />
+        <Row k="Albedo Factor / Fraction" v={isNum(albedoFactor) ? n(albedoFactor, 2, { group: false }) : `${DASH} tidak disediakan engine`} />
       </div>
       <h5 style={{ textAlign: "center" }}>Horizon profile</h5>
       {horizonChunks.length ? horizonChunks.map((ch, i) => (
@@ -295,24 +319,20 @@ export default function EngineeringCalc({ data, projectId, project }: ReportProp
       <h5 style={{ marginTop: 8 }}>Sun Paths (Height / Azimuth diagram)</h5>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
         {(ords.length ? ords : [{ id: "1", tilt: null, azimuth: null } as any]).slice(0, 4).map((x: any) => (
-          <SunPathChart key={x.id} curves={curves} hourLines={hourLines} behind={isNum(x.tilt) && isNum(x.azimuth) ? behindPlaneSegments(x.tilt, toSouthZeroAzimuth(x.azimuth)) : undefined} horizon={horizonLine} title={`Orientation #${x.id}`} subtitle={isNum(x.tilt) ? `Fixed plane, Tilts/azimuths: ${n(x.tilt, 0, { group: false })}°/ ${n(x.azimuth, 0, { group: false })}°` : undefined} />
+          <SunPathChart key={x.id} curves={curves} hourLines={hourLines} behind={isNum(x.tilt) && isNum(x.azimuth) ? behindPlaneSegments(x.tilt, azP(x.azimuth)) : undefined} horizon={horizonLine} band={sunBand} title={`Orientation #${x.id}`} subtitle={isNum(x.tilt) ? `Fixed plane, Tilts/azimuths: ${n(x.tilt, 0, { group: false })}°/ ${n(azP(x.azimuth), 0, { group: false })}°` : undefined} />
         ))}
       </div>
-      <div style={{ fontSize: 9, marginTop: 4 }}>{SUN_DATES.map((d) => `${d.key}: ${d.label}`).join("   ")}</div>
     </Box>
   ));
 
   // near shading 3D (+ iso note)
-  const vp = viewport3DProps(lay, projectId ?? project?.id);
+  const isoScene = lay ? buildIsoScene(lay) : null;
   const isoUsable = !!(shade.data && typeof shade.data === "object" && ((shade.data as any).iso || (shade.data as any).orientations?.some?.((x: any) => x?.iso)));
   sim("Near shading definition - Iso-shadings diagram", (
     <Box title="Near shadings parameter">
       <div style={{ textAlign: "center", fontWeight: 700, marginBottom: 4 }}>Perspective of the PV-field and surrounding shading scene</div>
-      {vp ? (
-        <div style={{ height: "125mm", border: "1px solid #cbd5e1" }}>
-          <Report3DViewport panels={vp.panels} obstacles={vp.obstacles} areaW={vp.areaW} areaH={vp.areaH} moduleW={vp.moduleW} moduleH={vp.moduleH} tilt={vp.tilt}
-            siteCorners={vp.siteCorners} theme="light" interactive={false} height={470} defaultHour={12} coords={vp.coords} hideTimeControls cameraTransform={vp.camera} />
-        </div>
+      {isoScene ? (
+        <div style={{ border: "1px solid #cbd5e1", background: "#fff" }}><NearShadingScene layout={lay} height="125mm" /></div>
       ) : <div className="sim-note">{DASH} layout belum dimuat</div>}
       <div className="sim-note" style={{ marginTop: 8 }}>{isoUsable ? "Diagram iso-shading tersedia dari engine (lihat lampiran shade)." : "Diagram iso-shading belum disediakan engine."}</div>
     </Box>
@@ -379,29 +399,22 @@ export default function EngineeringCalc({ data, projectId, project }: ReportProp
     </Box>
   ));
 
-  // loss diagram
-  const items: WaterfallItem[] = [];
-  for (const g of lossGroups(result)) {
-    g.rows.forEach((row, i) => {
-      const label = text(row.pvsyst_label ?? row.label);
-      const unit = g.section === "irradiance" ? "kWh/m²" : "kWh";
-      if (i === 0 || i === g.rows.length - 1) items.push({ kind: "total", label, value: `${plain(row.annual, 0)} ${unit}` });
-      else items.push({ kind: "loss", label, pct: isNum(row.delta_pct) ? `${n(row.delta_pct, 2, { group: false })}%` : DASH });
-    });
-  }
-  sim("Loss diagram", <Box title="Loss diagram">{items.length ? <Waterfall items={items} /> : <div className="sim-note">{DASH} loss tree belum tersedia</div>}</Box>);
+  // loss diagram (PVsyst funnel; every helio stage and sub-loss, not-modeled ones greyed)
+  const lossStages = lossTree(result);
+  const modStats = moduleAreaStats(lay, result?.components?.module?.nameplate_w);
+  sim("Loss diagram", <Box title="Loss diagram">{lossStages.length ? <LossDiagram stages={lossStages} moduleAreaM2={modStats.areaM2} moduleEffPct={modStats.effPct} /> : <div className="sim-note">{DASH} loss tree belum tersedia</div>}</Box>);
 
   // predefined graphs
-  const dio = dailyInOut(hr, cols, "poa_irradiance", "grid_power");
+  const dio = eng?.daily?.length ? eng.daily.map((d) => ({ month: d.month, day: d.day, x: d.glob_inc_kwh_m2, y: d.e_grid_kwh })) : dailyInOut(hr, cols, "poa_irradiance", "grid_power");
   // System output power: AC power of the plant, per 5 kW class (falls back to grid power when absent).
   const histCol = col(hr, "ac_power") ? "ac_power" : "grid_power";
   const hist = powerHistogram(hr, cols, histCol, 5);
   sim("Predef. graphs", (
     <Box title="Predef. graphs">
       <h5 style={{ textAlign: "center" }}>Daily Input/Output diagram</h5>
-      <Scatter points={dio ? dio.map((q) => ({ x: q.x, y: q.y / 1000 })) : null} xLabel="Global incident in coll. plane [kWh/m²/day]" yLabel="Useful out system energy [MWh/day]" h={225} />
+      <Scatter points={dio ? dio.map((q) => ({ x: q.x, y: q.y / 1000 })) : null} xLabel="Global incident in coll. plane [kWh/m²/day]" yLabel="Useful out system energy [MWh/day]" legend="Values from 01/01 to 31/12" h={225} />
       <h5 style={{ textAlign: "center", marginTop: 8 }}>System Output Power Distribution</h5>
-      <StepHistogram bins={hist ? hist.map((b) => ({ from: b.from, to: b.to, value: b.energyMwh })) : null} xLabel="System output power (AC) [kW]" yLabel="Useful out system energy [MWh / class of 5 kW]" h={225} />
+      <StepHistogram bins={hist ? hist.map((b) => ({ from: b.from, to: b.to, value: b.energyMwh })) : null} xLabel="Useful out system energy [kW]" yLabel="Useful out system energy [MWh / class of 5 kW]" legend="Values from 01/01 to 31/12" h={225} />
     </Box>
   ));
 
@@ -411,7 +424,8 @@ export default function EngineeringCalc({ data, projectId, project }: ReportProp
   const p90 = mwh(h1?.p90_kwh ?? o?.annual_p90_kwh);
   const p95 = mwh(h1?.p95_kwh ?? o?.annual_p95_kwh);
   const sigmaPct = h1?.sigma_pct ?? unc?.sigma_1y_pct;
-  const sigmaMwh = isNum(p50) && isNum(sigmaPct) ? (p50 * sigmaPct) / 100 : null;
+  const zc = { p90: unc?.z?.p90 ?? Z.p90, p95: unc?.z?.p95 ?? Z.p95 };
+  const sigmaMwh = sigmaEnergy(p50, sigmaPct, p90, p95, zc);
   const urows = uncertaintyRows(result);
   const wv = weatherVariability(result);
   sim("P50 - P90 evaluation", (
@@ -420,6 +434,7 @@ export default function EngineeringCalc({ data, projectId, project }: ReportProp
         <div>
           <h5>Weather data</h5>
           <Row k="Source" v={sourceLabel(result)} />
+          <Row k="Kind" v={unc ? (wv.fromSeries ? "Multi-year series" : "TMY") : DASH} />
           <Row k="Year-to-year variability (IAV)" v={isNum(wv.sigmaIavPct) ? `${pct(wv.sigmaIavPct, 1)}${wv.fromSeries ? ` (multi-year series${wv.yearCount ? `, ${wv.yearCount} years` : ""})` : wv.fromUser ? " (user input)" : ""}` : DASH} />
           {wv.fromSeries && isNum(wv.medianKwh) && <Row k="Multi-year median energy" v={`${n(wv.medianKwh / 1000, 1, { group: false })} MWh${isNum(wv.medianDeltaPct) ? ` (${n(wv.medianDeltaPct, 1, { group: false })}% vs TMY P50)` : ""}`} />}
           <h5 style={{ marginTop: 6 }}>Global variability (weather data + system)</h5>
@@ -436,7 +451,7 @@ export default function EngineeringCalc({ data, projectId, project }: ReportProp
         </div>
       </div>
       <h5 style={{ textAlign: "center", margin: "8px 0 2px" }}>Probability distribution</h5>
-      <NormalCurve p50={p50} sigma={sigmaMwh} simul={mwh(o?.annual_p50_kwh)} markers={[{ name: "P50", x: p50, color: "#15803d" }, { name: "P90", x: p90, color: "#15803d" }, { name: "P95", x: p95, color: "#15803d" }]} />
+      <NormalCurve p50={p50} sigma={sigmaMwh} simul={p50} markers={[{ name: "P90", x: p90, color: "#15803d" }, { name: "P95", x: p95, color: "#15803d" }]} />
       <div style={{ fontSize: 8.5, color: "#475569", marginTop: 4 }}>{text(unc?.formula)}</div>
     </Box>
   ));

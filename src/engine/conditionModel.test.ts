@@ -39,7 +39,16 @@ describe("conditionModel", () => {
     expect(r.params.degradation.annual_rate_pct).toBe(0.4);
     expect(r.params.temperature_model).toMatchObject({ model: "pvsyst", u_c: 20, u_v: 0 });
     expect(r.params.custom_losses.map((c) => [c.name, c.monthly_pct[0]])).toEqual([["Module quality", 4], ["String mismatch", 1.5]]);
-    expect(r.uncertainty.components.map((c) => [c.key, c.sigma_pct])).toEqual([["iav", 5.5], ["module_model", 1], ["inverter", 0.5], ["soiling", 1], ["degradation", 1]]);
+    expect(r.uncertainty.components.map((c) => [c.key, c.sigma_pct])).toEqual([
+      ["resource_long_term", 0], ["iav", 5.5], ["transposition", 0], ["module_model", 1], ["temperature", 0],
+      ["soiling", 1], ["mismatch", 0], ["inverter", 0.5], ["degradation", 1], ["availability", 0],
+    ]);
+    // every one of the 10 rows has a value AND a source, so helio never answers needs_uncertainty_inputs
+    expect(r.uncertainty.components).toHaveLength(10);
+    expect(r.uncertainty.components.every((c) => typeof c.sigma_pct === "number" && !!c.source)).toBe(true);
+    expect(r.uncertainty.components.find((c) => c.key === "temperature")?.source).toBe("tidak dicantumkan di PLTS-MAS-E-CS-001-00 (PVsyst hanya memakai 5 komponen)");
+    // RSS of the ten = 5.79 % (PVsyst 5.8 %)
+    expect(Math.sqrt(r.uncertainty.components.reduce((a, c) => a + (c.sigma_pct as number) ** 2, 0))).toBeCloseTo(5.788, 3);
     expect(r.unsupported.some((u) => u.label.includes("Fresnel"))).toBe(true);
     expect(r.needsInput.length).toBe(2);
     expect(serializeConditionSet(r.params).errors.length).toBeGreaterThan(0);

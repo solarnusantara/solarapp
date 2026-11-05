@@ -2,6 +2,7 @@
 // renders an explicit "—" box when it has nothing to draw.
 import type { ReactNode } from "react";
 import { DASH, isNum } from "./format";
+import { normalCurve, phi } from "./probability";
 
 const FONT = "Arial, Helvetica, sans-serif";
 
@@ -25,7 +26,7 @@ export function niceMax(v: number): number {
 function ticks(max: number, count = 5) {
   return Array.from({ length: count + 1 }, (_, i) => (max * i) / count);
 }
-const fmtTick = (v: number) => (Math.abs(v) >= 1000 ? `${Math.round(v / 1000)}k` : Number.isInteger(v) ? String(v) : v.toFixed(1));
+const fmtTick = (v: number) => (Math.abs(v) >= 1000 ? `${Math.round(v / 1000)}K` : Number.isInteger(v) ? String(v) : v.toFixed(1));
 
 interface Frame { l: number; r: number; t: number; b: number }
 
@@ -117,7 +118,7 @@ export function StackedBars({ series, labels, yLabel, w = 440, h = 210, ymax, le
 
 const PALETTE = ["#0e7490", "#b45309", "#16a34a", "#6d28d9", "#ea580c", "#2563eb", "#9ca3af", "#be185d", "#0f766e", "#a16207", "#7c3aed", "#dc2626"];
 
-export function Donut({ slices, w = 360, h = 190, decimals = 1 }: { slices: Array<{ label: string; value: number }>; w?: number; h?: number; decimals?: number }) {
+export function Donut({ slices, w = 420, h = 190, decimals = 1 }: { slices: Array<{ label: string; value: number; color?: string }>; w?: number; h?: number; decimals?: number }) {
   const data = slices.filter((s) => isNum(s.value) && s.value > 0);
   if (!data.length) return <ChartEmpty w={w} h={h} />;
   const total = data.reduce((a, s) => a + s.value, 0);
@@ -129,7 +130,7 @@ export function Donut({ slices, w = 360, h = 190, decimals = 1 }: { slices: Arra
     const large = a1 - a0 > Math.PI ? 1 : 0;
     const p = (rad: number, a: number) => `${cx + rad * Math.cos(a)} ${cy + rad * Math.sin(a)}`;
     const d = `M ${p(R, a0)} A ${R} ${R} 0 ${large} 1 ${p(R, a1)} L ${p(r, a1)} A ${r} ${r} 0 ${large} 0 ${p(r, a0)} Z`;
-    const res = { d, mid, color: PALETTE[i % PALETTE.length], label: s.label, value: s.value };
+    const res = { d, mid, color: s.color ?? PALETTE[i % PALETTE.length], label: s.label, value: s.value };
     a0 = a1;
     return res;
   });
@@ -188,77 +189,107 @@ export function Waterfall({ items, w = 680, rowH = 25 }: { items: WaterfallItem[
   );
 }
 
-export function Scatter({ points, xLabel, yLabel, w = 640, h = 270, xMax, yMax }: {
-  points: Array<{ x: number; y: number }> | null; xLabel: string; yLabel: string; w?: number; h?: number; xMax?: number; yMax?: number;
+/** Axis ranges like PVsyst's Predef. graphs: x 0..8 (integer ticks, wider only if the data is), y from -1. */
+export function scatterAxes(points: Array<{ x: number; y: number }>) {
+  const mx = Math.max(...points.map((p) => p.x)), my = Math.max(...points.map((p) => p.y));
+  const xMax = Math.max(8, Math.ceil(mx));
+  const yMax = Math.max(1, Math.ceil(my * 1.05));
+  return { xMin: 0, xMax, yMin: -1, yMax, xTicks: Array.from({ length: xMax + 1 }, (_, i) => i), yTicks: Array.from({ length: yMax + 2 }, (_, i) => i - 1) };
+}
+
+/** Histogram axes: x to the next 100 kW above the last class, 100 kW ticks; y to a nice max in 5 steps. */
+export function histogramAxes(bins: Array<{ from: number; to: number; value: number }>) {
+  const last = Math.max(...bins.map((b) => b.to));
+  const xMax = Math.max(100, Math.ceil(last / 100) * 100);
+  const yMax = niceMax(Math.max(...bins.map((b) => b.value)));
+  return { xMax, yMax, xTicks: Array.from({ length: xMax / 100 + 1 }, (_, i) => i * 100) };
+}
+
+function Legend({ x, y, label, kind }: { x: number; y: number; label: string; kind: "dot" | "line" }) {
+  return (
+    <g fontFamily={FONT} fontSize="9.5" fill="#111827">
+      {kind === "dot" ? <circle cx={x + 6} cy={y} r="2.4" fill="none" stroke="#111827" strokeWidth="0.8" /> : <line x1={x} x2={x + 26} y1={y} y2={y} stroke="#111827" strokeWidth="1.6" />}
+      <text x={x + (kind === "dot" ? 30 : 36)} y={y + 3.5}>{label}</text>
+    </g>
+  );
+}
+
+export function Scatter({ points, xLabel, yLabel, w = 640, h = 270, legend }: {
+  points: Array<{ x: number; y: number }> | null; xLabel: string; yLabel: string; w?: number; h?: number; legend?: string;
 }) {
   if (!points || !points.length) return <ChartEmpty w={w} h={h} />;
   const f: Frame = { l: 48, r: 10, t: 10, b: 32 };
-  const xm = xMax ?? niceMax(Math.max(...points.map((p) => p.x)));
-  const ym = yMax ?? niceMax(Math.max(...points.map((p) => p.y)));
+  const ax = scatterAxes(points);
   const iw = w - f.l - f.r, ih = h - f.t - f.b;
+  const X = (v: number) => f.l + (v / ax.xMax) * iw, Y = (v: number) => f.t + ih - ((v - ax.yMin) / (ax.yMax - ax.yMin)) * ih;
   return (
     <svg viewBox={`0 0 ${w} ${h}`} width="100%" role="img">
-      <Axes w={w} h={h} f={f} yMax={ym} yLabel={yLabel} />
       <g fontFamily={FONT} fontSize="9" fill="#475569">
-        {ticks(xm, 8).map((v, i) => <text key={i} x={f.l + (v / xm) * iw} y={h - f.b + 12} textAnchor="middle">{fmtTick(v)}</text>)}
+        {ax.yTicks.map((v) => (<g key={v}><line x1={f.l} x2={w - f.r} y1={Y(v)} y2={Y(v)} stroke="#e2e8f0" /><text x={f.l - 4} y={Y(v) + 3} textAnchor="end">{v}</text></g>))}
+        <line x1={f.l} x2={f.l} y1={f.t} y2={h - f.b} stroke="#94a3b8" />
+        <line x1={f.l} x2={w - f.r} y1={h - f.b} y2={h - f.b} stroke="#94a3b8" />
+        <text transform={`translate(10 ${f.t + ih / 2}) rotate(-90)`} textAnchor="middle" fontSize="10">{yLabel}</text>
+        {ax.xTicks.map((v) => <text key={v} x={X(v)} y={h - f.b + 12} textAnchor="middle">{v}</text>)}
         <text x={f.l + iw / 2} y={h - 4} textAnchor="middle" fontSize="10">{xLabel}</text>
       </g>
-      {points.map((p, i) => <circle key={i} cx={f.l + (p.x / xm) * iw} cy={f.t + ih - (p.y / ym) * ih} r="1.7" fill="none" stroke="#111827" strokeWidth="0.6" />)}
+      {points.map((p, i) => <circle key={i} cx={X(p.x)} cy={Y(p.y)} r="1.7" fill="none" stroke="#111827" strokeWidth="0.6" />)}
+      {legend && <Legend x={f.l + 14} y={f.t + 10} label={legend} kind="dot" />}
     </svg>
   );
 }
 
-export function StepHistogram({ bins, xLabel, yLabel, w = 640, h = 270 }: {
-  bins: Array<{ from: number; to: number; value: number }> | null; xLabel: string; yLabel: string; w?: number; h?: number;
+export function StepHistogram({ bins, xLabel, yLabel, w = 640, h = 270, legend }: {
+  bins: Array<{ from: number; to: number; value: number }> | null; xLabel: string; yLabel: string; w?: number; h?: number; legend?: string;
 }) {
   if (!bins || !bins.length) return <ChartEmpty w={w} h={h} />;
   const f: Frame = { l: 48, r: 10, t: 10, b: 32 };
-  const xm = bins[bins.length - 1].to;
-  const ym = niceMax(Math.max(...bins.map((b) => b.value)));
+  const ax = histogramAxes(bins);
+  const xm = ax.xMax, ym = ax.yMax;
   const iw = w - f.l - f.r, ih = h - f.t - f.b;
   const X = (v: number) => f.l + (v / xm) * iw, Y = (v: number) => f.t + ih - (v / ym) * ih;
+  // step line like PVsyst: horizontal at each class value, vertical between classes, no fill
   let d = `M ${X(bins[0].from)} ${Y(0)}`;
   for (const b of bins) d += ` L ${X(b.from)} ${Y(b.value)} L ${X(b.to)} ${Y(b.value)}`;
-  d += ` L ${X(xm)} ${Y(0)}`;
+  d += ` L ${X(bins[bins.length - 1].to)} ${Y(0)}`;
   return (
     <svg viewBox={`0 0 ${w} ${h}`} width="100%" role="img">
       <Axes w={w} h={h} f={f} yMax={ym} yLabel={yLabel} />
       <g fontFamily={FONT} fontSize="9" fill="#475569">
-        {ticks(xm, 6).map((v, i) => <text key={i} x={X(v)} y={h - f.b + 12} textAnchor="middle">{fmtTick(v)}</text>)}
+        {ax.xTicks.map((v) => <text key={v} x={X(v)} y={h - f.b + 12} textAnchor="middle">{v}</text>)}
         <text x={f.l + iw / 2} y={h - 4} textAnchor="middle" fontSize="10">{xLabel}</text>
       </g>
       <path d={d} fill="none" stroke="#111827" strokeWidth="1.2" />
+      {legend && <Legend x={f.l + 14} y={f.t + 10} label={legend} kind="line" />}
     </svg>
   );
 }
 
-/** Normal density around the engine's P50 with sigma from the engine; markers are engine P-values. */
+/** Normal density curve like PVsyst: x = E_Grid, P50 +- 4 sigma; y = standard-normal density on 0..0.5. */
 export function NormalCurve({ p50, sigma, markers, simul, w = 640, h = 270, unit = "MWh" }: {
   p50: number | null; sigma: number | null; markers: Array<{ name: string; x: number | null; color: string }>; simul?: number | null; w?: number; h?: number; unit?: string;
 }) {
   if (!isNum(p50) || !isNum(sigma) || sigma <= 0) return <ChartEmpty w={w} h={h} note="distribusi belum tersedia dari engine" />;
   const f: Frame = { l: 48, r: 14, t: 14, b: 32 };
-  const lo = p50 - 3.4 * sigma, hi = p50 + 3.4 * sigma;
+  const { lo, hi, points } = normalCurve(p50, sigma);
   const iw = w - f.l - f.r, ih = h - f.t - f.b;
-  const pdf = (x: number) => Math.exp(-0.5 * ((x - p50) / sigma) ** 2) / (sigma * Math.sqrt(2 * Math.PI));
-  const peak = pdf(p50);
-  const ym = peak * 1.25;
-  const X = (x: number) => f.l + ((x - lo) / (hi - lo)) * iw, Y = (v: number) => f.t + ih - (v / ym) * ih;
-  const pts = Array.from({ length: 121 }, (_, i) => lo + ((hi - lo) * i) / 120).map((x) => `${X(x)},${Y(pdf(x))}`).join(" ");
-  const xt = ticks(hi - lo, 8).map((t) => lo + t);
+  const YM = 0.5;
+  const X = (x: number) => f.l + ((x - lo) / (hi - lo)) * iw, Y = (v: number) => f.t + ih - (v / YM) * ih;
+  const pts = points.map((q) => `${X(q.x)},${Y(q.y)}`).join(" ");
+  const xt = Array.from({ length: 9 }, (_, i) => lo + ((hi - lo) * i) / 8);
   return (
     <svg viewBox={`0 0 ${w} ${h}`} width="100%" role="img" fontFamily={FONT} fontSize="9">
+      {[0, 0.1, 0.2, 0.3, 0.4, 0.5].map((v) => (<g key={v}><line x1={f.l} x2={w - f.r} y1={Y(v)} y2={Y(v)} stroke="#e2e8f0" /><text x={f.l - 4} y={Y(v) + 3} textAnchor="end" fill="#475569">{v.toFixed(1)}</text></g>))}
       <line x1={f.l} x2={f.l} y1={f.t} y2={h - f.b} stroke="#94a3b8" />
       <line x1={f.l} x2={w - f.r} y1={h - f.b} y2={h - f.b} stroke="#94a3b8" />
       {xt.map((x, i) => <text key={i} x={X(x)} y={h - f.b + 12} textAnchor="middle" fill="#475569">{x.toFixed(0)}</text>)}
-      <text x={f.l + iw / 2} y={h - 4} textAnchor="middle" fontSize="10" fill="#475569">E_Grid system production {unit}</text>
+      <text x={f.l + iw / 2} y={h - 4} textAnchor="middle" fontSize="10" fill="#475569">E_Grid system production [{unit}]</text>
       <text transform={`translate(10 ${f.t + ih / 2}) rotate(-90)`} textAnchor="middle" fill="#475569">Probability density</text>
       <polyline points={pts} fill="none" stroke="#111827" strokeWidth="1.6" />
-      {isNum(simul) && <><circle cx={X(simul)} cy={Y(pdf(simul))} r="4" fill="#f59e0b" /><text x={X(simul) + 8} y={Y(pdf(simul)) + 3} fill="#d97706">E_Grid simul = {simul.toFixed(1)} {unit}</text></>}
+      {isNum(simul) && <><circle cx={X(simul)} cy={Y(phi(simul, p50, sigma))} r="4" fill="#f59e0b" /><text x={X(simul) + 8} y={Y(phi(simul, p50, sigma)) - 4} fill="#d97706">E_Grid simul = {simul.toFixed(1)} {unit}</text></>}
       {markers.filter((m) => isNum(m.x)).map((m) => (
         <g key={m.name}>
-          <circle cx={X(m.x as number)} cy={Y(pdf(m.x as number))} r="3.5" fill={m.color} />
-          <text x={X(m.x as number) + 7} y={Y(pdf(m.x as number)) + 3} fill={m.color}>{m.name} = {(m.x as number).toFixed(1)} {unit}</text>
+          <circle cx={X(m.x as number)} cy={Y(phi(m.x as number, p50, sigma))} r="3.5" fill={m.color} />
+          <text x={X(m.x as number) - 7} y={Y(phi(m.x as number, p50, sigma)) + 3} textAnchor="end" fill={m.color}>{m.name} = {(m.x as number).toFixed(1)} {unit}</text>
         </g>
       ))}
     </svg>
@@ -268,48 +299,73 @@ export function NormalCurve({ p50, sigma, markers, simul, w = 640, h = 270, unit
 export interface SunCurve { label: string; num: string; /** time-ordered polylines (cut at the +-180 azimuth edge) */ segments: Array<Array<[number, number]>> }
 export interface SunHourLine { hour: number; segments: Array<Array<[number, number]>> }
 
-/** Height / azimuth diagram. Axis: azimuth 180 .. -180 (0 = south), curves are engine sun positions. */
-export function SunPathChart({ curves, hourLines, behind, horizon, title, subtitle, w = 340, h = 210, extra }: {
-  curves: SunCurve[]; hourLines?: SunHourLine[]; behind?: Array<Array<[number, number]>>; horizon: Array<[number, number]> | null; title: string; subtitle?: string; w?: number; h?: number; extra?: ReactNode;
+/**
+ * Height / azimuth diagram in the PVsyst convention: azimuth runs 180 .. -180 left to right, 0 is the
+ * direction of the equator, east is negative. Curves are engine sun positions; `band` is the swept
+ * region between the solstice paths; hour lines join the same solar hour across the dates.
+ */
+export function SunPathChart({ curves, hourLines, behind, horizon, band, title, subtitle, w = 340, h = 210, extra }: {
+  curves: SunCurve[]; hourLines?: SunHourLine[]; behind?: Array<Array<[number, number]>>; band?: Array<Array<[number, number]>>; horizon: Array<[number, number]> | null; title: string; subtitle?: string; w?: number; h?: number; extra?: ReactNode;
 }) {
   const f: Frame = { l: 34, r: 8, t: 8, b: 26 };
   const iw = w - f.l - f.r, ih = h - f.t - f.b;
   const X = (az: number) => f.l + ((180 - az) / 360) * iw, Y = (el: number) => f.t + ih - (el / 90) * ih;
   const usable = curves.filter((c) => c.segments.some((s) => s.length > 1));
   const line = (pts: Array<[number, number]>) => pts.map(([a, e]) => `${X(a)},${Y(e)}`).join(" ");
+  const clipId = `sp-clip-${title.replace(/\W+/g, "")}`;
   return (
-    <div>
+    <div style={{ breakInside: "avoid", pageBreakInside: "avoid" }}>
       <div style={{ textAlign: "center", fontWeight: 700, fontSize: 12 }}>{title}</div>
       {subtitle && <div style={{ textAlign: "center", fontWeight: 600, fontSize: 9.5, color: "#1d4ed8" }}>{subtitle}</div>}
       {!usable.length ? <ChartEmpty w={w} h={h} note="posisi matahari belum tersedia" /> : (
         <svg viewBox={`0 0 ${w} ${h}`} width="100%" role="img" fontFamily={FONT} fontSize="8.5">
-          <rect x={f.l} y={f.t} width={iw} height={ih} fill="#fef9c3" stroke="#111827" />
+          <defs><clipPath id={clipId}><rect x={f.l} y={f.t} width={iw} height={ih} /></clipPath></defs>
+          <rect x={f.l} y={f.t} width={iw} height={ih} fill="#fff" />
+          <g clipPath={`url(#${clipId})`}>
+            {(band ?? []).flatMap((q, i) => [-360, 0, 360].map((sh) => <polygon key={`band${i}-${sh}`} points={line(q.map(([a, e]) => [a + sh, e] as [number, number]))} fill="#fde047" stroke="#fde047" strokeWidth="0.5" />))}
+          </g>
+          <rect x={f.l} y={f.t} width={iw} height={ih} fill="none" stroke="#111827" />
           {[0, 15, 30, 45, 60, 75, 90].map((e) => <text key={e} x={f.l - 4} y={Y(e) + 3} textAnchor="end" fill="#475569">{e}</text>)}
           {[180, 150, 120, 90, 60, 30, 0, -30, -60, -90, -120, -150, -180].map((a) => <text key={a} x={X(a)} y={h - f.b + 11} textAnchor="middle" fill="#475569">{a}</text>)}
           <text x={f.l + iw / 2} y={h - 3} textAnchor="middle" fill="#475569">Azimuth [°]</text>
           <text transform={`translate(8 ${f.t + ih / 2}) rotate(-90)`} textAnchor="middle" fill="#475569">Sun height [°]</text>
           {(hourLines ?? []).map((hl) => hl.segments.filter((s) => s.length > 1).map((s, i) => (
             <g key={`h${hl.hour}-${i}`}>
-              <polyline points={line(s)} fill="none" stroke="#6b7280" strokeWidth="0.5" />
-              {i === 0 && <text x={X(s[0][0]) + 2} y={Y(s[0][1]) - 2} fontSize="6.5" fill="#374151">{hl.hour}h</text>}
+              <polyline points={line(s)} fill="none" stroke="#374151" strokeWidth="0.55" />
+              {i === 0 && hl.hour !== 12 && <text x={X(s[0][0]) + (s[0][0] > 0 ? 2 : -2)} y={Y(s[0][1]) - 2} textAnchor={s[0][0] > 0 ? "start" : "end"} fontSize="7" fill="#111827">{hl.hour}h</text>}
             </g>
           )))}
           {usable.map((c) => {
-            const longest = c.segments.reduce((a, s) => (s.length > a.length ? s : a), c.segments[0]);
-            const mid = longest[longest.length >> 1];
+            // number circle at the highest point of the path (solar noon)
+            let top: [number, number] = c.segments[0][0];
+            for (const sg of c.segments) for (const p of sg) if (p[1] > top[1]) top = p;
             return (
               <g key={c.num}>
                 {c.segments.filter((s) => s.length > 1).map((s, i) => <polyline key={i} points={line(s)} fill="none" stroke="#111827" strokeWidth="0.9" />)}
-                <circle cx={X(mid[0])} cy={Y(mid[1])} r="5" fill="#fff" stroke="#111827" strokeWidth="0.6" />
-                <text x={X(mid[0])} y={Y(mid[1]) + 3} textAnchor="middle" fontWeight="700" fontSize="7">{c.num}</text>
+                {c.segments.filter((s) => s.length > 3).map((s, i) => {
+                  const k = Math.max(1, Math.floor(s.length / 3));
+                  const [x1, y1, x2, y2] = [X(s[k - 1][0]), Y(s[k - 1][1]), X(s[k][0]), Y(s[k][1])];
+                  const ang = Math.atan2(y2 - y1, x2 - x1), L = 4.5;
+                  const pt = (a: number) => `${x2 - L * Math.cos(ang + a)},${y2 - L * Math.sin(ang + a)}`;
+                  return <polygon key={`ar${i}`} points={`${x2},${y2} ${pt(0.4)} ${pt(-0.4)}`} fill="#111827" />;
+                })}
+                <circle cx={X(top[0])} cy={Y(top[1])} r="5" fill="#fff" stroke="#111827" strokeWidth="0.6" />
+                <text x={X(top[0])} y={Y(top[1]) + 3} textAnchor="middle" fontWeight="700" fontSize="7">{c.num}</text>
               </g>
             );
           })}
-          {(behind ?? []).map((s, i) => <polyline key={`b${i}`} points={line(s)} fill="none" stroke="#1d4ed8" strokeWidth="1.3" />)}
-          {(behind ?? []).length > 0 && <text x={X(behind![0][0][0]) + (behind![0][0][0] > 0 ? -2 : 2)} y={Y(14)} fontSize="7" fill="#1d4ed8" textAnchor={behind![0][0][0] > 0 ? "end" : "start"}>Behind the plane</text>}
+          {(behind ?? []).map((sg, i) => <polyline key={`b${i}`} points={line(sg)} fill="none" stroke="#1d4ed8" strokeWidth="1.3" />)}
+          {(behind ?? []).length > 0 && (() => {
+            const pts = behind!.flat();
+            const mid = pts.reduce((a, p) => (p[1] > a[1] ? p : a), pts[0]);
+            return <text x={X(mid[0])} y={Y(mid[1]) - 3} fontSize="7" fill="#1d4ed8" textAnchor="middle">Behind the plane</text>;
+          })()}
           {horizon && horizon.length > 1 && (
             <polyline points={horizon.map(([a, e]) => `${X(a)},${Y(e)}`).join(" ")} fill="none" stroke="#111827" strokeWidth="1.6" />
           )}
+          <g fill="#111827" fontSize="8">
+            {usable.map((c, i) => <text key={`lg${c.num}`} x={X(0) - 36} y={Y(46) + i * 9}>{c.num}: {c.label}</text>)}
+          </g>
           {extra}
         </svg>
       )}
