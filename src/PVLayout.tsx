@@ -38,6 +38,8 @@ import {
 } from "lucide-react";
 import GoogleMapsModal from "./GoogleMapsModal";
 import * as api from "./api";
+import EngineRunPanel from "./engine/EngineRunPanel";
+import { EMPTY_ENGINE_INPUTS, type EngineInputs } from "./engine/types/local";
 
 type Lang = "en" | "id";
 export type Panel = { id: number; x: number; y: number; w: number; h: number; segmentId?: string };
@@ -362,6 +364,14 @@ export default function PVLayout({
 }) {
   const saved = useMemo(() => loadSaved(userId, projectId), [userId, projectId]);
   const isId = lang === "id";
+  const [engineInputs, setEngineInputsState] = useState<EngineInputs>({ ...EMPTY_ENGINE_INPUTS, ...(saved?.engine_inputs ?? {}) });
+  const engineInputsRef = useRef<EngineInputs>(engineInputs);
+  const setEngineInputs = (next: EngineInputs) => {
+    engineInputsRef.current = next;
+    setEngineInputsState(next);
+    saveDraftRef.current?.();
+  };
+  const saveDraftRef = useRef<(() => void) | null>(null);
 
     const [isSaving, setIsSaving] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
@@ -371,6 +381,10 @@ export default function PVLayout({
   // Helper to apply loaded layout from server or local store
   const applyLayoutData = (data: any) => {
     if (!data || typeof data !== "object") return;
+    if (data.engine_inputs && typeof data.engine_inputs === "object") {
+      engineInputsRef.current = { ...EMPTY_ENGINE_INPUTS, ...data.engine_inputs };
+      setEngineInputsState(engineInputsRef.current);
+    }
 
     if (data.settings) {
       setSettings((prev: any) => ({
@@ -673,6 +687,7 @@ export default function PVLayout({
       backgroundOpacity: nextBgOpacity,
       layers,
       savedAt: nowStr,
+      engine_inputs: engineInputsRef.current,
     };
     try {
       localStorage.setItem(storageKey(userId, projectId), JSON.stringify(payload));
@@ -687,6 +702,9 @@ export default function PVLayout({
     }
     return true;
   };
+
+  saveDraftRef.current = () => saveDraft();
+
 
   const pushHistory = (nextSegs: FieldSegment[], nextObs: Obstacle[], nextWalks: Walkway[]) => {
     const nextEntry: HistoryEntry = { segments: nextSegs, obstacles: nextObs, walkways: nextWalks };
@@ -2263,6 +2281,16 @@ export default function PVLayout({
             </span>
           </div>
           {notice && <div className="pv-notice">{notice}</div>}
+          {(activeStep === 4 || activeStep === 5) && (
+            <EngineRunPanel
+              projectId={projectId}
+              projectName={projectName ?? ""}
+              layout={{ settings, segments, walkways, obstacles, site, backgroundImage }}
+              inputs={engineInputs}
+              onInputs={setEngineInputs}
+              section={activeStep === 4 ? "electrical" : "assumptions"}
+            />
+          )}
         </div>
 
         {/* ════ RIGHT COLUMN: LAYERS & DESIGN SUMMARY ════ */}
