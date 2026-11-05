@@ -1700,9 +1700,13 @@ export default function PVLayout({
                   const spanM = site?.imageSpanM || (Math.max(siteW, siteH) / 1000) * 1.5;
                   const imgPixelSize = spanM * 1000 * scale;
 
+                  // Normalize angle to [-180, 180]: e.g. 334° becomes -26° (counter-clockwise up to level)
+                  const normalizedAngle = ((rotDeg % 360) + 360) % 360;
+                  const svgRotateAngle = normalizedAngle > 180 ? normalizedAngle - 360 : normalizedAngle;
+
                   return (
                     <g clipPath="url(#site-boundary-clip)">
-                      <g transform={`rotate(${-rotDeg}, ${centerX}, ${centerY})`}>
+                      <g transform={`rotate(${svgRotateAngle}, ${centerX}, ${centerY})`}>
                         <image
                           href={backgroundImage}
                           x={centerX - imgPixelSize / 2}
@@ -2079,34 +2083,83 @@ export default function PVLayout({
               </button>
 
               {backgroundImage && (
-                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  <label style={{ fontSize: 10, color: "#8da294", flex: 1 }}>
-                    Opacity: {Math.round(backgroundOpacity * 100)}%
-                    <input
-                      type="range"
-                      min="0.1"
-                      max="1"
-                      step="0.05"
-                      value={backgroundOpacity}
-                      onChange={e => {
-                        const val = Number(e.target.value);
-                        setBackgroundOpacity(val);
-                        saveDraft(segments, obstacles, walkways, site, backgroundImage, val);
+                <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 4 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <label style={{ fontSize: 10, color: "#8da294", flex: 1 }}>
+                      Opacity: {Math.round(backgroundOpacity * 100)}%
+                      <input
+                        type="range"
+                        min="0.1"
+                        max="1"
+                        step="0.05"
+                        value={backgroundOpacity}
+                        onChange={e => {
+                          const val = Number(e.target.value);
+                          setBackgroundOpacity(val);
+                          saveDraft(segments, obstacles, walkways, site, backgroundImage, val);
+                        }}
+                        style={{ width: "100%", marginTop: 2, accentColor: "var(--green, #b8f36b)" }}
+                      />
+                    </label>
+                    <button
+                      type="button"
+                      className="pv-icon-btn"
+                      title="Hapus Citra"
+                      onClick={() => {
+                        setBackgroundImage("");
+                        saveDraft(segments, obstacles, walkways, site, "");
                       }}
-                      style={{ width: "100%", marginTop: 2 }}
-                    />
-                  </label>
-                  <button
-                    type="button"
-                    className="pv-icon-btn"
-                    title="Hapus Citra"
-                    onClick={() => {
-                      setBackgroundImage("");
-                      saveDraft(segments, obstacles, walkways, site, "");
-                    }}
-                  >
-                    <X size={14} style={{ color: "#ef4444" }} />
-                  </button>
+                    >
+                      <X size={14} style={{ color: "#ef4444" }} />
+                    </button>
+                  </div>
+
+                  {/* Fine-tune Satellite Map Rotation Live */}
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", background: "#0c140f", padding: "4px 8px", borderRadius: 5, border: "1px solid #1f3022" }}>
+                    <span style={{ fontSize: 10, color: "#8da294" }}>Rotasi Satelit:</span>
+                    <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const cur = site?.rotationDeg || 0;
+                          const nextSite = site ? { ...site, rotationDeg: (cur - 1 + 360) % 360 } : null;
+                          setSite(nextSite);
+                          saveDraft(segments, obstacles, walkways, nextSite);
+                        }}
+                        style={{ background: "#162319", border: "1px solid #233527", color: "#edf5ef", fontSize: 10, padding: "1px 5px", borderRadius: 3, cursor: "pointer" }}
+                        title="Putar -1°"
+                      >
+                        -1°
+                      </button>
+                      <input
+                        type="number"
+                        min="0"
+                        max="360"
+                        value={site?.rotationDeg || 0}
+                        onChange={e => {
+                          const deg = Number(e.target.value);
+                          const nextSite = site ? { ...site, rotationDeg: deg } : null;
+                          setSite(nextSite);
+                          saveDraft(segments, obstacles, walkways, nextSite);
+                        }}
+                        style={{ width: 44, background: "#162319", border: "1px solid #2b4432", color: "var(--green, #b8f36b)", fontSize: 11, fontWeight: 700, textAlign: "center", padding: "1px 3px", borderRadius: 4 }}
+                      />
+                      <span style={{ fontSize: 10, color: "var(--green, #b8f36b)", fontWeight: 700 }}>°</span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const cur = site?.rotationDeg || 0;
+                          const nextSite = site ? { ...site, rotationDeg: (cur + 1) % 360 } : null;
+                          setSite(nextSite);
+                          saveDraft(segments, obstacles, walkways, nextSite);
+                        }}
+                        style={{ background: "#162319", border: "1px solid #233527", color: "#edf5ef", fontSize: 10, padding: "1px 5px", borderRadius: 3, cursor: "pointer" }}
+                        title="Putar +1°"
+                      >
+                        +1°
+                      </button>
+                    </div>
+                  </div>
                 </div>
               )}
             </div>

@@ -793,9 +793,30 @@ export default function GoogleMapsModal({
               >
                 <RotateCcw size={11} /> 5°
               </button>
-              <span style={{ fontSize: 12, fontWeight: 700, color: "var(--green, #b8f36b)", minWidth: 32, textAlign: "center" }}>
-                {activeBox.rotationAngle}°
-              </span>
+              <div style={{ display: "inline-flex", alignItems: "center", gap: 2 }}>
+                <input
+                  type="number"
+                  min="0"
+                  max="360"
+                  step="1"
+                  value={activeBox.rotationAngle}
+                  onChange={e => updateActiveBoxProps({ rotationAngle: Number(e.target.value) })}
+                  style={{
+                    width: 58,
+                    background: "#162319",
+                    border: "1.5px solid var(--green, #b8f36b)",
+                    borderRadius: 4,
+                    padding: "2px 4px",
+                    color: "var(--green, #b8f36b)",
+                    fontSize: 12,
+                    fontWeight: 800,
+                    textAlign: "center",
+                    outline: "none",
+                  }}
+                  title="Ketik manual sudut rotasi (misal 334 atau 24)"
+                />
+                <span style={{ fontSize: 11, fontWeight: 800, color: "var(--green, #b8f36b)" }}>°</span>
+              </div>
               <button
                 type="button"
                 className="secondary-button"
@@ -997,8 +1018,28 @@ export default function GoogleMapsModal({
                 <div style={{ fontSize: 9.5, color: "#8a9c90", textTransform: "uppercase", letterSpacing: 0.5 }}>
                   Orientasi Box Aktif
                 </div>
-                <div style={{ fontSize: 14, fontWeight: 700, color: activeBox?.color || "var(--green, #b8f36b)" }}>
-                  {activeBox?.rotationAngle || 24}°
+                <div style={{ display: "inline-flex", alignItems: "center", gap: 3, marginTop: 2 }}>
+                  <input
+                    type="number"
+                    min="0"
+                    max="360"
+                    step="1"
+                    value={activeBox?.rotationAngle ?? 24}
+                    onChange={e => updateActiveBoxProps({ rotationAngle: Number(e.target.value) })}
+                    style={{
+                      width: 54,
+                      background: "#162319",
+                      border: "1px solid #36553e",
+                      borderRadius: 4,
+                      padding: "2px 4px",
+                      color: activeBox?.color || "var(--green, #b8f36b)",
+                      fontSize: 13,
+                      fontWeight: 800,
+                      textAlign: "center",
+                      outline: "none",
+                    }}
+                  />
+                  <span style={{ fontSize: 12, fontWeight: 800, color: activeBox?.color || "var(--green, #b8f36b)" }}>°</span>
                 </div>
               </div>
             </div>
