@@ -97,7 +97,7 @@ export function dailyInOut(h: HourlyTable | null | undefined, columns: HourlyCol
   return [...map.values()].sort((p, q) => p.month * 100 + p.day - (q.month * 100 + q.day));
 }
 
-export interface HistBin { from: number; to: number; energyKwh: number }
+export interface HistBin { from: number; to: number; energyKwh: number; energyMwh: number }
 
 /** Energy delivered per power class (default 5 kW wide): sum of power*step for rows in each class. */
 export function powerHistogram(h: HourlyTable | null | undefined, columns: HourlyColumnSpec[] | undefined, name: string, classKw = 5): HistBin[] | null {
@@ -110,11 +110,13 @@ export function powerHistogram(h: HourlyTable | null | undefined, columns: Hourl
   const kw = c.map((x) => x * kwPerUnit);
   const max = Math.max(0, ...kw);
   const nBins = Math.max(1, Math.floor(max / classKw) + 1);
-  const bins: HistBin[] = Array.from({ length: nBins }, (_, i) => ({ from: i * classKw, to: (i + 1) * classKw, energyKwh: 0 }));
+  const bins: HistBin[] = Array.from({ length: nBins }, (_, i) => ({ from: i * classKw, to: (i + 1) * classKw, energyKwh: 0, energyMwh: 0 }));
   for (const p of kw) {
     if (p <= 0) continue;
+    // A value exactly at the maximum belongs to the last bin (min() also guards float edges).
     bins[Math.min(nBins - 1, Math.floor(p / classKw))].energyKwh += p * sh;
   }
+  for (const b of bins) b.energyMwh = b.energyKwh / 1000;
   return bins;
 }
 
@@ -139,6 +141,65 @@ export const toSouthZeroAzimuth = (azHelio: number) => {
   while (a <= -180) a += 360;
   return a;
 };
+
+type XY = [number, number];
+
+/**
+ * Sun samples of one day -> polylines in the PVsyst plot (azimuth, height), time ordered.
+ * Samples at or below the horizon are dropped. The azimuth axis wraps at +-180 (north), so a path
+ * that crosses it is cut there (end point interpolated onto the edge) instead of being drawn as
+ * one line across the whole chart.
+ */
+export function sunPathSegments(samples: Array<{ azimuth_deg: number; elevation_deg: number; minute_of_day?: number }> | null | undefined): XY[][] {
+  const pts = (samples ?? [])
+    .filter((s) => isNum(s.azimuth_deg) && isNum(s.elevation_deg) && s.elevation_deg > 0)
+    .sort((a, b) => (a.minute_of_day ?? 0) - (b.minute_of_day ?? 0))
+    .map((s): XY => [toSouthZeroAzimuth(s.azimuth_deg), s.elevation_deg]);
+  return splitAtAzimuthWrap(pts);
+}
+
+/** Cuts a time-ordered (azimuth, height) path where it crosses the +-180 edge. */
+export function splitAtAzimuthWrap(pts: XY[]): XY[][] {
+  const segs: XY[][] = [];
+  let cur: XY[] = [];
+  for (let i = 0; i < pts.length; i++) {
+    const p = pts[i];
+    const q = i > 0 ? pts[i - 1] : null;
+    if (q && Math.abs(p[0] - q[0]) > 180) {
+      if (q[0] > p[0]) { // 170 -> -170: leaves through +180, re-enters at -180
+        const t = (180 - q[0]) / (p[0] + 360 - q[0]);
+        const e = q[1] + t * (p[1] - q[1]);
+        cur.push([180, e]); segs.push(cur); cur = [[-180, e]];
+      } else { // -170 -> 170
+        const t = (q[0] + 180) / (q[0] + 360 - p[0]);
+        const e = q[1] + t * (p[1] - q[1]);
+        cur.push([-180, e]); segs.push(cur); cur = [[180, e]];
+      }
+    }
+    cur.push(p);
+  }
+  if (cur.length) segs.push(cur);
+  return segs.filter((s) => s.length > 1);
+}
+
+/**
+ * Sun height below which the sun is behind a plane (angle of incidence > 90 deg):
+ * tan(h) = -tan(tilt) * cos(sunAz - planeAz), only where that cosine is negative. Azimuths here
+ * are on the PVsyst axis (0 = south). Returns polylines ordered from +180 to -180.
+ */
+export function behindPlaneSegments(tiltDeg: number, planeAzSouth0: number, stepDeg = 2): XY[][] {
+  if (!isNum(tiltDeg) || !isNum(planeAzSouth0) || tiltDeg <= 0) return [];
+  const t = Math.tan((tiltDeg * Math.PI) / 180);
+  const segs: XY[][] = [];
+  let cur: XY[] = [];
+  for (let az = 180; az >= -180; az -= stepDeg) {
+    const c = Math.cos(((az - planeAzSouth0) * Math.PI) / 180);
+    if (c < -1e-9) cur.push([az, (Math.atan(-t * c) * 180) / Math.PI]);
+    else { if (cur.length > 1) segs.push(cur); cur = []; }
+  }
+  if (cur.length > 1) segs.push(cur);
+  return segs;
+}
 
 export interface MonthlyBalance {
   globHor: number[] | null; diffHor: number[] | null; tAmb: number[] | null; globInc: number[] | null;

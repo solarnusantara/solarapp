@@ -4,8 +4,8 @@
 import { createContext, useContext, type ReactNode } from "react";
 import { reportAssetUrl } from "../engine/client";
 import { Report3DViewport } from "../EngineeringReport";
-import { monthlyBalance, dailyInOut, powerHistogram, horizonAverage, toSouthZeroAzimuth, type MonthlyBalance } from "./aggregate";
-import { NormalCurve, Scatter, StackedBars, StepHistogram, SunPathChart, Waterfall, BarChart, type SunCurve, type WaterfallItem } from "./charts";
+import { monthlyBalance, dailyInOut, powerHistogram, horizonAverage, toSouthZeroAzimuth, sunPathSegments, splitAtAzimuthWrap, behindPlaneSegments, col, type MonthlyBalance } from "./aggregate";
+import { NormalCurve, Scatter, StackedBars, StepHistogram, SunPathChart, Waterfall, BarChart, type SunCurve, type SunHourLine, type WaterfallItem } from "./charts";
 import { DASH, MONTHS_SHORT, MONTHS_EN, dateLong, dateTime, isNum, monthlyUniform, n, pct, plain, text } from "./format";
 import { viewport3DProps } from "./layoutGeometry";
 import { conditionSet, horizonPoints, iamTable, lossGroups, orientations, out, prod, sourceLabel, stringingReports, uncertaintyRows, weatherVariability } from "./model";
@@ -253,7 +253,7 @@ export default function EngineeringCalc({ data, projectId, project }: ReportProp
       </Box>
       <Box title="AC wiring losses">
         <h5>Inv. output line up to injection point</h5>
-        <Row k="Inverter voltage" v={isNum(ws?.ac_line_voltage_v) ? `${n(ws.ac_line_voltage_v, 0)} Vac ${text(ws.ac_phase_system)}` : DASH} />
+        <Row k="Inverter voltage" v={isNum(ws?.ac_line_voltage_v) && ws.ac_line_voltage_v > 0 ? `${n(ws.ac_line_voltage_v, 0)} Vac${ws.ac_phase_system ? ` ${String(ws.ac_phase_system).replace(/_/g, " ")}` : ""}` : DASH} />
         <Row k="Loss Fraction" v={lossRowsCS?.acl ?? DASH} />
         <Row k="AC wiring loss at STC" v={isNum(ws?.ac_wiring_loss_stc_kw) ? `${n(ws.ac_wiring_loss_stc_kw, 2)} kW` : DASH} />
         <Row k="Wire section" v={acEntries.length ? `${text(acEntries[0].material)} ${n(acEntries[0].num_conductors, 0)} x ${n(acEntries[0].cross_section_mm2, 0)} mm²` : DASH} />
@@ -265,11 +265,18 @@ export default function EngineeringCalc({ data, projectId, project }: ReportProp
   // horizon + sun paths
   const hProfile = horizon ? [...horizon].map((q) => ({ az: Math.round(toSouthZeroAzimuth(q.azimuth_deg)), el: q.elevation_deg })).sort((a, b) => a.az - b.az) : null;
   const horizonLine: Array<[number, number]> | null = hProfile ? hProfile.map((q) => [q.az, q.el] as [number, number]) : null;
-  const curves: SunCurve[] = SUN_DATES.map((d) => {
-    const day = sun.data?.[d.key];
-    const pts: Array<[number, number]> = (day?.samples ?? []).filter((s) => s.elevation_deg > 0).map((s) => [toSouthZeroAzimuth(s.azimuth_deg), s.elevation_deg]);
-    return { label: d.label, num: d.key, points: pts.sort((a, b) => b[0] - a[0]) };
-  });
+  const curves: SunCurve[] = SUN_DATES.map((d) => ({ label: d.label, num: d.key, segments: sunPathSegments(sun.data?.[d.key]?.samples) }));
+  // Hour lines join the same solar hour across the dates; only drawn when the engine answered in solar time.
+  const hourLines: SunHourLine[] = [];
+  if (SUN_DATES.every((d) => sun.data?.[d.key]?.time_basis === "solar")) {
+    for (let hour = 5; hour <= 19; hour++) {
+      const pts = SUN_DATES.map((d) => sun.data?.[d.key]?.samples.find((s) => s.minute_of_day === hour * 60))
+        .filter((s): s is NonNullable<typeof s> => !!s && s.elevation_deg > 0)
+        .map((s): [number, number] => [toSouthZeroAzimuth(s.azimuth_deg), s.elevation_deg]);
+      const segments = splitAtAzimuthWrap(pts);
+      if (segments.length) hourLines.push({ hour, segments });
+    }
+  }
   const horizonChunks: Array<typeof hProfile> = [];
   if (hProfile) for (let i = 0; i < hProfile.length; i += 14) horizonChunks.push(hProfile.slice(i, i + 14));
   sim("Horizon definition", (
@@ -288,7 +295,7 @@ export default function EngineeringCalc({ data, projectId, project }: ReportProp
       <h5 style={{ marginTop: 8 }}>Sun Paths (Height / Azimuth diagram)</h5>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
         {(ords.length ? ords : [{ id: "1", tilt: null, azimuth: null } as any]).slice(0, 4).map((x: any) => (
-          <SunPathChart key={x.id} curves={curves} horizon={horizonLine} title={`Orientation #${x.id}`} subtitle={isNum(x.tilt) ? `Fixed plane, Tilts/azimuths: ${n(x.tilt, 0, { group: false })}°/ ${n(x.azimuth, 0, { group: false })}°` : undefined} />
+          <SunPathChart key={x.id} curves={curves} hourLines={hourLines} behind={isNum(x.tilt) && isNum(x.azimuth) ? behindPlaneSegments(x.tilt, toSouthZeroAzimuth(x.azimuth)) : undefined} horizon={horizonLine} title={`Orientation #${x.id}`} subtitle={isNum(x.tilt) ? `Fixed plane, Tilts/azimuths: ${n(x.tilt, 0, { group: false })}°/ ${n(x.azimuth, 0, { group: false })}°` : undefined} />
         ))}
       </div>
       <div style={{ fontSize: 9, marginTop: 4 }}>{SUN_DATES.map((d) => `${d.key}: ${d.label}`).join("   ")}</div>
@@ -386,13 +393,15 @@ export default function EngineeringCalc({ data, projectId, project }: ReportProp
 
   // predefined graphs
   const dio = dailyInOut(hr, cols, "poa_irradiance", "grid_power");
-  const hist = powerHistogram(hr, cols, "grid_power", 5);
+  // System output power: AC power of the plant, per 5 kW class (falls back to grid power when absent).
+  const histCol = col(hr, "ac_power") ? "ac_power" : "grid_power";
+  const hist = powerHistogram(hr, cols, histCol, 5);
   sim("Predef. graphs", (
     <Box title="Predef. graphs">
       <h5 style={{ textAlign: "center" }}>Daily Input/Output diagram</h5>
       <Scatter points={dio ? dio.map((q) => ({ x: q.x, y: q.y / 1000 })) : null} xLabel="Global incident in coll. plane [kWh/m²/day]" yLabel="Useful out system energy [MWh/day]" h={225} />
       <h5 style={{ textAlign: "center", marginTop: 8 }}>System Output Power Distribution</h5>
-      <StepHistogram bins={hist ? hist.map((b) => ({ from: b.from, to: b.to, value: b.energyKwh / 1000 })) : null} xLabel="Useful out system energy [kW]" yLabel="Useful out system energy [MWh / class of 5 kW]" h={225} />
+      <StepHistogram bins={hist ? hist.map((b) => ({ from: b.from, to: b.to, value: b.energyMwh })) : null} xLabel="System output power (AC) [kW]" yLabel="Useful out system energy [MWh / class of 5 kW]" h={225} />
     </Box>
   ));
 

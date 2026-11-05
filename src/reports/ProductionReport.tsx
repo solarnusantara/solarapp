@@ -34,6 +34,9 @@ export default function ProductionReport({ data, projectId, project }: ReportPro
   const m = meta.data;
   const design = p?.design;
   const summary = p?.summary;
+  // Engine echo of the input first, else the choice stored with the layout (engine_inputs.racking).
+  const rackingKey: string | null = design?.racking || lay?.engine_inputs?.racking || null;
+  const rackingLabel = rackingKey ? RACKING[rackingKey] ?? rackingKey : DASH;
 
   const name = text(design?.project_name ?? project?.name);
   const client = m?.client || m?.owner_name || "";
@@ -71,7 +74,7 @@ export default function ProductionReport({ data, projectId, project }: ReportPro
   const segs = (lay?.segments ?? []).filter((s) => s.visible !== false);
   const segRows = segs.map((s) => ({
     key: s.id,
-    racking: design?.racking ? RACKING[design.racking] ?? design.racking : DASH,
+    racking: rackingLabel,
     orientation: s.orientation === "portrait" ? "Portrait (Vertical)" : s.orientation === "landscape" ? "Landscape (Horizontal)" : DASH,
     tilt: isNum(s.tilt) ? `${n(s.tilt, 0, { group: false })}°` : DASH,
     az: isNum(s.azimuth) ? `${n(s.azimuth, 3, { group: false })}°` : DASH,
@@ -113,7 +116,7 @@ export default function ProductionReport({ data, projectId, project }: ReportPro
                 <KV k="Owner" v={text(m?.owner_name || m?.client)} />
                 <KV k="Last Modified" v={dateTime(result?.ran_at)} />
                 <KV k="Location" v={isNum(lat) && isNum(lon) ? `(${n(lat, 5, { group: false })}, ${n(lon, 5, { group: false })})${isNum(utc) ? ` (GMT ${utc > 0 ? "+" : ""}${utc})` : ""}` : DASH} />
-                <KV k="Racking" v={design?.racking ? RACKING[design.racking] ?? design.racking : DASH} />
+                <KV k="Racking" v={rackingLabel} />
               </tbody></table>
             </Card>
             <Card title="System Metrics">
@@ -154,10 +157,10 @@ export default function ProductionReport({ data, projectId, project }: ReportPro
       <Sheet>
         <Header />
         <div className="rpt-sheet-body">
-          <div className="prd-grid" style={{ gridTemplateColumns: "0.9fr 1.1fr" }}>
+          <div className="prd-grid" style={{ gridTemplateColumns: "1fr 1fr" }}>
             <Card title="Annual Production">
-              <table className="prd-table">
-                <thead><tr><th style={{ width: "17%" }} /><th>Description</th><th className="r">Output</th><th className="r">% Delta</th></tr></thead>
+              <table className="prd-table prd-annual">
+                <thead><tr><th className="sec-h" /><th>Description</th><th className="r">Output</th><th className="r">% Delta</th></tr></thead>
                 <tbody>
                   {groups.length === 0 && <tr><td colSpan={4} style={{ textAlign: "center" }}>{DASH} belum dihitung</td></tr>}
                   {groups.map((g) => g.rows.map((row, i) => (
@@ -187,7 +190,7 @@ export default function ProductionReport({ data, projectId, project }: ReportPro
                   {cs ? (
                     <table className="prd-mini"><tbody>
                       <tr><th>Rack Type</th>{Object.keys(cs.temperature_model).filter((k) => k !== "model").map((k) => <th key={k}>{k}</th>)}</tr>
-                      <tr><td>{design?.racking ? RACKING[design.racking] ?? design.racking : DASH}</td>{Object.entries(cs.temperature_model).filter(([k]) => k !== "model").map(([k, v]) => <td key={k}>{text(v)}</td>)}</tr>
+                      <tr><td>{rackingLabel}</td>{Object.entries(cs.temperature_model).filter(([k]) => k !== "model").map(([k, v]) => <td key={k}>{text(v)}</td>)}</tr>
                     </tbody></table>
                   ) : DASH}
                 </td></tr>
@@ -233,7 +236,7 @@ export default function ProductionReport({ data, projectId, project }: ReportPro
             </div>
             <div>
               <Card title="Monthly Shading">
-                <table className="prd-table">
+                <table className="prd-table prd-monthly">
                   <thead><tr><th>Month</th><th>GHI (kWh/m²)</th><th>POA (kWh/m²)</th><th>Shaded (kWh/m²)</th><th>Nameplate (kWh)</th><th>Grid (kWh)</th></tr></thead>
                   <tbody>
                     {MONTHS_EN.map((mn, i) => {

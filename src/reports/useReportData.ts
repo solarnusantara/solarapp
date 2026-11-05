@@ -117,7 +117,7 @@ export function useReportData(projectId: string | null | undefined, opts: { hour
     if (!wantSun || typeof lat !== "number" || typeof lon !== "number") { setSun(idle); return; }
     const ac = new AbortController();
     setSun({ status: "loading", data: null });
-    Promise.all(SUN_DATES.map((d) => getSunPosition({ lat, lon, day: d.day, stepMin: 15 }, ac.signal).then((x) => [d.key, x] as const).catch(() => [d.key, null] as const)))
+    Promise.all(SUN_DATES.map((d) => getSunPosition({ lat, lon, day: d.day, stepMin: 15, timeBasis: "solar" }, ac.signal).then((x) => [d.key, x] as const).catch(() => [d.key, null] as const)))
       .then((pairs) => {
         if (ac.signal.aborted) return;
         const rec = Object.fromEntries(pairs);

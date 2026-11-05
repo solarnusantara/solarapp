@@ -11,6 +11,7 @@
 // minRx/maxRy recomputed from site.polygonPoints. No physics here, geometry only.
 import type { FieldSegment as HelioSegment, Keepout, ModuleInstance, Scene } from "./types";
 import type { SavedLayout } from "./layoutStore";
+import { isRacking } from "./racking";
 
 const M_PER_DEG_LAT = 111319.49; // identical to GoogleMapsModal.tsx
 
@@ -159,8 +160,11 @@ export function layoutToScene(layout: SavedLayout): SceneAdapterResult {
       continue;
     }
     const az = normAzimuth(Number(seg.azimuth) || 0);
+    // Every helio Racking value except `ground_mount`/`tracker` has the same name in RackingType.
+    const racking = layout.engine_inputs?.racking;
     fieldSegments.push({
       id: seg.id,
+      ...(isRacking(racking) ? { racking_type: racking } : {}),
       polygon_enu: ring,
       tilt_deg: Number(seg.tilt) || 0,
       azimuth_deg: az,

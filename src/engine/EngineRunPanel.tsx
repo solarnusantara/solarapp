@@ -9,6 +9,7 @@ import WeatherPanel from "./WeatherPanel";
 import { layoutToScene } from "./sceneAdapter";
 import type { SavedLayout } from "./layoutStore";
 import type { EngineInputs } from "./types/local";
+import { RACKING_OPTIONS } from "./racking";
 
 const inp: React.CSSProperties = { padding: "5px 8px", borderRadius: 6, border: "1px solid #364b38", background: "#0d1410", color: "inherit", width: "100%" };
 const card: React.CSSProperties = { border: "1px solid #233527", borderRadius: 10, padding: 12, marginTop: 10 };
@@ -73,6 +74,11 @@ export default function EngineRunPanel({ projectId, projectName, layout, inputs,
       {section !== "assumptions" && (
         <div style={card}><b>Input ekonomi</b> <span style={{ fontSize: 11, opacity: 0.7 }}>(tanpa nilai bawaan; wajib diisi)</span>
           <div style={{ display: "grid", gap: 8, gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", marginTop: 6 }}>
+            <label style={{ display: "grid", gap: 2, fontSize: 12 }}>Jenis racking
+              <select style={inp} value={inputs.racking ?? ""} onChange={(e) => patch({ racking: e.target.value as EngineInputs["racking"] })}>
+                <option value="">— pilih —</option>
+                {RACKING_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+              </select></label>
             <NumIn label="Kapasitas AC inverter (kW)" value={inputs.inverter_ac_kw} onChange={(v) => patch({ inverter_ac_kw: v })} />
             <label style={{ display: "grid", gap: 2, fontSize: 12 }}>Golongan tarif PLN (mis. I-3, B-2)
               <input style={inp} value={inputs.pln_tariff_code} onChange={(e) => patch({ pln_tariff_code: e.target.value })} /></label>

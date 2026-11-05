@@ -5,6 +5,7 @@ import type {
   ConditionSet, HorizonProfile, Scene, SimulationInput, SimulationOutput, StageSummary,
   StringingReport, UncertaintyInput, WireSchedule,
 } from "./index";
+import type { Racking } from "./Racking";
 
 // ---------------- helio component library (componentsClient.ts) ----------------
 export type ComponentKind = "module" | "inverter" | "micro_inverter" | "optimizer" | "hybrid_inverter" | "ac_module" | "bess";
@@ -168,6 +169,8 @@ export interface EngineInputs {
   load_profile_type: string;
   capex_per_kwp_idr: number | "";
   bess_cost_per_kwh_idr: number | "";
+  /** Mounting type (helio `Racking`). Required, no default: "" / absent = not chosen yet. */
+  racking?: Racking | "";
   /** helio component picks. */
   module_sku_id?: string;
   module_characterization_id?: string;
