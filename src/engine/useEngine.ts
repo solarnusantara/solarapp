@@ -54,11 +54,17 @@ export function circuitRequest(inputs: Partial<EngineInputs>): CircuitAutoReques
   if (tMin === null || tMax === null || !tMinSrc || !tMaxSrc) {
     return { error: "Isi suhu minimum sel dan suhu ambien maksimum situs, masing-masing beserta sumbernya." };
   }
+  const manual = inputs.string_length_method === "manual";
+  const nMin = numOrNull(inputs.string_len_min), nMax = numOrNull(inputs.string_len_max);
+  if (manual && (nMin === null || nMax === null || nMin < 1 || nMax < nMin || !strOrNull(inputs.string_len_source))) {
+    return { error: "Panjang string manual: isi minimum, maksimum (min ≤ maks) dan sumbernya." };
+  }
   return {
     module_characterization_id: inputs.module_characterization_id,
     inverter_characterization_id: inputs.inverter_characterization_id,
     inverter_count: count, target_dc_ac: dcac,
-    string_length_method: null, manual_min: null, manual_max: null, routing: null,
+    string_length_method: manual ? "manual" : null,
+    manual_min: manual ? nMin : null, manual_max: manual ? nMax : null, routing: null,
     t_min_c: tMin, t_min_source: tMinSrc, t_amb_max_c: tMax, t_amb_max_source: tMaxSrc,
     noct_c: numOrNull(inputs.noct_c), ac_voltage_v: numOrNull(inputs.ac_voltage_v),
   };
@@ -81,6 +87,7 @@ export function useEngine(args: {
 
   const fail = useCallback((e: unknown) => {
     setError(C.engineErrorMessage(e));
+    setStep("");
     setStatus(C.isUnavailable(e) ? "unavailable" : "error");
   }, []);
 

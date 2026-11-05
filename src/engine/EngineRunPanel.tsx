@@ -116,6 +116,17 @@ export default function EngineRunPanel({ projectId, projectName, layout, inputs,
             <NumIn label="Suhu ambien maks (°C)" value={inputs.t_amb_max_c} onChange={(v) => patch({ t_amb_max_c: v })} hint="Untuk Vmp panas" />
             <label style={{ display: "grid", gap: 2, fontSize: 12 }}>Sumber suhu maksimum
               <input style={inp} value={inputs.t_amb_max_source ?? ""} onChange={(e) => patch({ t_amb_max_source: e.target.value })} /></label>
+            <label style={{ display: "grid", gap: 2, fontSize: 12 }}>Panjang string
+              <select style={inp} value={inputs.string_length_method ?? ""} onChange={(e) => patch({ string_length_method: e.target.value as EngineInputs["string_length_method"] })}>
+                <option value="">Dari suhu situs (butuh NOCT modul)</option>
+                <option value="manual">Manual (min/maks + sumber)</option>
+              </select></label>
+            {inputs.string_length_method === "manual" && (<>
+              <NumIn label="Modul per string — minimum" value={inputs.string_len_min} onChange={(v) => patch({ string_len_min: v })} />
+              <NumIn label="Modul per string — maksimum" value={inputs.string_len_max} onChange={(v) => patch({ string_len_max: v })} hint="Helio tetap memeriksa batas tegangan MPPT/Vdc dan melaporkan pelanggaran" />
+              <label style={{ display: "grid", gap: 2, fontSize: 12 }}>Sumber panjang string
+                <input style={inp} value={inputs.string_len_source ?? ""} onChange={(e) => patch({ string_len_source: e.target.value })} placeholder="mis. PVsyst PLTS-MAS-E-CS-001-00: 15 string × 20" /></label>
+            </>)}
             <NumIn label="NOCT modul (°C)" value={inputs.noct_c} onChange={(v) => patch({ noct_c: v })} hint="Wajib bila file PAN tidak memuat NOCT (datasheet)" />
             <NumIn label="Tegangan AC inverter (V)" value={inputs.ac_voltage_v} onChange={(v) => patch({ ac_voltage_v: v })} hint="Hanya bila karakterisasi tidak menyebut satu tegangan" />
           </div>

@@ -185,6 +185,12 @@ export interface EngineInputs {
   t_min_source?: string;
   t_amb_max_c?: number | "";
   t_amb_max_source?: string;
+  /** helio StringLengthMethod: "" / undefined = from_temperature (needs module NOCT). */
+  string_length_method?: "manual" | "";
+  string_len_min?: number | "";
+  string_len_max?: number | "";
+  /** Where a manual string length comes from (e.g. the approved PVsyst design). Not sent to helio. */
+  string_len_source?: string;
   noct_c?: number | "";
   ac_voltage_v?: number | "";
   /** Engine extras that live in SimulationInput, not in ConditionSet. */

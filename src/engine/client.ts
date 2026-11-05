@@ -53,7 +53,17 @@ function engineMessage(status: number, code: string, detail: unknown): string {
 }
 
 export function engineErrorMessage(e: unknown): string {
-  if (e instanceof EngineError) return e.message;
+  if (e instanceof EngineError) {
+    // helio answers 422 stringing_failed / circuit_validation_failed with the real reasons in
+    // `issues` / `errors`; show them verbatim (deduplicated) instead of only the headline.
+    const d = e.detail as { issues?: Array<{ message?: string; severity?: string }>; errors?: Array<{ message?: string } | string> } | undefined;
+    const reasons = [
+      ...(d?.issues ?? []).filter((i) => i.severity !== "warning").map((i) => i.message ?? ""),
+      ...(d?.errors ?? []).map((x) => (typeof x === "string" ? x : x.message ?? "")),
+    ].filter(Boolean);
+    const uniq = [...new Set(reasons)];
+    return uniq.length ? `${e.message} — ${uniq.join(" · ")}` : e.message;
+  }
   if (e instanceof Error) return e.message;
   return String(e);
 }
