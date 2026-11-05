@@ -26,9 +26,12 @@ import {
   Box,
 } from "lucide-react";
 import {
-  fetchSolarClimatology,
   findNearestPlnSubstations,
 } from "./gisSolarService";
+import ReportsHost, { type ReportView } from "./reports/ReportsHost";
+import { useReportData } from "./reports/useReportData";
+import { engineYield, lossLines, out as engineOut } from "./reports/model";
+import { pct as fmtPct, n as fmtNum, DASH } from "./reports/format";
 import type {
   SolarYieldResult,
   PlnSubstation,
@@ -83,7 +86,7 @@ function computeSolarPosition(hour: number, lat: number, lng: number) {
 // ============================================================================
 // REAL 3D VIEWPORT COMPONENT (THREE.JS / WEBGL)
 // ============================================================================
-function Report3DViewport({
+export function Report3DViewport({
   panels,
   obstacles,
   areaW,
@@ -909,6 +912,8 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
   );
 
   // GIS Solar Irradiance & Yield State
+  const reportData = useReportData(activeProj?.id ?? projectId, { hourly: false });
+  const [reportView, setReportView] = useState<ReportView | null>(null);
   const [yieldData, setYieldData] = useState<SolarYieldResult | null>(null);
   const [loadingGis, setLoadingGis] = useState(false);
   const [gisError, setGisError] = useState<string | null>(null);
@@ -945,8 +950,7 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
     setLoadingGis(true);
     setGisError(null);
     try {
-      const data = await fetchSolarClimatology(coords.lat, coords.lng, capacityKwp);
-      setYieldData(data);
+      reportData.reload();
       const subs = findNearestPlnSubstations(coords.lat, coords.lng, 3);
       setSubstations(subs);
     } catch (err: any) {
@@ -956,6 +960,10 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
       setLoadingGis(false);
     }
   }
+
+  useEffect(() => {
+    setYieldData(engineYield(reportData.result, coords));
+  }, [reportData.result, coords.lat, coords.lng]);
 
   useEffect(() => {
     loadGisData();
@@ -1206,7 +1214,7 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
                   <td style={{ padding: "3.5px 6px", fontWeight: 600, color: "#0f172a" }}>{m.temp.toFixed(1)} °C</td>
                   <td style={{ padding: "3.5px 6px", fontWeight: 600, color: "#0f172a" }}>{m.dailyEnergyKwh.toLocaleString()}</td>
                   <td style={{ padding: "3.5px 6px", fontWeight: 800, color: "#047857" }}>{(m.monthlyEnergyKwh / 1000).toFixed(1)}</td>
-                  <td style={{ padding: "3.5px 6px", textAlign: "right", fontWeight: 600, color: "#0f172a" }}>Rp {m.savingsIdr.toLocaleString()}</td>
+                  <td style={{ padding: "3.5px 6px", textAlign: "right", fontWeight: 600, color: "#0f172a" }}>{Number.isFinite(m.savingsIdr) ? `Rp ${m.savingsIdr.toLocaleString()}` : DASH}</td>
                 </tr>
               ))}
             </tbody>
@@ -1231,12 +1239,11 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
             <ShieldCheck size={11} style={{ color: "#047857" }} /> Dekomposisi Rugi Daya Sistem (IEC 61724)
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "2px 6px", color: "#0f172a" }}>
-            <div>Soiling / Debu: <strong style={{ color: "#dc2626" }}>-2.5%</strong></div>
-            <div>Rugi Suhu Ambien: <strong style={{ color: "#dc2626" }}>-9.1%</strong></div>
-            <div>Shading Obstacle: <strong style={{ color: "#047857" }}>-0.8%</strong></div>
-            <div>Efisiensi Inverter: <strong style={{ color: "#dc2626" }}>-1.8%</strong></div>
-            <div>Kabel DC/AC: <strong style={{ color: "#dc2626" }}>-1.2%</strong></div>
-            <div>Net PR: <strong style={{ color: "#047857" }}>81.4%</strong></div>
+            {lossLines(reportData.result).map((l) => (
+              <div key={l.label}>{l.label}: <strong style={{ color: "#dc2626" }}>{fmtNum(l.pct, 1)}%</strong></div>
+            ))}
+            {!reportData.result && <div style={{ gridColumn: "1 / -1" }}>Belum dihitung — buka PV Layout lalu klik Hitung (Helio)</div>}
+            <div>Net PR: <strong style={{ color: "#047857" }}>{fmtPct(engineOut(reportData.result)?.performance_ratio_pct, 1)}</strong></div>
           </div>
         </div>
 
@@ -1537,29 +1544,16 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
             <Activity size={11} style={{ color: "#dc2626" }} /> Analisis Susut Daya Sistem Lengkap (IEC 61724)
           </div>
           <div style={{ display: "grid", gap: 3 }}>
-            <div style={{ display: "flex", justifyContent: "space-between" }}>
-              <span style={{ color: "#0f172a", fontWeight: 600 }}>Rugi Suhu Ambien (Thermal Derating -0.35%/°C):</span>
-              <strong style={{ color: "#dc2626" }}>-9.1%</strong>
-            </div>
-            <div style={{ display: "flex", justifyContent: "space-between" }}>
-              <span style={{ color: "#0f172a", fontWeight: 600 }}>Soiling & Endapan Debu Industri Tropis:</span>
-              <strong style={{ color: "#dc2626" }}>-2.5%</strong>
-            </div>
-            <div style={{ display: "flex", justifyContent: "space-between" }}>
-              <span style={{ color: "#0f172a", fontWeight: 600 }}>Efisiensi Konversi Inverter On-Grid:</span>
-              <strong style={{ color: "#dc2626" }}>-1.8%</strong>
-            </div>
-            <div style={{ display: "flex", justifyContent: "space-between" }}>
-              <span style={{ color: "#0f172a", fontWeight: 600 }}>Hambatan Kabel DC & AC (Ohmic Cable Losses):</span>
-              <strong style={{ color: "#dc2626" }}>-1.2%</strong>
-            </div>
-            <div style={{ display: "flex", justifyContent: "space-between" }}>
-              <span style={{ color: "#0f172a", fontWeight: 600 }}>Near Shading & Obstacle Losses:</span>
-              <strong style={{ color: "#047857" }}>-0.8%</strong>
-            </div>
+            {lossLines(reportData.result).map((l) => (
+              <div key={l.label} style={{ display: "flex", justifyContent: "space-between" }}>
+                <span style={{ color: "#0f172a", fontWeight: 600 }}>{l.label}:</span>
+                <strong style={{ color: "#dc2626" }}>{fmtNum(l.pct, 1)}%</strong>
+              </div>
+            ))}
+            {!reportData.result && <div>Belum dihitung — buka PV Layout lalu klik Hitung (Helio)</div>}
             <div style={{ display: "flex", justifyContent: "space-between", borderTop: "1.5px solid #0f172a", paddingTop: 3, fontWeight: 900 }}>
               <span style={{ color: "#0f172a" }}>Net Performance Ratio (PR):</span>
-              <strong style={{ color: "#047857", fontSize: 9.5 }}>81.4%</strong>
+              <strong style={{ color: "#047857", fontSize: 9.5 }}>{fmtPct(engineOut(reportData.result)?.performance_ratio_pct, 1)}</strong>
             </div>
           </div>
         </div>
@@ -1868,6 +1862,10 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
     </div>
   );
 
+  if (reportView) {
+    return <ReportsHost lang={lang} projectId={activeProj?.id ?? projectId} project={activeProj} initialView={reportView} onClose={() => setReportView(null)} />;
+  }
+
   return (
     <div className="module-page" style={{ color: "#e8eef9", display: "grid", gap: 18 }}>
       {/* Screen Header & Top Action Bar */}
@@ -1933,6 +1931,10 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
               📄 Format Cetak A4 (Light)
             </button>
           </div>
+
+          {([["production", "Production Report"], ["calc", "Engineering Calculation"], ["meta", "Data dokumen"]] as const).map(([v, label]) => (
+            <button key={v} type="button" className="secondary-button" onClick={() => setReportView(v)} style={{ fontSize: 11, padding: "7px 11px" }}>{label}</button>
+          ))}
 
           <button
             type="button"
@@ -2070,7 +2072,7 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
                 <div style={{ fontSize: 22, fontWeight: 800, color: "#10b981", margin: "6px 0 2px" }}>
                   {yieldData.carbonOffsetTons.toLocaleString()} <small style={{ fontSize: 12 }}>Ton/thn</small>
                 </div>
-                <small style={{ color: "#94a3b8", fontSize: 11, fontWeight: 600 }}>Faktor Emisi Grid Jamali 0.79 kg/kWh</small>
+                <small style={{ color: "#94a3b8", fontSize: 11, fontWeight: 600 }}>Sumber: Helio engine</small>
               </div>
 
               <div className="pv-card" style={{ padding: 14 }}>
@@ -2079,9 +2081,9 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
                   <Award size={14} style={{ color: "#a855f7" }} />
                 </div>
                 <div style={{ fontSize: 22, fontWeight: 800, color: "#c084fc", margin: "6px 0 2px" }}>
-                  Rp 680 <small style={{ fontSize: 12 }}>/kWh</small>
+                  {Number.isFinite(engineOut(reportData.result)?.lcoe_idr_per_kwh) ? `Rp ${Math.round(engineOut(reportData.result).lcoe_idr_per_kwh).toLocaleString()}` : DASH} <small style={{ fontSize: 12 }}>/kWh</small>
                 </div>
-                <small style={{ color: "#94a3b8", fontSize: 11, fontWeight: 600 }}>Tarif B2/I3 PLN: Rp 1.114/kWh</small>
+                <small style={{ color: "#94a3b8", fontSize: 11, fontWeight: 600 }}>Sumber: Helio engine</small>
               </div>
             </div>
           )}
@@ -2219,7 +2221,7 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
                         <td style={{ fontWeight: 800, color: "var(--green, #b8f36b)", padding: "6px 8px", textAlign: "center" }}>
                           {(m.monthlyEnergyKwh / 1000).toFixed(1)}
                         </td>
-                        <td style={{ textAlign: "right", color: "#f1f5f9", padding: "6px 8px", fontWeight: 600 }}>Rp {m.savingsIdr.toLocaleString()}</td>
+                        <td style={{ textAlign: "right", color: "#f1f5f9", padding: "6px 8px", fontWeight: 600 }}>{Number.isFinite(m.savingsIdr) ? `Rp ${m.savingsIdr.toLocaleString()}` : DASH}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -2246,29 +2248,16 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
                     <Activity size={15} style={{ color: "#f59e0b" }} /> Analisis Susut Daya (Loss Tree)
                   </h3>
                   <div style={{ display: "grid", gap: 6, fontSize: 11 }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", padding: "4px 0", borderBottom: "1px dashed #1f3024" }}>
-                      <span style={{ color: "#cbd5e1", fontWeight: 600 }}>Shading & Obstacle Near-loss</span>
-                      <strong style={{ color: "#38bdf8" }}>-0.8%</strong>
-                    </div>
-                    <div style={{ display: "flex", justifyContent: "space-between", padding: "4px 0", borderBottom: "1px dashed #1f3024" }}>
-                      <span style={{ color: "#cbd5e1", fontWeight: 600 }}>Soiling & Debu Tropis</span>
-                      <strong style={{ color: "#f87171" }}>-2.5%</strong>
-                    </div>
-                    <div style={{ display: "flex", justifyContent: "space-between", padding: "4px 0", borderBottom: "1px dashed #1f3024" }}>
-                      <span style={{ color: "#cbd5e1", fontWeight: 600 }}>Thermal Derating (-0.35%/°C)</span>
-                      <strong style={{ color: "#f87171" }}>-9.1%</strong>
-                    </div>
-                    <div style={{ display: "flex", justifyContent: "space-between", padding: "4px 0", borderBottom: "1px dashed #1f3024" }}>
-                      <span style={{ color: "#cbd5e1", fontWeight: 600 }}>Efisiensi Inverter Euro</span>
-                      <strong style={{ color: "#f87171" }}>-1.8%</strong>
-                    </div>
-                    <div style={{ display: "flex", justifyContent: "space-between", padding: "4px 0", borderBottom: "1px dashed #1f3024" }}>
-                      <span style={{ color: "#cbd5e1", fontWeight: 600 }}>Kabel DC & AC Resistance</span>
-                      <strong style={{ color: "#f87171" }}>-1.2%</strong>
-                    </div>
+                    {lossLines(reportData.result).map((l) => (
+                      <div key={l.label} style={{ display: "flex", justifyContent: "space-between", padding: "4px 0", borderBottom: "1px dashed #1f3024" }}>
+                        <span style={{ color: "#cbd5e1", fontWeight: 600 }}>{l.label}</span>
+                        <strong style={{ color: "#f87171" }}>{fmtNum(l.pct, 1)}%</strong>
+                      </div>
+                    ))}
+                    {!reportData.result && <div style={{ color: "#cbd5e1" }}>Belum dihitung — buka PV Layout lalu klik Hitung (Helio)</div>}
                     <div style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", fontWeight: 700 }}>
                       <span style={{ color: "#edf5ef" }}>Total System PR Net</span>
-                      <strong style={{ color: "var(--green, #b8f36b)" }}>81.4%</strong>
+                      <strong style={{ color: "var(--green, #b8f36b)" }}>{fmtPct(engineOut(reportData.result)?.performance_ratio_pct, 1)}</strong>
                     </div>
                   </div>
                 </div>

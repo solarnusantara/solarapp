@@ -1,0 +1,307 @@
+// Hand-drawn SVG charts (no chart library, no canvas). Every chart takes already-sourced numbers and
+// renders an explicit "—" box when it has nothing to draw.
+import type { ReactNode } from "react";
+import { DASH, isNum } from "./format";
+
+const FONT = "Arial, Helvetica, sans-serif";
+
+export function ChartEmpty({ w, h, note }: { w: number; h: number; note?: string }) {
+  return (
+    <svg viewBox={`0 0 ${w} ${h}`} width="100%" role="img" aria-label="tidak ada data">
+      <rect x="0.5" y="0.5" width={w - 1} height={h - 1} fill="#f8fafc" stroke="#cbd5e1" strokeDasharray="4 3" />
+      <text x={w / 2} y={h / 2} textAnchor="middle" fontFamily={FONT} fontSize="12" fill="#64748b">{DASH} {note ?? "data belum tersedia"}</text>
+    </svg>
+  );
+}
+
+export function niceMax(v: number): number {
+  if (!(v > 0)) return 1;
+  const p = Math.pow(10, Math.floor(Math.log10(v)));
+  const f = v / p;
+  const nice = f <= 1 ? 1 : f <= 2 ? 2 : f <= 2.5 ? 2.5 : f <= 5 ? 5 : 10;
+  return nice * p;
+}
+
+function ticks(max: number, count = 5) {
+  return Array.from({ length: count + 1 }, (_, i) => (max * i) / count);
+}
+const fmtTick = (v: number) => (Math.abs(v) >= 1000 ? `${Math.round(v / 1000)}k` : Number.isInteger(v) ? String(v) : v.toFixed(1));
+
+interface Frame { l: number; r: number; t: number; b: number }
+
+function Axes({ w, h, f, yMax, yTicks = 5, yLabel, xLabels, ymin = 0, fmt = fmtTick }: {
+  w: number; h: number; f: Frame; yMax: number; yTicks?: number; yLabel?: string; xLabels?: string[]; ymin?: number; fmt?: (v: number) => string;
+}) {
+  const ih = h - f.t - f.b, iw = w - f.l - f.r;
+  const yAt = (v: number) => f.t + ih - ((v - ymin) / (yMax - ymin)) * ih;
+  return (
+    <g fontFamily={FONT} fontSize="9" fill="#475569">
+      {ticks(yMax - ymin, yTicks).map((tv, i) => {
+        const v = ymin + tv;
+        return (
+          <g key={i}>
+            <line x1={f.l} x2={w - f.r} y1={yAt(v)} y2={yAt(v)} stroke="#e2e8f0" />
+            <text x={f.l - 4} y={yAt(v) + 3} textAnchor="end">{fmt(v)}</text>
+          </g>
+        );
+      })}
+      <line x1={f.l} x2={f.l} y1={f.t} y2={h - f.b} stroke="#94a3b8" />
+      <line x1={f.l} x2={w - f.r} y1={h - f.b} y2={h - f.b} stroke="#94a3b8" />
+      {yLabel && <text transform={`translate(10 ${f.t + ih / 2}) rotate(-90)`} textAnchor="middle">{yLabel}</text>}
+      {xLabels?.map((l, i) => (
+        <text key={i} x={f.l + (iw / xLabels.length) * (i + 0.5)} y={h - f.b + 12} textAnchor="middle">{l}</text>
+      ))}
+    </g>
+  );
+}
+
+export function BarChart({ values, labels, color = "#f59e0b", yLabel, w = 460, h = 190, legend, maxOverride, fmt }: {
+  values: Array<number | null | undefined> | null; labels: string[]; color?: string; yLabel?: string; w?: number; h?: number; legend?: string; maxOverride?: number; fmt?: (v: number) => string;
+}) {
+  if (!values || !values.some(isNum)) return <ChartEmpty w={w} h={h} />;
+  const f: Frame = { l: 38, r: 8, t: 8, b: legend ? 38 : 22 };
+  const yMax = maxOverride ?? niceMax(Math.max(...values.filter(isNum)));
+  const ih = h - f.t - f.b, iw = w - f.l - f.r, bw = (iw / values.length) * 0.62;
+  return (
+    <svg viewBox={`0 0 ${w} ${h}`} width="100%" role="img">
+      <Axes w={w} h={h} f={f} yMax={yMax} yLabel={yLabel} xLabels={labels} fmt={fmt} />
+      {values.map((v, i) => isNum(v) && (
+        <rect key={i} x={f.l + (iw / values.length) * (i + 0.5) - bw / 2} width={bw} y={f.t + ih - (v / yMax) * ih} height={(v / yMax) * ih} fill={color} />
+      ))}
+      {legend && (
+        <g fontFamily={FONT} fontSize="9" fill="#334155" fontWeight="700">
+          <circle cx={w / 2 - 28} cy={h - 8} r="4" fill={color} />
+          <text x={w / 2 - 20} y={h - 5}>{legend}</text>
+        </g>
+      )}
+    </svg>
+  );
+}
+
+export interface StackSeries { name: string; color: string; values: Array<number | null> }
+
+export function StackedBars({ series, labels, yLabel, w = 440, h = 210, ymax, legendNote }: {
+  series: StackSeries[]; labels: string[]; yLabel?: string; w?: number; h?: number; ymax?: number; legendNote?: Record<string, string>;
+}) {
+  const n = labels.length;
+  const totals = labels.map((_, i) => series.reduce((a, s) => a + (isNum(s.values[i]) ? (s.values[i] as number) : 0), 0));
+  if (!series.length || !series.some((s) => s.values.some(isNum))) return <ChartEmpty w={w} h={h} />;
+  const f: Frame = { l: 38, r: 8, t: 8, b: 22 };
+  const yMax = ymax ?? niceMax(Math.max(...totals));
+  const ih = h - f.t - f.b, iw = w - f.l - f.r, bw = (iw / n) * 0.62;
+  return (
+    <svg viewBox={`0 0 ${w} ${h}`} width="100%" role="img">
+      <Axes w={w} h={h} f={f} yMax={yMax} yLabel={yLabel} xLabels={labels} />
+      {labels.map((_, i) => {
+        let acc = 0;
+        return series.map((s) => {
+          const v = isNum(s.values[i]) ? (s.values[i] as number) : 0;
+          const y = f.t + ih - ((acc + v) / yMax) * ih;
+          const el = <rect key={`${i}-${s.name}`} x={f.l + (iw / n) * (i + 0.5) - bw / 2} width={bw} y={y} height={(v / yMax) * ih} fill={s.color} />;
+          acc += v;
+          return el;
+        });
+      })}
+      <g fontFamily={FONT} fontSize="8.5" fill="#334155">
+        <rect x={f.l + 6} y={f.t + 4} width={iw * 0.62} height={series.length * 12 + 4} fill="#fff" stroke="#94a3b8" opacity="0.92" />
+        {series.map((s, i) => (
+          <g key={s.name}>
+            <rect x={f.l + 10} y={f.t + 8 + i * 12} width="9" height="8" fill={s.color} />
+            <text x={f.l + 23} y={f.t + 15 + i * 12}>{s.name}{legendNote?.[s.name] ? `   ${legendNote[s.name]}` : ""}</text>
+          </g>
+        ))}
+      </g>
+    </svg>
+  );
+}
+
+const PALETTE = ["#0e7490", "#b45309", "#16a34a", "#6d28d9", "#ea580c", "#2563eb", "#9ca3af", "#be185d", "#0f766e", "#a16207", "#7c3aed", "#dc2626"];
+
+export function Donut({ slices, w = 360, h = 190, decimals = 1 }: { slices: Array<{ label: string; value: number }>; w?: number; h?: number; decimals?: number }) {
+  const data = slices.filter((s) => isNum(s.value) && s.value > 0);
+  if (!data.length) return <ChartEmpty w={w} h={h} />;
+  const total = data.reduce((a, s) => a + s.value, 0);
+  const cx = w / 2, cy = h / 2 + 4, R = Math.min(h / 2 - 34, 60), r = R * 0.5;
+  let a0 = -Math.PI / 2;
+  const items = data.map((s, i) => {
+    const a1 = a0 + (s.value / total) * Math.PI * 2;
+    const mid = (a0 + a1) / 2;
+    const large = a1 - a0 > Math.PI ? 1 : 0;
+    const p = (rad: number, a: number) => `${cx + rad * Math.cos(a)} ${cy + rad * Math.sin(a)}`;
+    const d = `M ${p(R, a0)} A ${R} ${R} 0 ${large} 1 ${p(R, a1)} L ${p(r, a1)} A ${r} ${r} 0 ${large} 0 ${p(r, a0)} Z`;
+    const res = { d, mid, color: PALETTE[i % PALETTE.length], label: s.label, value: s.value };
+    a0 = a1;
+    return res;
+  });
+  return (
+    <svg viewBox={`0 0 ${w} ${h}`} width="100%" role="img">
+      {items.map((it, i) => <path key={i} d={it.d} fill={it.color} stroke="#fff" strokeWidth="0.8" />)}
+      <g fontFamily={FONT} fontSize="8.5" fontWeight="700" fill="#111827">
+        {items.map((it, i) => {
+          const x1 = cx + R * Math.cos(it.mid), y1 = cy + R * Math.sin(it.mid);
+          const x2 = cx + (R + 10) * Math.cos(it.mid), y2 = cy + (R + 10) * Math.sin(it.mid);
+          const right = Math.cos(it.mid) >= 0;
+          return (
+            <g key={i}>
+              <polyline points={`${x1},${y1} ${x2},${y2} ${x2 + (right ? 8 : -8)},${y2}`} fill="none" stroke="#475569" strokeWidth="0.6" />
+              <text x={x2 + (right ? 10 : -10)} y={y2 + 3} textAnchor={right ? "start" : "end"}>{it.label}: {it.value.toFixed(decimals)}%</text>
+            </g>
+          );
+        })}
+      </g>
+    </svg>
+  );
+}
+
+export interface WaterfallItem { kind: "total" | "loss" | "note"; label: string; value?: string; pct?: string }
+
+/** Loss diagram: boxes carry the running energy value, arrows carry the stage loss. */
+export function Waterfall({ items, w = 680, rowH = 25 }: { items: WaterfallItem[]; w?: number; rowH?: number }) {
+  if (!items.length) return <ChartEmpty w={w} h={120} />;
+  const h = items.length * rowH + 30;
+  const x0 = 120, x1 = 300;
+  return (
+    <svg viewBox={`0 0 ${w} ${h}`} width="100%" role="img" fontFamily={FONT} fontSize="11">
+      {items.map((it, i) => {
+        const y = 10 + i * rowH;
+        if (it.kind === "total") {
+          return (
+            <g key={i}>
+              <path d={`M ${x0} ${y} L ${x1} ${y} L ${x1} ${y + rowH - 6} L ${(x0 + x1) / 2} ${y + rowH - 2} L ${x0} ${y + rowH - 6} Z`} fill="#fff" stroke="#111827" />
+              <text x={(x0 + x1) / 2} y={y + 12} textAnchor="middle">{it.value ?? DASH}</text>
+              <text x={x1 + 70} y={y + 12} fontWeight="700">{it.label}</text>
+            </g>
+          );
+        }
+        if (it.kind === "note") {
+          return <text key={i} x={(x0 + x1) / 2} y={y + 14} textAnchor="middle" fill="#334155">{it.value}   <tspan x={x1 + 70} fontWeight="700" fill="#111827" textAnchor="start">{it.label}</tspan></text>;
+        }
+        return (
+          <g key={i}>
+            <path d={`M ${x1} ${y + 2} L ${x1 + 10} ${y + 8} L ${x1} ${y + 14}`} fill="none" stroke="#111827" />
+            <text x={x1 + 18} y={y + 13}>{it.pct ?? DASH}</text>
+            <text x={x1 + 70} y={y + 13}>{it.label}</text>
+          </g>
+        );
+      })}
+    </svg>
+  );
+}
+
+export function Scatter({ points, xLabel, yLabel, w = 640, h = 270, xMax, yMax }: {
+  points: Array<{ x: number; y: number }> | null; xLabel: string; yLabel: string; w?: number; h?: number; xMax?: number; yMax?: number;
+}) {
+  if (!points || !points.length) return <ChartEmpty w={w} h={h} />;
+  const f: Frame = { l: 48, r: 10, t: 10, b: 32 };
+  const xm = xMax ?? niceMax(Math.max(...points.map((p) => p.x)));
+  const ym = yMax ?? niceMax(Math.max(...points.map((p) => p.y)));
+  const iw = w - f.l - f.r, ih = h - f.t - f.b;
+  return (
+    <svg viewBox={`0 0 ${w} ${h}`} width="100%" role="img">
+      <Axes w={w} h={h} f={f} yMax={ym} yLabel={yLabel} />
+      <g fontFamily={FONT} fontSize="9" fill="#475569">
+        {ticks(xm, 8).map((v, i) => <text key={i} x={f.l + (v / xm) * iw} y={h - f.b + 12} textAnchor="middle">{fmtTick(v)}</text>)}
+        <text x={f.l + iw / 2} y={h - 4} textAnchor="middle" fontSize="10">{xLabel}</text>
+      </g>
+      {points.map((p, i) => <circle key={i} cx={f.l + (p.x / xm) * iw} cy={f.t + ih - (p.y / ym) * ih} r="1.7" fill="none" stroke="#111827" strokeWidth="0.6" />)}
+    </svg>
+  );
+}
+
+export function StepHistogram({ bins, xLabel, yLabel, w = 640, h = 270 }: {
+  bins: Array<{ from: number; to: number; value: number }> | null; xLabel: string; yLabel: string; w?: number; h?: number;
+}) {
+  if (!bins || !bins.length) return <ChartEmpty w={w} h={h} />;
+  const f: Frame = { l: 48, r: 10, t: 10, b: 32 };
+  const xm = bins[bins.length - 1].to;
+  const ym = niceMax(Math.max(...bins.map((b) => b.value)));
+  const iw = w - f.l - f.r, ih = h - f.t - f.b;
+  const X = (v: number) => f.l + (v / xm) * iw, Y = (v: number) => f.t + ih - (v / ym) * ih;
+  let d = `M ${X(bins[0].from)} ${Y(0)}`;
+  for (const b of bins) d += ` L ${X(b.from)} ${Y(b.value)} L ${X(b.to)} ${Y(b.value)}`;
+  d += ` L ${X(xm)} ${Y(0)}`;
+  return (
+    <svg viewBox={`0 0 ${w} ${h}`} width="100%" role="img">
+      <Axes w={w} h={h} f={f} yMax={ym} yLabel={yLabel} />
+      <g fontFamily={FONT} fontSize="9" fill="#475569">
+        {ticks(xm, 6).map((v, i) => <text key={i} x={X(v)} y={h - f.b + 12} textAnchor="middle">{fmtTick(v)}</text>)}
+        <text x={f.l + iw / 2} y={h - 4} textAnchor="middle" fontSize="10">{xLabel}</text>
+      </g>
+      <path d={d} fill="none" stroke="#111827" strokeWidth="1.2" />
+    </svg>
+  );
+}
+
+/** Normal density around the engine's P50 with sigma from the engine; markers are engine P-values. */
+export function NormalCurve({ p50, sigma, markers, simul, w = 640, h = 270, unit = "MWh" }: {
+  p50: number | null; sigma: number | null; markers: Array<{ name: string; x: number | null; color: string }>; simul?: number | null; w?: number; h?: number; unit?: string;
+}) {
+  if (!isNum(p50) || !isNum(sigma) || sigma <= 0) return <ChartEmpty w={w} h={h} note="distribusi belum tersedia dari engine" />;
+  const f: Frame = { l: 48, r: 14, t: 14, b: 32 };
+  const lo = p50 - 3.4 * sigma, hi = p50 + 3.4 * sigma;
+  const iw = w - f.l - f.r, ih = h - f.t - f.b;
+  const pdf = (x: number) => Math.exp(-0.5 * ((x - p50) / sigma) ** 2) / (sigma * Math.sqrt(2 * Math.PI));
+  const peak = pdf(p50);
+  const ym = peak * 1.25;
+  const X = (x: number) => f.l + ((x - lo) / (hi - lo)) * iw, Y = (v: number) => f.t + ih - (v / ym) * ih;
+  const pts = Array.from({ length: 121 }, (_, i) => lo + ((hi - lo) * i) / 120).map((x) => `${X(x)},${Y(pdf(x))}`).join(" ");
+  const xt = ticks(hi - lo, 8).map((t) => lo + t);
+  return (
+    <svg viewBox={`0 0 ${w} ${h}`} width="100%" role="img" fontFamily={FONT} fontSize="9">
+      <line x1={f.l} x2={f.l} y1={f.t} y2={h - f.b} stroke="#94a3b8" />
+      <line x1={f.l} x2={w - f.r} y1={h - f.b} y2={h - f.b} stroke="#94a3b8" />
+      {xt.map((x, i) => <text key={i} x={X(x)} y={h - f.b + 12} textAnchor="middle" fill="#475569">{x.toFixed(0)}</text>)}
+      <text x={f.l + iw / 2} y={h - 4} textAnchor="middle" fontSize="10" fill="#475569">E_Grid system production {unit}</text>
+      <text transform={`translate(10 ${f.t + ih / 2}) rotate(-90)`} textAnchor="middle" fill="#475569">Probability density</text>
+      <polyline points={pts} fill="none" stroke="#111827" strokeWidth="1.6" />
+      {isNum(simul) && <><circle cx={X(simul)} cy={Y(pdf(simul))} r="4" fill="#f59e0b" /><text x={X(simul) + 8} y={Y(pdf(simul)) + 3} fill="#d97706">E_Grid simul = {simul.toFixed(1)} {unit}</text></>}
+      {markers.filter((m) => isNum(m.x)).map((m) => (
+        <g key={m.name}>
+          <circle cx={X(m.x as number)} cy={Y(pdf(m.x as number))} r="3.5" fill={m.color} />
+          <text x={X(m.x as number) + 7} y={Y(pdf(m.x as number)) + 3} fill={m.color}>{m.name} = {(m.x as number).toFixed(1)} {unit}</text>
+        </g>
+      ))}
+    </svg>
+  );
+}
+
+export interface SunCurve { label: string; num: string; points: Array<[number, number]> }
+
+/** Height / azimuth diagram. Axis: azimuth 180 .. -180 (0 = south), curves are engine sun positions. */
+export function SunPathChart({ curves, horizon, title, subtitle, w = 340, h = 210, extra }: {
+  curves: SunCurve[]; horizon: Array<[number, number]> | null; title: string; subtitle?: string; w?: number; h?: number; extra?: ReactNode;
+}) {
+  const f: Frame = { l: 34, r: 8, t: 8, b: 26 };
+  const iw = w - f.l - f.r, ih = h - f.t - f.b;
+  const X = (az: number) => f.l + ((180 - az) / 360) * iw, Y = (el: number) => f.t + ih - (el / 90) * ih;
+  const usable = curves.filter((c) => c.points.length > 1);
+  return (
+    <div>
+      <div style={{ textAlign: "center", fontWeight: 700, fontSize: 12 }}>{title}</div>
+      {subtitle && <div style={{ textAlign: "center", fontWeight: 600, fontSize: 9.5, color: "#1d4ed8" }}>{subtitle}</div>}
+      {!usable.length ? <ChartEmpty w={w} h={h} note="posisi matahari belum tersedia" /> : (
+        <svg viewBox={`0 0 ${w} ${h}`} width="100%" role="img" fontFamily={FONT} fontSize="8.5">
+          <rect x={f.l} y={f.t} width={iw} height={ih} fill="#fef9c3" stroke="#111827" />
+          {[0, 15, 30, 45, 60, 75, 90].map((e) => <text key={e} x={f.l - 4} y={Y(e) + 3} textAnchor="end" fill="#475569">{e}</text>)}
+          {[180, 150, 120, 90, 60, 30, 0, -30, -60, -90, -120, -150, -180].map((a) => <text key={a} x={X(a)} y={h - f.b + 11} textAnchor="middle" fill="#475569">{a}</text>)}
+          <text x={f.l + iw / 2} y={h - 3} textAnchor="middle" fill="#475569">Azimuth [°]</text>
+          <text transform={`translate(8 ${f.t + ih / 2}) rotate(-90)`} textAnchor="middle" fill="#475569">Sun height [°]</text>
+          {usable.map((c) => {
+            const idx = c.points.length >> 1;
+            return (
+              <g key={c.num}>
+                <polyline points={c.points.map(([a, e]) => `${X(a)},${Y(e)}`).join(" ")} fill="none" stroke="#111827" strokeWidth="0.9" />
+                <circle cx={X(c.points[idx][0])} cy={Y(c.points[idx][1])} r="5" fill="#fff" stroke="#111827" strokeWidth="0.6" />
+                <text x={X(c.points[idx][0])} y={Y(c.points[idx][1]) + 3} textAnchor="middle" fontWeight="700" fontSize="7">{c.num}</text>
+              </g>
+            );
+          })}
+          {horizon && horizon.length > 1 && (
+            <polyline points={horizon.map(([a, e]) => `${X(a)},${Y(e)}`).join(" ")} fill="none" stroke="#111827" strokeWidth="1.6" />
+          )}
+          {extra}
+        </svg>
+      )}
+    </div>
+  );
+}

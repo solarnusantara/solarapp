@@ -14,6 +14,7 @@ import BreakerSizing from "./BreakerSizing";
 import MountingDesign from "./MountingDesign";
 import SurveyReport from "./SurveyReport";
 import EngineeringReport from "./EngineeringReport";
+import { EngineBadge, EngineSwitch, StringingPanel, WireSchedulePanel, ProtectionPanel, DrawingsPanel } from "./engine/EngineElectrical";
 import BOQ from "./BOQ";
 import {
   Activity, ArrowDownRight, ArrowUpRight, Bell, Box, Cable,
@@ -677,28 +678,32 @@ export default function App() {
               projectName={activeProject?.name ?? null}
             />
           ) : active === "electrical" ? (
-            <>
-              <StringCalculator lang={lang} />
-              <div style={{ marginTop: 32, borderTop: "1px solid var(--border, #374151)", paddingTop: 24 }}>
-                <InverterConfiguration lang={lang} />
-              </div>
-            </>
+            <EngineSwitch
+              projectId={activeProject?.id ?? null}
+              quick={<>
+                <StringCalculator lang={lang} />
+                <div style={{ marginTop: 32, borderTop: "1px solid var(--border, #374151)", paddingTop: 24 }}>
+                  <InverterConfiguration lang={lang} />
+                </div>
+              </>}
+              engine={(designId) => <StringingPanel designId={designId} />}
+            />
           ) : active === "cable" ? (
-            <CableSizing lang={lang} />
+            <EngineSwitch projectId={activeProject?.id ?? null} quick={<CableSizing lang={lang} />} engine={(d) => <WireSchedulePanel designId={d} />} />
           ) : active === "protection" ? (
-            <ProtectionGrounding lang={lang} />
+            <EngineSwitch projectId={activeProject?.id ?? null} quick={<ProtectionGrounding lang={lang} />} engine={(d) => <ProtectionPanel designId={d} />} />
           ) : active === "structure" ? (
-            <StructuralDesign lang={lang} />
+            <><EngineBadge /><StructuralDesign lang={lang} /></>
           ) : active === "cad" ? (
-            <CADDrawings lang={lang} />
+            <EngineSwitch projectId={activeProject?.id ?? null} quick={<CADDrawings lang={lang} />} engine={(d) => <DrawingsPanel designId={d} />} />
           ) : active === "boq" ? (
             <BOQ lang={lang} userId={user.id} projectId={activeProject?.id ?? null} projectName={activeProject?.name ?? null} />
           ) : active === "tray" ? (
-            <TraySizing lang={lang} />
+            <><EngineBadge /><TraySizing lang={lang} /></>
           ) : active === "breaker" ? (
-            <BreakerSizing lang={lang} />
+            <><EngineBadge /><BreakerSizing lang={lang} /></>
           ) : active === "mounting" ? (
-            <MountingDesign lang={lang} />
+            <><EngineBadge /><MountingDesign lang={lang} /></>
           ) : active === "survey" ? (
             <SurveyReport lang={lang} />
           ) : active === "report" ? (
