@@ -85,6 +85,7 @@ export type Site = {
   polygonPoints?: Array<{ lat: number; lng: number }>;
   polygonCorners?: Array<{ x: number; y: number }>;
   rotationDeg?: number;
+  imageSpanM?: number;
   pitchDegrees?: number;
   azimuthDegrees?: number;
   googleSolarData?: any;
@@ -642,6 +643,7 @@ export default function PVLayout({
     widthMm: number;
     heightMm: number;
     imageSrc: string;
+    imageSpanM?: number;
     coordinates: { lat: number; lng: number };
     address: string;
     polygonPoints?: Array<{ lat: number; lng: number }>;
@@ -650,6 +652,16 @@ export default function PVLayout({
     pitchDegrees?: number;
     azimuthDegrees?: number;
     googleSolarData?: any;
+    segmentsData?: Array<{
+      id: string;
+      name: string;
+      color: string;
+      polygonCornersMm: Array<{ x: number; y: number }>;
+      widthM: number;
+      heightM: number;
+      areaM2: number;
+      rotationDeg: number;
+    }>;
   }) => {
     const nextSettings = { ...settings, areaWidth: data.widthMm, areaHeight: data.heightMm };
     const nextSite: Site = {
@@ -657,7 +669,8 @@ export default function PVLayout({
       address: data.address,
       polygonPoints: data.polygonPoints,
       polygonCorners: data.polygonCornersMm,
-      rotationDeg: data.rotationDeg,
+      rotationDeg: data.rotationDeg || 0,
+      imageSpanM: data.imageSpanM,
       pitchDegrees: data.pitchDegrees,
       azimuthDegrees: data.azimuthDegrees,
       googleSolarData: data.googleSolarData,
@@ -667,8 +680,32 @@ export default function PVLayout({
     if (data.imageSrc) {
       setBackgroundImage(data.imageSrc);
     }
-    saveDraft(segments, obstacles, walkways, nextSite, data.imageSrc);
-    setNotice(isId ? `Peta satelit Google & batas tapak (${data.widthMm / 1000}m × ${data.heightMm / 1000}m) berhasil diterapkan!` : `Google satellite map applied!`);
+
+    let nextSegments = segments;
+    if (data.segmentsData && data.segmentsData.length > 0) {
+      nextSegments = data.segmentsData.map(sd => ({
+        id: sd.id,
+        name: sd.name,
+        color: sd.color,
+        polygon: sd.polygonCornersMm,
+        orientation: "landscape",
+        tilt: 10,
+        azimuth: 0,
+        gap: 20,
+        setback: 300,
+        moduleWatts: 580,
+        moduleWidth: 2278,
+        moduleHeight: 1134,
+        panels: [],
+        visible: true,
+      }));
+      setSegments(nextSegments);
+      setActiveSegmentId(nextSegments[0]?.id || "");
+    }
+
+    pushHistory(nextSegments, obstacles, walkways);
+    saveDraft(nextSegments, obstacles, walkways, nextSite, data.imageSrc);
+    setNotice(isId ? `Peta satelit Google & ${nextSegments.length} box atap (90° presisi) berhasil diterapkan!` : `Applied satellite map with ${nextSegments.length} 90° roof boxes!`);
   };
 
   // Keyboard listeners (Space to pan, Ctrl+Z, Ctrl+Y, Ctrl+A, Delete)
@@ -1643,20 +1680,43 @@ export default function PVLayout({
               viewBox={`0 0 ${viewBoxW} ${viewBoxH}`}
               style={{ width: "100%", height: "100%", display: "block" }}
             >
-              <g transform={`translate(${pan.x}, ${pan.y}) scale(${zoom})`} transform-origin="center">
-                {/* 1. Cropped Satellite Map Background */}
-                {layers.satellite && backgroundImage && (
-                  <image
-                    href={backgroundImage}
+              <defs>
+                <clipPath id="site-boundary-clip">
+                  <rect
                     x={originX}
                     y={originY}
                     width={siteW * scale}
                     height={siteH * scale}
-                    preserveAspectRatio="none"
-                    opacity={backgroundOpacity}
-                    pointerEvents="none"
+                    rx="4"
                   />
-                )}
+                </clipPath>
+              </defs>
+              <g transform={`translate(${pan.x}, ${pan.y}) scale(${zoom})`} transform-origin="center">
+                {/* 1. Cropped Satellite Map Background (Rotated to align roof horizontally) */}
+                {layers.satellite && backgroundImage && (() => {
+                  const rotDeg = site?.rotationDeg || 0;
+                  const centerX = originX + (siteW * scale) / 2;
+                  const centerY = originY + (siteH * scale) / 2;
+                  const spanM = site?.imageSpanM || (Math.max(siteW, siteH) / 1000) * 1.5;
+                  const imgPixelSize = spanM * 1000 * scale;
+
+                  return (
+                    <g clipPath="url(#site-boundary-clip)">
+                      <g transform={`rotate(${-rotDeg}, ${centerX}, ${centerY})`}>
+                        <image
+                          href={backgroundImage}
+                          x={centerX - imgPixelSize / 2}
+                          y={centerY - imgPixelSize / 2}
+                          width={imgPixelSize}
+                          height={imgPixelSize}
+                          preserveAspectRatio="xMidYMid meet"
+                          opacity={backgroundOpacity}
+                          pointerEvents="none"
+                        />
+                      </g>
+                    </g>
+                  );
+                })()}
 
                 {/* 2. Site Boundary Polygon */}
                 {layers.siteBoundary && (

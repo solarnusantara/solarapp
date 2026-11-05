@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useMemo } from "react";
 import {
   X,
   Search,
@@ -8,14 +8,25 @@ import {
   RefreshCw,
   Layers,
   Zap,
-  Sparkles,
-  SunMedium,
+  Plus,
+  Trash2,
   RotateCw,
   RotateCcw,
   Compass,
 } from "lucide-react";
 import { fetchGoogleSolarInsights } from "./gisSolarService";
 import type { GoogleSolarInsights } from "./gisSolarService";
+
+export interface BoxSegmentData {
+  id: string;
+  name: string;
+  color: string;
+  polygonCornersMm: Array<{ x: number; y: number }>;
+  widthM: number;
+  heightM: number;
+  areaM2: number;
+  rotationDeg: number;
+}
 
 interface GoogleMapsModalProps {
   isOpen: boolean;
@@ -24,6 +35,7 @@ interface GoogleMapsModalProps {
     widthMm: number;
     heightMm: number;
     imageSrc: string;
+    imageSpanM?: number;
     coordinates: { lat: number; lng: number };
     address: string;
     polygonPoints?: Array<{ lat: number; lng: number }>;
@@ -32,6 +44,7 @@ interface GoogleMapsModalProps {
     pitchDegrees?: number;
     azimuthDegrees?: number;
     googleSolarData?: GoogleSolarInsights;
+    segmentsData?: BoxSegmentData[];
   }) => void;
   initialWidthMm?: number;
   initialHeightMm?: number;
@@ -40,7 +53,7 @@ interface GoogleMapsModalProps {
 
 const DEFAULT_API_KEY = "AIzaSyC6TAjg7EBuCmkaWRwl-ih0PQ_Be07rc3o";
 
-// Presets kawasan industri terkemuka di Indonesia (lokasi atap pabrik PLTS atap)
+// Presets kawasan industri terkemuka di Indonesia
 const INDUSTRIAL_PRESETS = [
   { name: "GIIC Cikarang (Kota Deltamas)", region: "Cikarang Pusat, Bekasi", lat: -6.3685, lng: 107.1985 },
   { name: "KIIC Karawang (Kawasan Industri)", region: "Telukjambe Timur, Karawang", lat: -6.3475, lng: 107.2798 },
@@ -63,12 +76,35 @@ export interface SearchSuggestion {
   source: "preset" | "google" | "osm";
 }
 
+const SHAPE_PALETTE = [
+  "#3b82f6", // Blue - Segment A
+  "#8b5cf6", // Purple - Segment B
+  "#f97316", // Orange - Segment C
+  "#10b981", // Emerald - Segment D
+  "#06b6d4", // Cyan - Segment E
+  "#eab308", // Yellow - Segment F
+  "#ec4899", // Pink - Segment G
+];
+
+const M_PER_DEG_LAT = 111319.49;
+
+export interface RoofBox {
+  id: string;
+  name: string;
+  color: string;
+  center: { lat: number; lng: number };
+  widthM: number;
+  heightM: number;
+  rotationAngle: number;
+  poly?: any; // google.maps.Polygon
+}
+
 export default function GoogleMapsModal({
   isOpen,
   onClose,
   onApply,
-  initialWidthMm = 24000,
-  initialHeightMm = 12000,
+  initialWidthMm = 74000,
+  initialHeightMm = 28000,
   initialPolygonPoints,
 }: GoogleMapsModalProps) {
   const mapRef = useRef<HTMLDivElement>(null);
@@ -83,31 +119,31 @@ export default function GoogleMapsModal({
   const searchAbortRef = useRef<AbortController | null>(null);
 
   const [mapInstance, setMapInstance] = useState<any>(null);
-  const [polygon, setPolygon] = useState<any>(null);
   const [searchAddress, setSearchAddress] = useState("");
   const [loading, setLoading] = useState(false);
   const [applying, setApplying] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
 
-  const [widthM, setWidthM] = useState(initialWidthMm / 1000);
-  const [heightM, setHeightM] = useState(initialHeightMm / 1000);
-  const [rotationAngle, setRotationAngle] = useState(0); // Degrees 0..360
   const [centerCoords, setCenterCoords] = useState<{ lat: number; lng: number }>({
     lat: -6.3685,
     lng: 107.1985,
   });
 
-  // 4 Side lengths in meters [top, right, bottom, left]
-  const [sideLengths, setSideLengths] = useState<{ top: number; right: number; bottom: number; left: number }>({
-    top: initialWidthMm / 1000,
-    right: initialHeightMm / 1000,
-    bottom: initialWidthMm / 1000,
-    left: initialHeightMm / 1000,
-  });
-
-  const [computedAreaM2, setComputedAreaM2] = useState<number>(
-    Math.round((initialWidthMm / 1000) * (initialHeightMm / 1000))
-  );
+  // Multiple 90-degree boxes
+  const [boxes, setBoxes] = useState<RoofBox[]>([
+    {
+      id: "box-1",
+      name: "Box A (Atap Utama)",
+      color: SHAPE_PALETTE[0],
+      center: { lat: -6.3685, lng: 107.1985 },
+      widthM: Math.round(initialWidthMm / 1000) || 74,
+      heightM: Math.round(initialHeightMm / 1000) || 28,
+      rotationAngle: 24,
+    },
+  ]);
+  const [activeBoxId, setActiveBoxId] = useState<string>("box-1");
+  const boxesRef = useRef<RoofBox[]>(boxes);
+  boxesRef.current = boxes;
 
   // Google Solar API Integration State
   const [solarDetecting, setSolarDetecting] = useState(false);
@@ -115,6 +151,10 @@ export default function GoogleMapsModal({
   const [solarStatusMsg, setSolarStatusMsg] = useState<string>("");
 
   const apiKey = (window as any).GOOGLE_MAPS_API_KEY || DEFAULT_API_KEY;
+
+  const activeBox = useMemo(() => {
+    return boxes.find(b => b.id === activeBoxId) || boxes[0] || null;
+  }, [boxes, activeBoxId]);
 
   // Load Google Maps SDK
   useEffect(() => {
@@ -148,7 +188,7 @@ export default function GoogleMapsModal({
         script.defer = true;
         script.onload = () => resolve();
         script.onerror = () =>
-          reject(new Error("Gagal mengunduh script Google Maps. Periksa koneksi internet atau proteksi domain API Key."));
+          reject(new Error("Gagal mengunduh script Google Maps. Periksa koneksi internet atau API Key."));
         document.head.appendChild(script);
       });
     }
@@ -170,15 +210,109 @@ export default function GoogleMapsModal({
     };
   }, [isOpen]);
 
+  // Compute 4 corner LatLngs for a strict 90-degree rectangle
+  function computeStrict90BoxCoords(
+    center: { lat: number; lng: number },
+    wM: number,
+    hM: number,
+    angleDeg: number
+  ) {
+    const win = window as any;
+    const rad = (angleDeg * Math.PI) / 180;
+    const cosA = Math.cos(rad);
+    const sinA = Math.sin(rad);
+    const cosLat = Math.cos((center.lat * Math.PI) / 180);
+    const mLng = M_PER_DEG_LAT * cosLat;
+
+    const halfW = wM / 2;
+    const halfH = hM / 2;
+
+    // Strict 90-degree box corners:
+    // 0: Top-Left (-halfW, +halfH)
+    // 1: Top-Right (+halfW, +halfH)
+    // 2: Bottom-Right (+halfW, -halfH)
+    // 3: Bottom-Left (-halfW, -halfH)
+    const localCorners = [
+      { x: -halfW, y: halfH },
+      { x: halfW, y: halfH },
+      { x: halfW, y: -halfH },
+      { x: -halfW, y: -halfH },
+    ];
+
+    return localCorners.map(pt => {
+      const rx = pt.x * cosA - pt.y * sinA;
+      const ry = pt.x * sinA + pt.y * cosA;
+      const lat = center.lat + ry / M_PER_DEG_LAT;
+      const lng = center.lng + rx / mLng;
+      return new win.google.maps.LatLng(lat, lng);
+    });
+  }
+
+  function createPolygonForBox(map: any, box: RoofBox) {
+    const win = window as any;
+    if (!win.google?.maps) return null;
+
+    const coords = computeStrict90BoxCoords(box.center, box.widthM, box.heightM, box.rotationAngle);
+    const poly = new win.google.maps.Polygon({
+      paths: coords,
+      editable: false, // Keep strict 90-degree geometry (no distorted corners!)
+      draggable: true, // Allow dragging whole box smoothly
+      strokeColor: box.color,
+      strokeOpacity: 0.95,
+      strokeWeight: box.id === activeBoxId ? 3.5 : 2,
+      fillColor: box.color,
+      fillOpacity: box.id === activeBoxId ? 0.32 : 0.16,
+      map: map,
+      zIndex: box.id === activeBoxId ? 100 : 10,
+    });
+
+    // When dragged, update center and keep strict 90-degree rectangle
+    poly.addListener("dragend", () => {
+      const path = poly.getPath();
+      let sumLat = 0, sumLng = 0;
+      for (let i = 0; i < path.getLength(); i++) {
+        sumLat += path.getAt(i).lat();
+        sumLng += path.getAt(i).lng();
+      }
+      const newCenter = { lat: sumLat / path.getLength(), lng: sumLng / path.getLength() };
+      const current = boxesRef.current.find(b => b.id === box.id);
+      const w = current?.widthM || box.widthM;
+      const h = current?.heightM || box.heightM;
+      const rot = current?.rotationAngle ?? box.rotationAngle;
+
+      // Re-align perfectly
+      const resetCoords = computeStrict90BoxCoords(newCenter, w, h, rot);
+      poly.setPath(resetCoords);
+
+      setBoxes(prev => prev.map(b => b.id === box.id ? { ...b, center: newCenter } : b));
+    });
+
+    // Click to select active box
+    poly.addListener("click", () => {
+      setActiveBoxId(box.id);
+    });
+
+    return poly;
+  }
+
   function initMap() {
     const win = window as any;
     if (!mapRef.current || !win.google?.maps) return;
 
-    const defaultLat = centerCoords.lat;
-    const defaultLng = centerCoords.lng;
+    let initLat = centerCoords.lat;
+    let initLng = centerCoords.lng;
+
+    // Check if initialPolygonPoints provided
+    if (initialPolygonPoints && initialPolygonPoints.length >= 3) {
+      let sLat = 0, sLng = 0;
+      initialPolygonPoints.forEach(p => { sLat += p.lat; sLng += p.lng; });
+      initLat = sLat / initialPolygonPoints.length;
+      initLng = sLng / initialPolygonPoints.length;
+      setCenterCoords({ lat: initLat, lng: initLng });
+    }
 
     const map = new win.google.maps.Map(mapRef.current, {
-      center: { lat: defaultLat, lng: defaultLng },
+      center: { lat: initLat, lng: initLng },
       zoom: 19,
       mapTypeId: "satellite",
       tilt: 0,
@@ -197,12 +331,22 @@ export default function GoogleMapsModal({
 
     setMapInstance(map);
 
-    // Initial polygon setup: restore previous polygon if available, else setup default box
-    if (initialPolygonPoints && initialPolygonPoints.length >= 3) {
-      createOrUpdatePolygonFromPoints(map, initialPolygonPoints);
-    } else {
-      createOrUpdatePolygon(map, { lat: defaultLat, lng: defaultLng }, widthM, heightM, 0);
-    }
+    // Setup initial box
+    const firstBox: RoofBox = {
+      id: "box-1",
+      name: "Box A (Atap Utama)",
+      color: SHAPE_PALETTE[0],
+      center: { lat: initLat, lng: initLng },
+      widthM: Math.round(initialWidthMm / 1000) || 74,
+      heightM: Math.round(initialHeightMm / 1000) || 28,
+      rotationAngle: 24,
+    };
+
+    const poly = createPolygonForBox(map, firstBox);
+    firstBox.poly = poly;
+
+    setBoxes([firstBox]);
+    setActiveBoxId("box-1");
 
     // Setup Places Autocomplete
     if (searchInputRef.current && win.google.maps.places?.Autocomplete) {
@@ -222,735 +366,249 @@ export default function GoogleMapsModal({
         map.setCenter(loc);
         map.setZoom(19);
 
-        createOrUpdatePolygon(map, { lat: newLat, lng: newLng }, widthM, heightM, rotationAngle);
+        setCenterCoords({ lat: newLat, lng: newLng });
+        if (firstBox.poly) {
+          const coords = computeStrict90BoxCoords({ lat: newLat, lng: newLng }, firstBox.widthM, firstBox.heightM, firstBox.rotationAngle);
+          firstBox.poly.setPath(coords);
+        }
+        setBoxes(prev => prev.map((b, i) => i === 0 ? { ...b, center: { lat: newLat, lng: newLng } } : b));
         setSearchAddress(place.formatted_address || place.name || "");
-        setSolarInsights(null);
-        setSolarStatusMsg("");
       });
     }
   }
 
-  /**
-   * Helper: compute 4 corner coordinates rotated around center
-   * Points order: 0: NW (Top-Left), 1: NE (Top-Right), 2: SE (Bottom-Right), 3: SW (Bottom-Left)
-   */
-  function computeRotatedBoxCoords(
-    center: { lat: number; lng: number },
-    wM: number,
-    hM: number,
-    angleDeg: number,
-    topRatio = 1.0 // for trapezoid (< 1.0)
-  ) {
-    const win = window as any;
-    const rad = (angleDeg * Math.PI) / 180;
-    const cosA = Math.cos(rad);
-    const sinA = Math.sin(rad);
-    const cosLat = Math.cos((center.lat * Math.PI) / 180);
-
-    const halfW = wM / 2;
-    const halfH = hM / 2;
-    const topW = halfW * topRatio;
-
-    // Local metric offsets (x: East, y: North)
-    const localOffsets = [
-      { x: -topW, y: halfH },   // 0: NW
-      { x: topW, y: halfH },    // 1: NE
-      { x: halfW, y: -halfH },  // 2: SE
-      { x: -halfW, y: -halfH }, // 3: SW
-    ];
-
-    return localOffsets.map((pt) => {
-      // Rotate locally
-      const rx = pt.x * cosA - pt.y * sinA;
-      const ry = pt.x * sinA + pt.y * cosA;
-
-      const lat = center.lat + ry / 111111;
-      const lng = center.lng + rx / (111111 * cosLat);
-      return new win.google.maps.LatLng(lat, lng);
+  // Highlight active box styling on map
+  useEffect(() => {
+    boxes.forEach(b => {
+      if (!b.poly) return;
+      const isActive = b.id === activeBoxId;
+      b.poly.setOptions({
+        strokeWeight: isActive ? 3.5 : 2,
+        strokeOpacity: isActive ? 1.0 : 0.75,
+        fillOpacity: isActive ? 0.32 : 0.15,
+        zIndex: isActive ? 100 : 10,
+      });
     });
+  }, [activeBoxId, boxes]);
+
+  // Update active box dimensions or rotation
+  function updateActiveBoxProps(updates: Partial<Pick<RoofBox, "widthM" | "heightM" | "rotationAngle">>) {
+    if (!activeBox || !activeBox.poly) return;
+    const nextW = updates.widthM ?? activeBox.widthM;
+    const nextH = updates.heightM ?? activeBox.heightM;
+    const nextAngle = updates.rotationAngle !== undefined ? ((updates.rotationAngle % 360) + 360) % 360 : activeBox.rotationAngle;
+
+    const coords = computeStrict90BoxCoords(activeBox.center, nextW, nextH, nextAngle);
+    activeBox.poly.setPath(coords);
+
+    setBoxes(prev => prev.map(b => b.id === activeBox.id ? {
+      ...b,
+      widthM: nextW,
+      heightM: nextH,
+      rotationAngle: nextAngle,
+    } : b));
   }
 
-  /**
-   * Recalculates metrics (side lengths, area, centroid) whenever vertices are dragged
-   */
-  function updateMetricsFromPolygonPath(polyInstance: any) {
-    const win = window as any;
-    if (!polyInstance || !win.google?.maps) return;
-
-    const path = polyInstance.getPath();
-    const len = path.getLength();
-    if (len < 3) return;
-
-    const spherical = win.google.maps.geometry?.spherical;
-
-    // Centroid
-    let sumLat = 0;
-    let sumLng = 0;
-    for (let i = 0; i < len; i++) {
-      const p = path.getAt(i);
-      sumLat += p.lat();
-      sumLng += p.lng();
-    }
-    const center = { lat: sumLat / len, lng: sumLng / len };
-    setCenterCoords(center);
-
-    // Compute side lengths and area
-    if (spherical) {
-      const p0 = path.getAt(0);
-      const p1 = path.getAt(1);
-      const p2 = path.getAt(2);
-      const p3 = path.getAt(len >= 4 ? 3 : 2);
-
-      const dTop = spherical.computeDistanceBetween(p0, p1);
-      const dRight = spherical.computeDistanceBetween(p1, p2);
-      const dBottom = spherical.computeDistanceBetween(p2, p3);
-      const dLeft = spherical.computeDistanceBetween(p3, p0);
-
-      const roundTop = Math.round(dTop * 10) / 10;
-      const roundRight = Math.round(dRight * 10) / 10;
-      const roundBottom = Math.round(dBottom * 10) / 10;
-      const roundLeft = Math.round(dLeft * 10) / 10;
-
-      setSideLengths({
-        top: roundTop,
-        right: roundRight,
-        bottom: roundBottom,
-        left: roundLeft,
-      });
-
-      const avgW = Math.round(((dTop + dBottom) / 2) * 10) / 10;
-      const avgH = Math.round(((dLeft + dRight) / 2) * 10) / 10;
-      setWidthM(avgW);
-      setHeightM(avgH);
-
-      const area = Math.round(spherical.computeArea(path));
-      setComputedAreaM2(area);
-
-      // Orientation from top edge
-      const heading = (Math.round(spherical.computeHeading(p0, p1)) + 360) % 360;
-      // Heading of top edge (East=90 -> angle=0)
-      const inferredAngle = (heading - 90 + 360) % 360;
-      setRotationAngle(Math.round(inferredAngle));
-    } else {
-      setComputedAreaM2(Math.round(widthM * heightM));
-    }
+  function rotateActiveBoxBy(deltaDeg: number) {
+    if (!activeBox) return;
+    updateActiveBoxProps({ rotationAngle: activeBox.rotationAngle + deltaDeg });
   }
 
+  // Add new box (e.g. for small roofs)
+  function handleAddBox() {
+    if (!mapInstance) return;
+    const count = boxes.length;
+    const letter = String.fromCharCode(65 + count);
+    const color = SHAPE_PALETTE[count % SHAPE_PALETTE.length];
+    const newId = `box-${Date.now()}`;
 
-  // Click outside search container to close recommendations dropdown
-  useEffect(() => {
-    function handleClickOutside(e: MouseEvent) {
-      if (searchContainerRef.current && !searchContainerRef.current.contains(e.target as Node)) {
-        setShowSuggestions(false);
-      }
+    // Place slightly below the last/active box
+    const ref = activeBox || boxes[boxes.length - 1];
+    let newCenter = { ...centerCoords };
+    const newW = count === 1 ? 18 : (ref?.widthM || 18);
+    const newH = count === 1 ? 22 : (ref?.heightM || 22);
+    const newRot = ref?.rotationAngle ?? 24;
+
+    if (ref) {
+      const shiftDistM = (ref.heightM / 2 + newH / 2 + 5);
+      const rad = (newRot * Math.PI) / 180;
+      // Direction perpendicular to top edge
+      const dEast = shiftDistM * Math.sin(rad);
+      const dNorth = -shiftDistM * Math.cos(rad);
+      const cosLat = Math.cos((ref.center.lat * Math.PI) / 180);
+
+      newCenter = {
+        lat: ref.center.lat + dNorth / M_PER_DEG_LAT,
+        lng: ref.center.lng + dEast / (M_PER_DEG_LAT * cosLat),
+      };
     }
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, []);
 
-  // Debounced search-as-you-type autocomplete recommendation
-  useEffect(() => {
-    const q = searchQuery.trim();
-    if (q.length < 2) {
-      setSuggestions([]);
-      setShowSuggestions(false);
-      setIsSearching(false);
-      return;
-    }
-
-    if (searchAbortRef.current) {
-      searchAbortRef.current.abort();
-    }
-    const controller = new AbortController();
-    searchAbortRef.current = controller;
-
-    setIsSearching(true);
-    const timer = setTimeout(async () => {
-      try {
-        const matches: SearchSuggestion[] = [];
-        const cleanQ = q.toLowerCase();
-
-        // 1. Presets match
-        for (const p of INDUSTRIAL_PRESETS) {
-          if (p.name.toLowerCase().includes(cleanQ) || p.region.toLowerCase().includes(cleanQ)) {
-            matches.push({
-              id: `preset-${p.name}`,
-              title: p.name,
-              subtitle: `${p.region} · Kawasan Industri`,
-              lat: p.lat,
-              lng: p.lng,
-              source: "preset",
-            });
-          }
-        }
-
-        // 2. OpenStreetMap Nominatim Search (Indonesian coverage: cities, kecamatan, kelurahan, roads)
-        const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&format=json&countrycodes=id&addressdetails=1&limit=8`;
-        const res = await fetch(url, {
-          signal: controller.signal,
-          headers: { "Accept-Language": "id,en" },
-        });
-
-        if (res.ok) {
-          const data = await res.json();
-          if (Array.isArray(data)) {
-            for (const item of data) {
-              const lat = parseFloat(item.lat);
-              const lng = parseFloat(item.lon);
-              if (!isNaN(lat) && !isNaN(lng)) {
-                const parts = (item.display_name || "").split(", ");
-                const title = parts.slice(0, 2).join(", ");
-                const subtitle = parts.slice(2).join(", ");
-                const isDup = matches.some(m => Math.abs(m.lat - lat) < 0.005 && Math.abs(m.lng - lng) < 0.005);
-                if (!isDup) {
-                  matches.push({
-                    id: `osm-${item.place_id}`,
-                    title: title || item.name || q,
-                    subtitle: subtitle || "Indonesia",
-                    lat,
-                    lng,
-                    source: "osm",
-                  });
-                }
-              }
-            }
-          }
-        }
-
-        setSuggestions(matches.slice(0, 8));
-        setShowSuggestions(matches.length > 0);
-        setSelectedIndex(-1);
-      } catch (err: any) {
-        if (err.name !== "AbortError") {
-          console.warn("Location suggestion fetch warning:", err);
-        }
-      } finally {
-        setIsSearching(false);
-      }
-    }, 250);
-
-    return () => {
-      clearTimeout(timer);
-      controller.abort();
+    const newBox: RoofBox = {
+      id: newId,
+      name: `Box ${letter} (${newW}m × ${newH}m)`,
+      color,
+      center: newCenter,
+      widthM: newW,
+      heightM: newH,
+      rotationAngle: newRot,
     };
-  }, [searchQuery]);
 
-  function handleSelectSuggestion(item: SearchSuggestion) {
-    const win = window as any;
-    if (mapInstance && win.google?.maps) {
-      const pos = new win.google.maps.LatLng(item.lat, item.lng);
-      mapInstance.panTo(pos);
-      mapInstance.setZoom(19);
-      setCenterCoords({ lat: item.lat, lng: item.lng });
-      createOrUpdatePolygon(mapInstance, { lat: item.lat, lng: item.lng }, widthM, heightM, rotationAngle);
-    }
-    setSearchQuery(item.title);
-    setSearchAddress(`${item.title}, ${item.subtitle}`);
-    setShowSuggestions(false);
-    setSolarInsights(null);
-    setSolarStatusMsg("");
+    const poly = createPolygonForBox(mapInstance, newBox);
+    newBox.poly = poly;
+
+    setBoxes(prev => [...prev, newBox]);
+    setActiveBoxId(newId);
   }
 
-  function handleSearchSubmit() {
-    if (selectedIndex >= 0 && suggestions[selectedIndex]) {
-      handleSelectSuggestion(suggestions[selectedIndex]);
-      return;
+  function handleDeleteBox(id: string) {
+    if (boxes.length <= 1) return;
+    const target = boxes.find(b => b.id === id);
+    if (target?.poly) {
+      target.poly.setMap(null);
     }
-    if (suggestions.length > 0) {
-      handleSelectSuggestion(suggestions[0]);
-      return;
-    }
-
-    const q = searchQuery.trim();
-    if (!q) return;
-
-    setIsSearching(true);
-    fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&format=json&countrycodes=id&limit=1`)
-      .then(res => res.json())
-      .then(data => {
-        if (Array.isArray(data) && data.length > 0) {
-          const item = data[0];
-          const lat = parseFloat(item.lat);
-          const lng = parseFloat(item.lon);
-          if (!isNaN(lat) && !isNaN(lng)) {
-            handleSelectSuggestion({
-              id: `direct-${item.place_id}`,
-              title: item.display_name.split(",")[0] || q,
-              subtitle: item.display_name,
-              lat,
-              lng,
-              source: "osm",
-            });
-          }
-        }
-      })
-      .catch(e => console.warn("Direct search error:", e))
-      .finally(() => setIsSearching(false));
-  }
-
-  function handleKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
-    if (e.key === "ArrowDown") {
-      e.preventDefault();
-      setSelectedIndex(prev => Math.min(suggestions.length - 1, prev + 1));
-      setShowSuggestions(true);
-    } else if (e.key === "ArrowUp") {
-      e.preventDefault();
-      setSelectedIndex(prev => Math.max(0, prev - 1));
-    } else if (e.key === "Enter") {
-      e.preventDefault();
-      handleSearchSubmit();
-    } else if (e.key === "Escape") {
-      setShowSuggestions(false);
+    const remaining = boxes.filter(b => b.id !== id);
+    setBoxes(remaining);
+    if (activeBoxId === id) {
+      setActiveBoxId(remaining[0]?.id || "");
     }
   }
 
-  function handleClearSearch() {
-    setSearchQuery("");
-    setSuggestions([]);
-    setShowSuggestions(false);
-    if (searchInputRef.current) searchInputRef.current.focus();
-  }
-
-  function createOrUpdatePolygon(
-    map: any,
-    center: { lat: number; lng: number },
-    wM: number,
-    hM: number,
-    angleDeg: number,
-    topRatio = 1.0
-  ) {
-    const win = window as any;
-    if (!win.google?.maps) return;
-
-    setCenterCoords(center);
-    setRotationAngle(angleDeg);
-
-    const coords = computeRotatedBoxCoords(center, wM, hM, angleDeg, topRatio);
-
-    if (polygon) {
-      polygon.setPath(coords);
-      polygon.setMap(map);
-      updateMetricsFromPolygonPath(polygon);
-    } else {
-      const poly = new win.google.maps.Polygon({
-        paths: coords,
-        editable: true, // Shows draggable handles at all 4 corners and midpoints
-        draggable: true, // Allows dragging whole shape across map
-        strokeColor: "#b8f36b",
-        strokeOpacity: 0.95,
-        strokeWeight: 2,
-        fillColor: "#14221a",
-        fillOpacity: 0.35,
-        map: map,
-      });
-
-      const path = poly.getPath();
-      path.addListener("set_at", () => updateMetricsFromPolygonPath(poly));
-      path.addListener("insert_at", () => updateMetricsFromPolygonPath(poly));
-      path.addListener("remove_at", () => updateMetricsFromPolygonPath(poly));
-      poly.addListener("dragend", () => updateMetricsFromPolygonPath(poly));
-
-      setPolygon(poly);
-      updateMetricsFromPolygonPath(poly);
-    }
-  }
-
-  function createOrUpdatePolygonFromPoints(map: any, points: Array<{ lat: number; lng: number }>) {
-    const win = window as any;
-    if (!win.google?.maps || !points || points.length < 3) return;
-
-    let sumLat = 0, sumLng = 0;
-    points.forEach(p => { sumLat += p.lat; sumLng += p.lng; });
-    const center = { lat: sumLat / points.length, lng: sumLng / points.length };
-    setCenterCoords(center);
-
-    const coords = points.map(p => new win.google.maps.LatLng(p.lat, p.lng));
-
-    if (polygon) {
-      polygon.setPath(coords);
-      polygon.setMap(map);
-      updateMetricsFromPolygonPath(polygon);
-    } else {
-      const poly = new win.google.maps.Polygon({
-        paths: coords,
-        editable: true,
-        draggable: true,
-        strokeColor: "#b8f36b",
-        strokeOpacity: 0.95,
-        strokeWeight: 2,
-        fillColor: "#14221a",
-        fillOpacity: 0.35,
-        map: map,
-      });
-
-      const path = poly.getPath();
-      path.addListener("set_at", () => updateMetricsFromPolygonPath(poly));
-      path.addListener("insert_at", () => updateMetricsFromPolygonPath(poly));
-      path.addListener("remove_at", () => updateMetricsFromPolygonPath(poly));
-      poly.addListener("dragend", () => updateMetricsFromPolygonPath(poly));
-
-      setPolygon(poly);
-      updateMetricsFromPolygonPath(poly);
-    }
-    map.setCenter(center);
-  }
-
-  /**
-   * Rotate polygon vertices around its centroid by deltaDegrees
-   */
-  function rotatePolygonBy(deltaDeg: number) {
-    if (!polygon || !mapInstance) return;
-    const win = window as any;
-    const path = polygon.getPath();
-    const len = path.getLength();
-    if (len < 3) return;
-
-    const rad = (deltaDeg * Math.PI) / 180;
-    const cosA = Math.cos(rad);
-    const sinA = Math.sin(rad);
-    const cosLat = Math.cos((centerCoords.lat * Math.PI) / 180);
-
-    const newPath: any[] = [];
-    for (let i = 0; i < len; i++) {
-      const pt = path.getAt(i);
-      const x = (pt.lng() - centerCoords.lng) * 111111 * cosLat;
-      const y = (pt.lat() - centerCoords.lat) * 111111;
-
-      const rx = x * cosA - y * sinA;
-      const ry = x * sinA + y * cosA;
-
-      const nLat = centerCoords.lat + ry / 111111;
-      const nLng = centerCoords.lng + rx / (111111 * cosLat);
-      newPath.push(new win.google.maps.LatLng(nLat, nLng));
-    }
-
-    polygon.setPath(newPath);
-    updateMetricsFromPolygonPath(polygon);
-  }
-
-  /**
-   * Shape Preset: Perfect Rectangle (Kotak Presisi)
-   */
-  function handleSetRectangle() {
-    if (!mapInstance) return;
-    createOrUpdatePolygon(mapInstance, centerCoords, widthM, heightM, rotationAngle, 1.0);
-  }
-
-  /**
-   * Shape Preset: Trapezoid (Trapesium)
-   * Top width is 65% of bottom width
-   */
-  function handleSetTrapezoid() {
-    if (!mapInstance) return;
-    createOrUpdatePolygon(mapInstance, centerCoords, widthM, heightM, rotationAngle, 0.65);
-  }
-
-  /**
-   * Shape Preset: Parallelogram (Jajar Genjang)
-   */
-  function handleSetParallelogram() {
-    if (!polygon || !mapInstance) return;
-    const win = window as any;
-    const rad = (rotationAngle * Math.PI) / 180;
-    const cosA = Math.cos(rad);
-    const sinA = Math.sin(rad);
-    const cosLat = Math.cos((centerCoords.lat * Math.PI) / 180);
-
-    const halfW = widthM / 2;
-    const halfH = heightM / 2;
-    const skew = widthM * 0.25;
-
-    const localOffsets = [
-      { x: -halfW + skew, y: halfH },  // NW shifted
-      { x: halfW + skew, y: halfH },   // NE shifted
-      { x: halfW, y: -halfH },         // SE
-      { x: -halfW, y: -halfH },        // SW
-    ];
-
-    const newPath = localOffsets.map((pt) => {
-      const rx = pt.x * cosA - pt.y * sinA;
-      const ry = pt.x * sinA + pt.y * cosA;
-      const lat = centerCoords.lat + ry / 111111;
-      const lng = centerCoords.lng + rx / (111111 * cosLat);
-      return new win.google.maps.LatLng(lat, lng);
-    });
-
-    polygon.setPath(newPath);
-    updateMetricsFromPolygonPath(polygon);
-  }
-
-  function handlePresetClick(preset: { name: string; lat: number; lng: number }) {
-    if (!mapInstance) return;
-    mapInstance.setCenter({ lat: preset.lat, lng: preset.lng });
-    mapInstance.setZoom(19);
-    createOrUpdatePolygon(mapInstance, { lat: preset.lat, lng: preset.lng }, widthM, heightM, 0);
-    setSearchAddress(preset.name);
-    setSolarInsights(null);
-    setSolarStatusMsg("");
-  }
-
-  function handleSwapDimensions() {
-    if (!mapInstance) return;
-    const newW = heightM;
-    const newH = widthM;
-    setWidthM(newW);
-    setHeightM(newH);
-    createOrUpdatePolygon(mapInstance, centerCoords, newW, newH, (rotationAngle + 90) % 360);
-  }
-
-  function handleResetToCenter() {
-    if (!mapInstance) return;
-    const center = mapInstance.getCenter();
-    if (!center) return;
-    createOrUpdatePolygon(mapInstance, { lat: center.lat(), lng: center.lng() }, widthM, heightM, rotationAngle);
-  }
-
-  /**
-   * Auto-Detect Roof Geometry & Solar Potential via Google Solar API
-   */
-  async function handleAutoDetectGoogleSolar() {
-    if (!apiKey) return;
-    setSolarDetecting(true);
-    setSolarStatusMsg("Menghubungi Google Solar API (kualitas BASE)...");
-
-    try {
-      const insights = await fetchGoogleSolarInsights(centerCoords.lat, centerCoords.lng, apiKey);
-      if (insights.available && insights.boundingBoxM) {
-        setSolarInsights(insights);
-        const newW = Math.max(10, insights.boundingBoxM.widthM);
-        const newH = Math.max(10, insights.boundingBoxM.heightM);
-        setWidthM(newW);
-        setHeightM(newH);
-
-        const targetCenter = insights.center
-          ? { lat: insights.center.lat, lng: insights.center.lng }
-          : centerCoords;
-        setCenterCoords(targetCenter);
-
-        const detectedAzimuth = insights.azimuthDegrees || 0;
-
-        if (mapInstance) {
-          mapInstance.setCenter(targetCenter);
-          createOrUpdatePolygon(mapInstance, targetCenter, newW, newH, (detectedAzimuth - 90 + 360) % 360);
-        }
-
-        setSolarStatusMsg(
-          `✅ Atap terdeteksi via Google Solar! Luas ${insights.roofAreaM2} m² · Kemiringan ${insights.pitchDegrees}° · Azimuth ${insights.azimuthDegrees}° · Potensi maks ${insights.maxPanels} panel.`
-        );
-      } else {
-        setSolarInsights(null);
-        setSolarStatusMsg(
-          `ℹ️ ${insights.error || "Poligon atap spesifik belum tersedia di titik ini. Silakan sesuaikan titik sudut secara manual."}`
-        );
-      }
-    } catch (err: any) {
-      setSolarInsights(null);
-      setSolarStatusMsg(`Gagal mendeteksi via Google Solar: ${err?.message || "Kesalahan koneksi"}`);
-    } finally {
-      setSolarDetecting(false);
-    }
-  }
-
-  function getCurrentPolygonPoints(): Array<{ lat: number; lng: number }> {
-    if (!polygon) return [];
-    const path = polygon.getPath();
-    const pts: Array<{ lat: number; lng: number }> = [];
-    for (let i = 0; i < path.getLength(); i++) {
-      pts.push({ lat: path.getAt(i).lat(), lng: path.getAt(i).lng() });
-    }
-    return pts;
-  }
-
-  /**
-   * Computes polygon corners projected into local millimeter coordinates [0..widthMm, 0..heightMm].
-   * The coordinates are un-rotated by the polygon orientation so that the shape sits aligned
-   * with the 2D CAD canvas axes, with (0,0) as top-left of the bounding box.
-   */
-  function computeLocalCornersMm(): {
-    corners: Array<{ x: number; y: number }>;
-    widthMm: number;
-    heightMm: number;
-  } {
-    if (!polygon) {
-      const w = Math.round(widthM * 1000);
-      const h = Math.round(heightM * 1000);
-      return {
-        corners: [
-          { x: 0, y: 0 },
-          { x: w, y: 0 },
-          { x: w, y: h },
-          { x: 0, y: h },
-        ],
-        widthMm: w,
-        heightMm: h,
-      };
-    }
-    const path = polygon.getPath();
-    const len = path.getLength();
-    if (len < 3) {
-      const w = Math.round(widthM * 1000);
-      const h = Math.round(heightM * 1000);
-      return {
-        corners: [
-          { x: 0, y: 0 },
-          { x: w, y: 0 },
-          { x: w, y: h },
-          { x: 0, y: h },
-        ],
-        widthMm: w,
-        heightMm: h,
-      };
-    }
-
-    const rad = (rotationAngle * Math.PI) / 180;
-    const cosA = Math.cos(rad);
-    const sinA = Math.sin(rad);
-    const cosLat = Math.cos((centerCoords.lat * Math.PI) / 180);
-
-    const localPoints: Array<{ x: number; y: number }> = [];
-    let minX = Infinity, maxX = -Infinity;
-    let minY = Infinity, maxY = -Infinity;
-
-    for (let i = 0; i < len; i++) {
-      const pt = path.getAt(i);
-      const dEast = (pt.lng() - centerCoords.lng) * 111111 * cosLat;
-      const dNorth = (pt.lat() - centerCoords.lat) * 111111;
-
-      // Inverse rotate to align with principal axis
-      const lx = dEast * cosA + dNorth * sinA;
-      const ly = -dEast * sinA + dNorth * cosA;
-
-      localPoints.push({ x: lx, y: ly });
-      if (lx < minX) minX = lx;
-      if (lx > maxX) maxX = lx;
-      if (ly < minY) minY = ly;
-      if (ly > maxY) maxY = ly;
-    }
-
-    const wMm = Math.max(1000, Math.round((maxX - minX) * 1000));
-    const hMm = Math.max(1000, Math.round((maxY - minY) * 1000));
-
-    // Map to canvas mm coordinates where (0,0) is top-left, X is right, Y is down
-    const corners = localPoints.map(p => ({
-      x: Math.round((p.x - minX) * 1000),
-      y: Math.round((maxY - p.y) * 1000),
-    }));
-
-    return { corners, widthMm: wMm, heightMm: hMm };
-  }
-
+  // Apply to PV Layout 2D Canvas
   async function handleApply() {
     setApplying(true);
     setErrorMsg("");
 
     try {
-      const lat = centerCoords.lat;
-      const lng = centerCoords.lng;
-      const local = computeLocalCornersMm();
-      const wMm = local.widthMm;
-      const hMm = local.heightMm;
-      const wM = wMm / 1000;
-      const hM = hMm / 1000;
+      if (boxes.length === 0) throw new Error("Belum ada box atap yang dibuat");
 
-      // Kalkulasi optimal zoom untuk Static Map (maks 1100px dari 1280px)
-      const maxDim = Math.max(wM, hM);
-      const cosLat = Math.cos((lat * Math.PI) / 180);
-      const targetPx = 1100;
-      const val = (targetPx * 156543.03392 * cosLat) / Math.max(10, maxDim);
-      const targetZoom = Math.min(21, Math.max(14, Math.floor(Math.log2(val))));
+      // 1. Gather all corner LatLngs across all boxes
+      const allCorners: Array<{ lat: number; lng: number }> = [];
+      const boxCornersList: Array<{ box: RoofBox; corners: Array<{ lat: number; lng: number }> }> = [];
 
-      // URL Google Static Map
-      const staticUrl = `https://maps.googleapis.com/maps/api/staticmap?center=${lat},${lng}&zoom=${targetZoom}&size=640x640&scale=2&maptype=satellite&key=${apiKey}`;
-
-      let croppedDataUrl = "";
-      try {
-        const resp = await fetch(staticUrl);
-        if (resp.ok) {
-          const blob = await resp.blob();
-          const img = new Image();
-          const blobUrl = URL.createObjectURL(blob);
-
-          await new Promise<void>((resolve, reject) => {
-            img.onload = () => resolve();
-            img.onerror = () => reject(new Error("Gagal membaca hasil citra satelit"));
-            img.src = blobUrl;
-          });
-
-          const res = (156543.03392 * cosLat) / Math.pow(2, targetZoom);
-          const cropW = Math.min(1280, Math.max(20, Math.round(wM / res)));
-          const cropH = Math.min(1280, Math.max(20, Math.round(hM / res)));
-          const cropX = Math.max(0, Math.round(640 - cropW / 2));
-          const cropY = Math.max(0, Math.round(640 - cropH / 2));
-
-          const offscreenCanvas = document.createElement("canvas");
-          offscreenCanvas.width = cropW;
-          offscreenCanvas.height = cropH;
-          const ctx = offscreenCanvas.getContext("2d");
-
-          if (ctx) {
-            ctx.drawImage(img, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
-            croppedDataUrl = offscreenCanvas.toDataURL("image/jpeg", 0.86);
-          }
-          URL.revokeObjectURL(blobUrl);
+      for (const b of boxes) {
+        if (!b.poly) continue;
+        const path = b.poly.getPath();
+        const corners: Array<{ lat: number; lng: number }> = [];
+        for (let i = 0; i < path.getLength(); i++) {
+          const pt = path.getAt(i);
+          const c = { lat: pt.lat(), lng: pt.lng() };
+          corners.push(c);
+          allCorners.push(c);
         }
-      } catch (e) {
-        console.warn("Static Map fetch failed (likely referrer restriction), using direct static URL fallback:", e);
-        croppedDataUrl = staticUrl;
+        boxCornersList.push({ box: b, corners });
       }
 
+      if (allCorners.length === 0) throw new Error("Data sudut box belum lengkap");
+
+      // 2. Compute overall site center
+      const minLat = Math.min(...allCorners.map(c => c.lat));
+      const maxLat = Math.max(...allCorners.map(c => c.lat));
+      const minLng = Math.min(...allCorners.map(c => c.lng));
+      const maxLng = Math.max(...allCorners.map(c => c.lng));
+      const siteCenterLat = (minLat + maxLat) / 2;
+      const siteCenterLng = (minLng + maxLng) / 2;
+
+      // Primary rotation angle (orient the 2D CAD canvas so roofs become horizontal)
+      const primaryAngle = boxes[0]?.rotationAngle ?? 24;
+      const rad = (primaryAngle * Math.PI) / 180;
+      const cosA = Math.cos(rad);
+      const sinA = Math.sin(rad);
+      const cosLat = Math.cos((siteCenterLat * Math.PI) / 180);
+      const mLng = M_PER_DEG_LAT * cosLat;
+
+      // 3. Un-rotate all corners by primaryAngle into CAD metric coordinates
+      // rx: along building length (horizontal X on screen)
+      // ry: across building width (vertical Y on screen)
+      const projectedBoxes = boxCornersList.map(({ box, corners }) => {
+        const localCorners = corners.map(pt => {
+          const dEast = (pt.lng - siteCenterLng) * mLng;
+          const dNorth = (pt.lat - siteCenterLat) * M_PER_DEG_LAT;
+          const rx = dEast * cosA + dNorth * sinA;
+          const ry = -dEast * sinA + dNorth * cosA;
+          return { rx, ry };
+        });
+        return { box, localCorners };
+      });
+
+      // 4. Calculate unified bounding box of ALL boxes combined
+      let minRx = Infinity, maxRx = -Infinity, minRy = Infinity, maxRy = -Infinity;
+      projectedBoxes.forEach(({ localCorners }) => {
+        localCorners.forEach(pt => {
+          if (pt.rx < minRx) minRx = pt.rx;
+          if (pt.rx > maxRx) maxRx = pt.rx;
+          if (pt.ry < minRy) minRy = pt.ry;
+          if (pt.ry > maxRy) maxRy = pt.ry;
+        });
+      });
+
+      // Add a clean 5-meter margin on all sides of the site
+      const padM = 5;
+      const siteWidthM = Math.max(20, (maxRx - minRx) + padM * 2);
+      const siteHeightM = Math.max(15, (maxRy - minRy) + padM * 2);
+      const siteWidthMm = Math.round(siteWidthM * 1000);
+      const siteHeightMm = Math.round(siteHeightM * 1000);
+
+      // 5. Build strict 90-degree rectangle segments in millimeter coordinates for 2D CAD
+      const segmentsData: BoxSegmentData[] = projectedBoxes.map(({ box, localCorners }, idx) => {
+        const polygonCornersMm = localCorners.map(pt => ({
+          x: Math.round((pt.rx - minRx + padM) * 1000),
+          y: Math.round((maxRy - pt.ry + padM) * 1000), // Invert Y for screen
+        }));
+        return {
+          id: `seg-${idx + 1}-${Date.now()}`,
+          name: `Segment ${String.fromCharCode(65 + idx)} (${box.widthM}m × ${box.heightM}m)`,
+          color: box.color,
+          polygonCornersMm,
+          widthM: box.widthM,
+          heightM: box.heightM,
+          areaM2: Math.round(box.widthM * box.heightM),
+          rotationDeg: box.rotationAngle,
+        };
+      });
+
+      // 6. Calculate optimal Google Static Map to encompass all boxes
+      const maxDimM = Math.max(siteWidthM, siteHeightM);
+      const targetPx = 1100;
+      const val = (targetPx * 156543.03392 * cosLat) / Math.max(10, maxDimM);
+      const targetZoom = Math.min(21, Math.max(14, Math.floor(Math.log2(val))));
+      const staticUrl = `https://maps.googleapis.com/maps/api/staticmap?center=${siteCenterLat},${siteCenterLng}&zoom=${targetZoom}&size=640x640&scale=2&maptype=satellite&key=${apiKey}`;
+
+      const imageSpanM = (640 * 156543.03392 * cosLat) / Math.pow(2, targetZoom);
+
       onApply({
-        widthMm: wMm,
-        heightMm: hMm,
-        imageSrc: croppedDataUrl,
-        coordinates: { lat, lng },
-        address: searchAddress || `Koordinat (${lat.toFixed(4)}, ${lng.toFixed(4)})`,
-        polygonPoints: getCurrentPolygonPoints(),
-        polygonCornersMm: local.corners,
-        rotationDeg: Math.round(rotationAngle),
-        pitchDegrees: solarInsights?.pitchDegrees,
-        azimuthDegrees: solarInsights?.azimuthDegrees,
-        googleSolarData: solarInsights || undefined,
+        widthMm: siteWidthMm,
+        heightMm: siteHeightMm,
+        imageSrc: staticUrl,
+        imageSpanM: Math.round(imageSpanM),
+        coordinates: { lat: siteCenterLat, lng: siteCenterLng },
+        address: searchAddress || `Kompleks Atap PLTS (${siteCenterLat.toFixed(4)}, ${siteCenterLng.toFixed(4)})`,
+        polygonPoints: allCorners,
+        polygonCornersMm: segmentsData[0]?.polygonCornersMm,
+        rotationDeg: Math.round(primaryAngle),
+        segmentsData,
       });
 
       onClose();
     } catch (err: any) {
-      console.error("Gagal memproses citra satelit:", err);
-      setErrorMsg(`Gagal memuat citra satelit: ${err.message}. Tetap terapkan ukuran atap?`);
+      console.error("Gagal menerapkan box atap:", err);
+      setErrorMsg(`Gagal menerapkan box atap: ${err?.message || "Terjadi kesalahan"}`);
     } finally {
       setApplying(false);
     }
   }
 
-  function handleApplyDimensionsOnly() {
-    const local = computeLocalCornersMm();
-    onApply({
-      widthMm: local.widthMm,
-      heightMm: local.heightMm,
-      imageSrc: "",
-      coordinates: centerCoords,
-      address: searchAddress || `Koordinat (${centerCoords.lat.toFixed(4)}, ${centerCoords.lng.toFixed(4)})`,
-      polygonPoints: getCurrentPolygonPoints(),
-      polygonCornersMm: local.corners,
-      rotationDeg: Math.round(rotationAngle),
-      pitchDegrees: solarInsights?.pitchDegrees,
-      azimuthDegrees: solarInsights?.azimuthDegrees,
-      googleSolarData: solarInsights || undefined,
-    });
-    onClose();
-  }
-
   if (!isOpen) return null;
 
-  const areaM2 = computedAreaM2;
-  const approxPanels = solarInsights?.maxPanels || Math.floor((areaM2 * 0.65) / 2.58);
-  const approxKwp = Math.round((approxPanels * 580) / 1000);
+  const totalAreaM2 = boxes.reduce((sum, b) => sum + Math.round(b.widthM * b.heightM), 0);
+  const approxTotalPanels = Math.floor((totalAreaM2 * 0.65) / 2.58);
+  const approxTotalKwp = Math.round((approxTotalPanels * 580) / 1000);
 
   return (
     <div className="modal-backdrop" style={{ zIndex: 100000, padding: 16 }}>
       <div
         className="modal-card"
         style={{
-          maxWidth: 1180,
+          maxWidth: 1200,
           width: "96vw",
           height: "94vh",
           display: "flex",
@@ -967,7 +625,7 @@ export default function GoogleMapsModal({
             display: "flex",
             justifyContent: "space-between",
             alignItems: "center",
-            padding: "14px 20px",
+            padding: "12px 20px",
             borderBottom: "1px solid #243527",
             background: "#162019",
           }}
@@ -989,7 +647,7 @@ export default function GoogleMapsModal({
             <div>
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: "#edf5ef" }}>
-                  🛰️ Google Maps Satellite Scanner — Poligon 4-Titik & Rotasi
+                  🛰️ Google Maps Scanner — Presisi Box 90° & Multi-Atap
                 </h2>
                 <span
                   style={{
@@ -1002,11 +660,11 @@ export default function GoogleMapsModal({
                     border: "1px solid #2f5637",
                   }}
                 >
-                  Rotatable & Custom Quad
+                  Strict 90° Rectangle
                 </span>
               </div>
               <p style={{ margin: 0, fontSize: 11, color: "var(--muted, #93a69a)" }}>
-                Tarik 4 titik sudut bebas (bisa jadi <strong>Trapesium</strong> atau miring), putar orientasi atap/lahan, atau gunakan deteksi otomatis Google Solar.
+                Setiap atap dikunci <strong>persegi panjang 90° presisi</strong>. Modul PV otomatis tersusun rapi searah derajat kemiringan box.
               </p>
             </div>
           </div>
@@ -1020,26 +678,27 @@ export default function GoogleMapsModal({
           </button>
         </div>
 
-        {/* Toolbar: Search, Shape Presets, Rotation Controls, and Google Solar Trigger */}
+        {/* Toolbar: Search, Active Box Controls, Rotation, Add Box */}
         <div
           style={{
-            padding: "10px 20px",
+            padding: "8px 20px",
             background: "#121b14",
             borderBottom: "1px solid #202d23",
             display: "flex",
-            gap: 10,
+            gap: 12,
             alignItems: "center",
             flexWrap: "wrap",
+            justifyContent: "space-between",
           }}
         >
-          {/* Autocomplete Input with Google Maps style recommendation dropdown */}
+          {/* Autocomplete Search Input */}
           <div
             ref={searchContainerRef}
             style={{
               position: "relative",
-              flex: "1 1 280px",
-              minWidth: 260,
-              maxWidth: 480,
+              flex: "1 1 260px",
+              minWidth: 240,
+              maxWidth: 420,
             }}
           >
             <div
@@ -1048,27 +707,18 @@ export default function GoogleMapsModal({
                 alignItems: "center",
                 gap: 8,
                 background: "#0c120e",
-                border: showSuggestions && suggestions.length > 0 ? "1px solid var(--green, #b8f36b)" : "1px solid #2a3d2e",
-                borderRadius: showSuggestions && suggestions.length > 0 ? "6px 6px 0 0" : 6,
-                padding: "6px 12px",
-                transition: "border-color 0.15s ease",
+                border: "1px solid #223528",
+                borderRadius: 6,
+                padding: "5px 10px",
               }}
             >
-              {isSearching ? (
-                <RefreshCw size={14} className="animate-spin" style={{ color: "var(--green, #b8f36b)" }} />
-              ) : (
-                <Search size={14} style={{ color: "#7a8a7f" }} />
-              )}
+              <Search size={14} style={{ color: "#7b9181", flexShrink: 0 }} />
               <input
                 ref={searchInputRef}
                 type="text"
+                placeholder="Cari lokasi, kota, kawasan industri..."
                 value={searchQuery}
                 onChange={e => setSearchQuery(e.target.value)}
-                onKeyDown={handleKeyDown}
-                onFocus={() => {
-                  if (suggestions.length > 0) setShowSuggestions(true);
-                }}
-                placeholder="Cari lokasi / kecamatan / kawasan (mis. Beji, Cikarang, Karawang)..."
                 style={{
                   background: "transparent",
                   border: "none",
@@ -1081,234 +731,187 @@ export default function GoogleMapsModal({
               {searchQuery && (
                 <button
                   type="button"
-                  onClick={handleClearSearch}
-                  className="icon-button"
-                  style={{
-                    padding: 2,
-                    width: 20,
-                    height: 20,
-                    border: "none",
-                    background: "transparent",
-                    color: "#839589",
-                  }}
-                  title="Hapus pencarian"
+                  onClick={() => setSearchQuery("")}
+                  style={{ background: "transparent", border: "none", color: "#6c8072", cursor: "pointer", padding: 0 }}
                 >
                   <X size={13} />
                 </button>
               )}
-              <button
-                type="button"
-                onClick={handleSearchSubmit}
-                style={{
-                  background: "#1c2b1e",
-                  border: "1px solid #2e4431",
-                  borderRadius: 4,
-                  padding: "3px 8px",
-                  fontSize: 11,
-                  color: "#b8f36b",
-                  fontWeight: 600,
-                  cursor: "pointer",
-                  whiteSpace: "nowrap",
-                }}
-                title="Cari lokasi sekarang"
-              >
-                Cari
-              </button>
             </div>
+          </div>
 
-            {/* Suggestions Popup Menu */}
-            {showSuggestions && suggestions.length > 0 && (
-              <div className="search-suggestions-dropdown">
-                <div
-                  style={{
-                    padding: "6px 12px",
-                    fontSize: 10,
-                    color: "#7e9284",
-                    fontWeight: 700,
-                    textTransform: "uppercase",
-                    letterSpacing: 0.5,
-                    borderBottom: "1px solid #1f2d22",
-                    display: "flex",
-                    justifyContent: "space-between",
-                    alignItems: "center",
-                  }}
-                >
-                  <span>Rekomendasi Lokasi</span>
-                  <span style={{ fontSize: 9, color: "#5a6b5f" }}>Gunakan ↑ ↓ dan Enter</span>
-                </div>
-                {suggestions.map((item, index) => {
-                  const isSelected = index === selectedIndex;
-                  return (
-                    <button
-                      key={item.id}
-                      type="button"
-                      className={`search-suggestion-item ${isSelected ? "is-selected" : ""}`}
-                      onClick={() => handleSelectSuggestion(item)}
-                      onMouseEnter={() => setSelectedIndex(index)}
-                    >
-                      <MapPin
-                        size={15}
-                        style={{
-                          color: item.source === "preset" ? "#b8f36b" : "#89b98d",
-                          marginTop: 2,
-                          flexShrink: 0,
-                        }}
-                      />
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div className="search-suggestion-title">{item.title}</div>
-                        <div className="search-suggestion-subtitle">{item.subtitle}</div>
-                      </div>
-                      <span className="search-suggestion-badge">
-                        {item.source === "preset" ? "Kawasan Industri" : "Lokasi"}
-                      </span>
-                    </button>
-                  );
-                })}
+          {/* Active Box Size Controls */}
+          {activeBox && (
+            <div style={{ display: "flex", alignItems: "center", gap: 10, background: "#0c140f", padding: "4px 10px", borderRadius: 6, border: "1px solid #233829" }}>
+              <span style={{ fontSize: 11, fontWeight: 700, color: activeBox.color }}>
+                {activeBox.name}:
+              </span>
+              <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                <span style={{ fontSize: 10, color: "#8aa092" }}>Panjang (m):</span>
+                <input
+                  type="number"
+                  step="0.5"
+                  value={activeBox.widthM}
+                  onChange={e => updateActiveBoxProps({ widthM: Math.max(3, Number(e.target.value)) })}
+                  style={{ width: 55, background: "#162319", border: "1px solid #284430", color: "#edf5ef", fontSize: 11, padding: "2px 5px", borderRadius: 4 }}
+                />
               </div>
-            )}
-          </div>
-
-          {/* Shape Presets */}
-          <div style={{ display: "flex", gap: 5, alignItems: "center" }}>
-            <span style={{ fontSize: 11, color: "#7a8a7f", fontWeight: 600 }}>Bentuk:</span>
-            <button
-              type="button"
-              className="secondary-button"
-              style={{ padding: "4px 8px", fontSize: 11, height: 26 }}
-              onClick={handleSetRectangle}
-              title="Reset bentuk menjadi persegi panjang presisi"
-            >
-              📐 Kotak
-            </button>
-            <button
-              type="button"
-              className="secondary-button"
-              style={{ padding: "4px 8px", fontSize: 11, height: 26 }}
-              onClick={handleSetTrapezoid}
-              title="Bentuk Trapesium simetris (sisi atas lebih pendek)"
-            >
-              🔺 Trapesium
-            </button>
-            <button
-              type="button"
-              className="secondary-button"
-              style={{ padding: "4px 8px", fontSize: 11, height: 26 }}
-              onClick={handleSetParallelogram}
-              title="Bentuk Jajar Genjang miring"
-            >
-              🔷 Jajar Genjang
-            </button>
-          </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                <span style={{ fontSize: 10, color: "#8aa092" }}>Lebar (m):</span>
+                <input
+                  type="number"
+                  step="0.5"
+                  value={activeBox.heightM}
+                  onChange={e => updateActiveBoxProps({ heightM: Math.max(3, Number(e.target.value)) })}
+                  style={{ width: 55, background: "#162319", border: "1px solid #284430", color: "#edf5ef", fontSize: 11, padding: "2px 5px", borderRadius: 4 }}
+                />
+              </div>
+            </div>
+          )}
 
           {/* Quick Rotation Buttons */}
-          <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
-            <span style={{ fontSize: 11, color: "#7a8a7f", fontWeight: 600, display: "flex", alignItems: "center", gap: 4 }}>
-              <Compass size={12} /> Rotasi:
-            </span>
-            <button
-              type="button"
-              className="secondary-button"
-              style={{ padding: "4px 7px", fontSize: 11, height: 26 }}
-              onClick={() => rotatePolygonBy(-15)}
-              title="Putar -15 derajat (berlawanan jarum jam)"
-            >
-              <RotateCcw size={11} /> 15°
-            </button>
-            <button
-              type="button"
-              className="secondary-button"
-              style={{ padding: "4px 6px", fontSize: 11, height: 26 }}
-              onClick={() => rotatePolygonBy(-5)}
-              title="Putar -5 derajat"
-            >
-              <RotateCcw size={11} /> 5°
-            </button>
-            <span style={{ fontSize: 12, fontWeight: 700, color: "var(--green, #b8f36b)", minWidth: 32, textAlign: "center" }}>
-              {rotationAngle}°
-            </span>
-            <button
-              type="button"
-              className="secondary-button"
-              style={{ padding: "4px 6px", fontSize: 11, height: 26 }}
-              onClick={() => rotatePolygonBy(5)}
-              title="Putar +5 derajat (searah jarum jam)"
-            >
-              <RotateCw size={11} /> 5°
-            </button>
-            <button
-              type="button"
-              className="secondary-button"
-              style={{ padding: "4px 7px", fontSize: 11, height: 26 }}
-              onClick={() => rotatePolygonBy(15)}
-              title="Putar +15 derajat"
-            >
-              <RotateCw size={11} /> 15°
-            </button>
-          </div>
+          {activeBox && (
+            <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+              <span style={{ fontSize: 11, color: "#7a8a7f", fontWeight: 600, display: "flex", alignItems: "center", gap: 4 }}>
+                <Compass size={12} /> Rotasi:
+              </span>
+              <button
+                type="button"
+                className="secondary-button"
+                style={{ padding: "4px 6px", fontSize: 11, height: 26 }}
+                onClick={() => rotateActiveBoxBy(-15)}
+                title="Putar -15 derajat"
+              >
+                <RotateCcw size={11} /> 15°
+              </button>
+              <button
+                type="button"
+                className="secondary-button"
+                style={{ padding: "4px 6px", fontSize: 11, height: 26 }}
+                onClick={() => rotateActiveBoxBy(-5)}
+                title="Putar -5 derajat"
+              >
+                <RotateCcw size={11} /> 5°
+              </button>
+              <span style={{ fontSize: 12, fontWeight: 700, color: "var(--green, #b8f36b)", minWidth: 32, textAlign: "center" }}>
+                {activeBox.rotationAngle}°
+              </span>
+              <button
+                type="button"
+                className="secondary-button"
+                style={{ padding: "4px 6px", fontSize: 11, height: 26 }}
+                onClick={() => rotateActiveBoxBy(5)}
+                title="Putar +5 derajat"
+              >
+                <RotateCw size={11} /> 5°
+              </button>
+              <button
+                type="button"
+                className="secondary-button"
+                style={{ padding: "4px 6px", fontSize: 11, height: 26 }}
+                onClick={() => rotateActiveBoxBy(15)}
+                title="Putar +15 derajat"
+              >
+                <RotateCw size={11} /> 15°
+              </button>
+            </div>
+          )}
+        </div>
 
-          {/* Google Solar Auto-Detect Button */}
+        {/* Multi-Box Chips Bar */}
+        <div
+          style={{
+            padding: "8px 20px",
+            background: "#0c1510",
+            borderBottom: "1px solid #1c2a1f",
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            overflowX: "auto",
+          }}
+        >
+          <span style={{ fontSize: 11, fontWeight: 700, color: "#8da294", whiteSpace: "nowrap" }}>
+            Daftar Box Atap ({boxes.length}):
+          </span>
+
+          {boxes.map((b, idx) => (
+            <div
+              key={b.id}
+              onClick={() => setActiveBoxId(b.id)}
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 6,
+                padding: "4px 10px",
+                borderRadius: 6,
+                background: b.id === activeBoxId ? "#1a2f21" : "#121b15",
+                border: `1.5px solid ${b.id === activeBoxId ? b.color : "#273a2c"}`,
+                color: b.id === activeBoxId ? "#ffffff" : "#99aba0",
+                fontSize: 11,
+                fontWeight: b.id === activeBoxId ? 800 : 600,
+                cursor: "pointer",
+                whiteSpace: "nowrap",
+                transition: "all 0.15s ease",
+              }}
+            >
+              <span style={{ width: 8, height: 8, borderRadius: "50%", background: b.color }} />
+              <span>{b.name} ({b.widthM}m × {b.heightM}m)</span>
+              {boxes.length > 1 && (
+                <span
+                  onClick={(e) => { e.stopPropagation(); handleDeleteBox(b.id); }}
+                  style={{ marginLeft: 3, color: "#f87171", cursor: "pointer", fontSize: 12, fontWeight: 700 }}
+                  title="Hapus box atap ini"
+                >
+                  ×
+                </span>
+              )}
+            </div>
+          ))}
+
+          {/* Button + Tambah Box Atap */}
           <button
             type="button"
-            onClick={handleAutoDetectGoogleSolar}
-            disabled={solarDetecting}
+            onClick={handleAddBox}
             style={{
-              display: "flex",
+              display: "inline-flex",
               alignItems: "center",
-              gap: 6,
-              background: solarDetecting ? "#1a2c20" : "linear-gradient(135deg, #1d402b 0%, #173322 100%)",
-              border: "1px solid #366d47",
-              color: "#b8f36b",
+              gap: 5,
+              padding: "5px 12px",
               borderRadius: 6,
-              padding: "5px 10px",
+              background: "var(--green, #b8f36b)",
+              color: "#0a150d",
+              border: "none",
               fontSize: 11,
-              fontWeight: 600,
-              cursor: solarDetecting ? "wait" : "pointer",
+              fontWeight: 800,
+              cursor: "pointer",
+              whiteSpace: "nowrap",
+              boxShadow: "0 2px 8px rgba(184, 243, 107, 0.25)",
             }}
-            title="Deteksi atap bangunan via Google Solar API"
           >
-            {solarDetecting ? <RefreshCw size={12} className="animate-spin" /> : <Zap size={12} />}
-            <span>⚡ Google Solar</span>
+            <Plus size={13} /> Tambah Box Atap ({String.fromCharCode(65 + boxes.length)})
           </button>
         </div>
 
-        {/* Solar Detection Banner (if active/notified) */}
-        {solarStatusMsg && (
-          <div
-            style={{
-              padding: "7px 20px",
-              background: solarInsights?.available ? "#142a1b" : "#1a221d",
-              borderBottom: "1px solid #233b28",
-              fontSize: 11,
-              color: solarInsights?.available ? "#d1fae5" : "#cbd5e1",
-              display: "flex",
-              alignItems: "center",
-              gap: 8,
-            }}
-          >
-            {solarInsights?.available ? <Sparkles size={14} style={{ color: "#b8f36b" }} /> : <SunMedium size={14} />}
-            <span>{solarStatusMsg}</span>
-          </div>
-        )}
+        {/* Google Maps Container */}
+        <div style={{ flex: 1, position: "relative", minHeight: 400 }}>
+          <div ref={mapRef} style={{ width: "100%", height: "100%" }} />
 
-        {/* Map Container & Floating HUD */}
-        <div style={{ flex: 1, position: "relative", minHeight: 340, background: "#0b100d" }}>
           {loading && (
             <div
               style={{
                 position: "absolute",
                 inset: 0,
-                zIndex: 10,
-                background: "#0b100de0",
+                background: "#080e0acc",
                 display: "grid",
                 placeItems: "center",
                 color: "var(--green, #b8f36b)",
                 fontSize: 13,
-                fontWeight: 600,
+                fontWeight: 700,
+                zIndex: 10,
               }}
             >
-              <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 10 }}>
-                <RefreshCw size={24} className="animate-spin" />
-                <span>Memuat Google Maps Platform...</span>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <RefreshCw size={18} className="animate-spin" /> Memuat Google Maps...
               </div>
             </div>
           )}
@@ -1320,33 +923,20 @@ export default function GoogleMapsModal({
                 top: 16,
                 left: 16,
                 right: 16,
-                zIndex: 11,
-                background: "#3e1818",
-                border: "1px solid #993333",
-                borderRadius: 8,
+                background: "#3b1616f0",
+                color: "#fecaca",
+                border: "1px solid #7f1d1d",
                 padding: "10px 14px",
-                color: "#ffc9c9",
+                borderRadius: 8,
                 fontSize: 12,
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "center",
+                zIndex: 20,
               }}
             >
-              <span>{errorMsg}</span>
-              <button
-                className="secondary-button"
-                style={{ fontSize: 11, padding: "4px 10px" }}
-                onClick={handleApplyDimensionsOnly}
-              >
-                Terapkan Dimensi Saja (Tanpa Gambar)
-              </button>
+              {errorMsg}
             </div>
           )}
 
-          {/* The Google Map Element */}
-          <div ref={mapRef} style={{ width: "100%", height: "100%" }} />
-
-          {/* Floating Live Roof & Solar Metrics Overlay */}
+          {/* Floating Bottom Bar: Multi-Box Metrics & Apply */}
           <div
             style={{
               position: "absolute",
@@ -1358,87 +948,67 @@ export default function GoogleMapsModal({
               backdropFilter: "blur(8px)",
               border: "1px solid #2f4533",
               borderRadius: 10,
-              padding: "12px 18px",
+              padding: "10px 18px",
               display: "flex",
               justifyContent: "space-between",
               alignItems: "center",
               flexWrap: "wrap",
-              gap: 14,
+              gap: 12,
               boxShadow: "0 10px 30px #00000088",
             }}
           >
-            {/* Dimensions of each side */}
+            {/* Aggregate Stats */}
             <div style={{ display: "flex", gap: 16, alignItems: "center", flexWrap: "wrap" }}>
               <div>
-                <div style={{ fontSize: 10, color: "#8a9c90", textTransform: "uppercase", letterSpacing: 0.5 }}>
-                  Panjang 4 Sisi (M)
+                <div style={{ fontSize: 9.5, color: "#8a9c90", textTransform: "uppercase", letterSpacing: 0.5 }}>
+                  Total Box Atap
                 </div>
-                <div style={{ fontSize: 13, fontWeight: 700, color: "#edf5ef" }}>
-                  Atas: <span style={{ color: "var(--green, #b8f36b)" }}>{sideLengths.top}m</span> · Bawah:{" "}
-                  <span style={{ color: "var(--green, #b8f36b)" }}>{sideLengths.bottom}m</span>
-                </div>
-                <div style={{ fontSize: 11, color: "#93a69a" }}>
-                  Kiri: {sideLengths.left}m · Kanan: {sideLengths.right}m
+                <div style={{ fontSize: 15, fontWeight: 800, color: "var(--green, #b8f36b)" }}>
+                  {boxes.length} Box (90° Presisi)
                 </div>
               </div>
 
-              <div style={{ borderLeft: "1px solid #2b3d30", height: 28 }} />
+              <div style={{ borderLeft: "1px solid #2b3d30", height: 26 }} />
 
               <div>
-                <div style={{ fontSize: 10, color: "#8a9c90", textTransform: "uppercase", letterSpacing: 0.5 }}>
-                  Luas Area Poligon
-                </div>
-                <div style={{ fontSize: 16, fontWeight: 700, color: "#b8f36b" }}>
-                  {areaM2.toLocaleString()} m²
-                </div>
-              </div>
-
-              <div>
-                <div style={{ fontSize: 10, color: "#8a9c90", textTransform: "uppercase", letterSpacing: 0.5 }}>
-                  {solarInsights?.available ? "Potensi Google Solar" : "Est. Kapasitas (~65%)"}
+                <div style={{ fontSize: 9.5, color: "#8a9c90", textTransform: "uppercase", letterSpacing: 0.5 }}>
+                  Total Luas Atap
                 </div>
                 <div style={{ fontSize: 15, fontWeight: 700, color: "#edf5ef" }}>
-                  ~{approxKwp} kWp{" "}
-                  <small style={{ fontSize: 11, color: "#93a69a" }}>({approxPanels} panel)</small>
+                  {totalAreaM2.toLocaleString()} m²
                 </div>
               </div>
 
+              <div style={{ borderLeft: "1px solid #2b3d30", height: 26 }} />
+
               <div>
-                <div style={{ fontSize: 10, color: "#8a9c90", textTransform: "uppercase", letterSpacing: 0.5 }}>
-                  Sudut Orientasi
+                <div style={{ fontSize: 9.5, color: "#8a9c90", textTransform: "uppercase", letterSpacing: 0.5 }}>
+                  Est. Kapasitas Total
                 </div>
-                <div style={{ fontSize: 14, fontWeight: 700, color: "var(--green, #b8f36b)" }}>
-                  {rotationAngle}°
+                <div style={{ fontSize: 15, fontWeight: 700, color: "var(--green, #b8f36b)" }}>
+                  ~{approxTotalKwp} kWp{" "}
+                  <small style={{ fontSize: 10.5, color: "#93a69a" }}>({approxTotalPanels} panel)</small>
+                </div>
+              </div>
+
+              <div style={{ borderLeft: "1px solid #2b3d30", height: 26 }} />
+
+              <div>
+                <div style={{ fontSize: 9.5, color: "#8a9c90", textTransform: "uppercase", letterSpacing: 0.5 }}>
+                  Orientasi Box Aktif
+                </div>
+                <div style={{ fontSize: 14, fontWeight: 700, color: activeBox?.color || "var(--green, #b8f36b)" }}>
+                  {activeBox?.rotationAngle || 24}°
                 </div>
               </div>
             </div>
 
-            {/* Actions */}
+            {/* Action Buttons */}
             <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
               <button
                 type="button"
-                className="secondary-button"
-                style={{ fontSize: 11, padding: "8px 12px" }}
-                onClick={handleSwapDimensions}
-                title="Tukar Lebar dan Panjang atap (Rotasi 90°)"
-              >
-                <RefreshCw size={13} /> Putar 90°
-              </button>
-
-              <button
-                type="button"
-                className="secondary-button"
-                style={{ fontSize: 11, padding: "8px 12px" }}
-                onClick={handleResetToCenter}
-                title="Posisikan poligon ke tengah layar"
-              >
-                <Maximize2 size={13} /> Pusatkan
-              </button>
-
-              <button
-                type="button"
                 className="primary-button"
-                style={{ fontSize: 11, padding: "8px 16px" }}
+                style={{ fontSize: 12, padding: "9px 18px", fontWeight: 800, background: "var(--green, #b8f36b)", color: "#0a150d" }}
                 onClick={handleApply}
                 disabled={applying}
               >
@@ -1448,7 +1018,7 @@ export default function GoogleMapsModal({
                   </>
                 ) : (
                   <>
-                    <Check size={14} /> Terapkan ke Layout Atap
+                    <Check size={14} /> Terapkan ke Layout Atap ({boxes.length} Box)
                   </>
                 )}
               </button>
@@ -1456,7 +1026,7 @@ export default function GoogleMapsModal({
           </div>
         </div>
 
-        {/* Footer Instructions */}
+        {/* Footer Guidance */}
         <div
           style={{
             padding: "8px 20px",
@@ -1470,7 +1040,7 @@ export default function GoogleMapsModal({
           }}
         >
           <span>
-            💡 <strong>Petunjuk:</strong> 4 titik sudut (putih) dapat <strong>ditarik bebas</strong> membentuk <strong>trapesium</strong> atau miring. Gunakan tombol rotasi untuk memutar orientasi poligon mengikuti arah atap/lahan pabrik.
+            💡 <strong>Petunjuk:</strong> Klik dan geser box untuk memposisikannya di atas atap. Gunakan <strong>+ Tambah Box Atap</strong> untuk menambah box atap lainnya (misal 1 atap besar + 4 atap kecil).
           </span>
           <span style={{ color: "#5d7063", whiteSpace: "nowrap" }}>
             Lat: {centerCoords.lat.toFixed(5)}, Lng: {centerCoords.lng.toFixed(5)}
