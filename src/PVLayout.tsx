@@ -396,6 +396,21 @@ export default function PVLayout({
   const [hasMovedDuringDrag, setHasMovedDuringDrag] = useState(false);
   const [marquee, setMarquee] = useState<{ startX: number; startY: number; currentX: number; currentY: number } | null>(null);
 
+  // Dragging segments & corners state
+  const [draggingSegmentId, setDraggingSegmentId] = useState<string | null>(null);
+  const dragSegmentStartRef = useRef<{ mouseX: number; mouseY: number; initialPoly: Array<{ x: number; y: number }> }>({
+    mouseX: 0,
+    mouseY: 0,
+    initialPoly: [],
+  });
+  const [draggingCorner, setDraggingCorner] = useState<{ segId: string; cornerIndex: number } | null>(null);
+  const dragCornerStartRef = useRef<{ mouseX: number; mouseY: number; initialPt: { x: number; y: number } }>({
+    mouseX: 0,
+    mouseY: 0,
+    initialPt: { x: 0, y: 0 },
+  });
+  const [drawingRect, setDrawingRect] = useState<{ startX: number; startY: number; currentX: number; currentY: number } | null>(null);
+
   // Viewport Pan & Zoom
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
@@ -542,6 +557,40 @@ export default function PVLayout({
   const handleUpdateActiveSegment = (key: keyof FieldSegment, value: any) => {
     if (!activeSegment) return;
     const next = segments.map(s => s.id === activeSegment.id ? { ...s, [key]: value } : s);
+    setSegments(next);
+    saveDraft(next);
+  };
+
+  const segBounds = useMemo(() => {
+    if (!activeSegment?.polygon || activeSegment.polygon.length < 3) return { x: 3000, y: 2000, w: 20000, h: 10000 };
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    for (const pt of activeSegment.polygon) {
+      if (pt.x < minX) minX = pt.x;
+      if (pt.x > maxX) maxX = pt.x;
+      if (pt.y < minY) minY = pt.y;
+      if (pt.y > maxY) maxY = pt.y;
+    }
+    return {
+      x: minX,
+      y: minY,
+      w: Math.max(1000, maxX - minX),
+      h: Math.max(1000, maxY - minY),
+    };
+  }, [activeSegment?.polygon]);
+
+  const handleUpdateSegmentGeometry = (newXm: number, newYm: number, newWm: number, newHm: number) => {
+    if (!activeSegment) return;
+    const x = Math.round(newXm * 1000);
+    const y = Math.round(newYm * 1000);
+    const w = Math.max(1000, Math.round(newWm * 1000));
+    const h = Math.max(1000, Math.round(newHm * 1000));
+    const newPoly = [
+      { x, y },
+      { x: x + w, y },
+      { x: x + w, y: y + h },
+      { x, y: y + h },
+    ];
+    const next = segments.map(s => s.id === activeSegment.id ? { ...s, polygon: newPoly } : s);
     setSegments(next);
     saveDraft(next);
   };
@@ -1084,6 +1133,57 @@ export default function PVLayout({
                     </div>
                   </div>
 
+                  {/* Dimensi & Posisi Box Area Segmen (m) */}
+                  <div style={{ borderTop: "1px solid #1f3325", paddingTop: 8, marginTop: 2 }}>
+                    <div style={{ fontSize: 10.5, fontWeight: 700, color: "var(--green, #b8f36b)", marginBottom: 6 }}>
+                      Dimensi & Posisi Box Area (m)
+                    </div>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 6 }}>
+                      <div>
+                        <label style={{ fontSize: 9.5, color: "#8aa092", display: "block", marginBottom: 2 }}>Panjang / X (m)</label>
+                        <input
+                          type="number"
+                          step="0.5"
+                          value={(segBounds.w / 1000).toFixed(1)}
+                          onChange={e => handleUpdateSegmentGeometry(segBounds.x / 1000, segBounds.y / 1000, Number(e.target.value), segBounds.h / 1000)}
+                          style={{ width: "100%", background: "#080d09", border: "1px solid #1f3325", borderRadius: 6, padding: "4px 7px", color: "#edf5ef", fontSize: 11 }}
+                        />
+                      </div>
+                      <div>
+                        <label style={{ fontSize: 9.5, color: "#8aa092", display: "block", marginBottom: 2 }}>Lebar / Y (m)</label>
+                        <input
+                          type="number"
+                          step="0.5"
+                          value={(segBounds.h / 1000).toFixed(1)}
+                          onChange={e => handleUpdateSegmentGeometry(segBounds.x / 1000, segBounds.y / 1000, segBounds.w / 1000, Number(e.target.value))}
+                          style={{ width: "100%", background: "#080d09", border: "1px solid #1f3325", borderRadius: 6, padding: "4px 7px", color: "#edf5ef", fontSize: 11 }}
+                        />
+                      </div>
+                    </div>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                      <div>
+                        <label style={{ fontSize: 9.5, color: "#8aa092", display: "block", marginBottom: 2 }}>Posisi X (m)</label>
+                        <input
+                          type="number"
+                          step="0.5"
+                          value={(segBounds.x / 1000).toFixed(1)}
+                          onChange={e => handleUpdateSegmentGeometry(Number(e.target.value), segBounds.y / 1000, segBounds.w / 1000, segBounds.h / 1000)}
+                          style={{ width: "100%", background: "#080d09", border: "1px solid #1f3325", borderRadius: 6, padding: "4px 7px", color: "#edf5ef", fontSize: 11 }}
+                        />
+                      </div>
+                      <div>
+                        <label style={{ fontSize: 9.5, color: "#8aa092", display: "block", marginBottom: 2 }}>Posisi Y (m)</label>
+                        <input
+                          type="number"
+                          step="0.5"
+                          value={(segBounds.y / 1000).toFixed(1)}
+                          onChange={e => handleUpdateSegmentGeometry(segBounds.x / 1000, Number(e.target.value), segBounds.w / 1000, segBounds.h / 1000)}
+                          style={{ width: "100%", background: "#080d09", border: "1px solid #1f3325", borderRadius: 6, padding: "4px 7px", color: "#edf5ef", fontSize: 11 }}
+                        />
+                      </div>
+                    </div>
+                  </div>
+
                   {/* Action Buttons */}
                   <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 4 }}>
                     <button
@@ -1436,14 +1536,99 @@ export default function PVLayout({
                 isPanningRef.current = true;
                 panStartRef.current = { x: e.clientX - pan.x, y: e.clientY - pan.y };
                 (e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId);
+              } else if (toolMode === "rectangle" || toolMode === "polygon") {
+                const rect = svgRef.current?.getBoundingClientRect();
+                if (rect) {
+                  const mouseSvgX = (e.clientX - rect.left - pan.x) / zoom;
+                  const mouseSvgY = (e.clientY - rect.top - pan.y) / zoom;
+                  const metricX = Math.round((mouseSvgX - originX) / scale);
+                  const metricY = Math.round((mouseSvgY - originY) / scale);
+                  setDrawingRect({ startX: metricX, startY: metricY, currentX: metricX, currentY: metricY });
+                  (e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId);
+                }
               }
             }}
             onPointerMove={e => {
               if (isPanningRef.current) {
                 setPan({ x: e.clientX - panStartRef.current.x, y: e.clientY - panStartRef.current.y });
+              } else if (drawingRect) {
+                const rect = svgRef.current?.getBoundingClientRect();
+                if (rect) {
+                  const mouseSvgX = (e.clientX - rect.left - pan.x) / zoom;
+                  const mouseSvgY = (e.clientY - rect.top - pan.y) / zoom;
+                  const metricX = Math.round((mouseSvgX - originX) / scale);
+                  const metricY = Math.round((mouseSvgY - originY) / scale);
+                  setDrawingRect(prev => prev ? { ...prev, currentX: metricX, currentY: metricY } : null);
+                }
+              } else if (draggingSegmentId) {
+                const dx = (e.clientX - dragSegmentStartRef.current.mouseX) / (scale * zoom);
+                const dy = (e.clientY - dragSegmentStartRef.current.mouseY) / (scale * zoom);
+                const updatedPoly = dragSegmentStartRef.current.initialPoly.map(p => ({
+                  x: Math.round(p.x + dx),
+                  y: Math.round(p.y + dy),
+                }));
+                setSegments(prev => prev.map(s => s.id === draggingSegmentId ? { ...s, polygon: updatedPoly } : s));
+              } else if (draggingCorner) {
+                const dx = (e.clientX - dragCornerStartRef.current.mouseX) / (scale * zoom);
+                const dy = (e.clientY - dragCornerStartRef.current.mouseY) / (scale * zoom);
+                setSegments(prev => prev.map(s => {
+                  if (s.id !== draggingCorner.segId) return s;
+                  const newPoly = [...s.polygon];
+                  newPoly[draggingCorner.cornerIndex] = {
+                    x: Math.round(dragCornerStartRef.current.initialPt.x + dx),
+                    y: Math.round(dragCornerStartRef.current.initialPt.y + dy),
+                  };
+                  return { ...s, polygon: newPoly };
+                }));
               }
             }}
             onPointerUp={e => {
+              if (drawingRect) {
+                const x1 = Math.min(drawingRect.startX, drawingRect.currentX);
+                const y1 = Math.min(drawingRect.startY, drawingRect.currentY);
+                const w = Math.abs(drawingRect.currentX - drawingRect.startX);
+                const h = Math.abs(drawingRect.currentY - drawingRect.startY);
+                setDrawingRect(null);
+                if (w > 2000 && h > 2000) {
+                  const letter = String.fromCharCode(65 + segments.length);
+                  const color = SEGMENT_PALETTE[segments.length % SEGMENT_PALETTE.length];
+                  const newId = `seg-${Date.now()}`;
+                  const newSeg: FieldSegment = {
+                    id: newId,
+                    name: `Segment ${letter}`,
+                    color,
+                    polygon: [
+                      { x: x1, y: y1 },
+                      { x: x1 + w, y: y1 },
+                      { x: x1 + w, y: y1 + h },
+                      { x: x1, y: y1 + h },
+                    ],
+                    orientation: "landscape",
+                    tilt: 10,
+                    azimuth: 0,
+                    gap: 20,
+                    setback: 300,
+                    moduleWatts: 580,
+                    moduleWidth: 2278,
+                    moduleHeight: 1134,
+                    panels: [],
+                    visible: true,
+                  };
+                  const next = [...segments, newSeg];
+                  setSegments(next);
+                  setActiveSegmentId(newId);
+                  pushHistory(next, obstacles, walkways);
+                  saveDraft(next);
+                  setNotice(isId ? `Segmen baru (${newSeg.name}) berhasil digambar.` : `New segment (${newSeg.name}) created.`);
+                  setToolMode("select");
+                }
+              }
+              if (draggingSegmentId || draggingCorner) {
+                setDraggingSegmentId(null);
+                setDraggingCorner(null);
+                saveDraft(segments, obstacles, walkways);
+                pushHistory(segments, obstacles, walkways);
+              }
               isPanningRef.current = false;
               try { (e.currentTarget as HTMLDivElement).releasePointerCapture(e.pointerId); } catch { /* ignore */ }
             }}
@@ -1555,17 +1740,33 @@ export default function PVLayout({
                   const minY = Math.min(...seg.polygon.map(p => p.y));
 
                   return (
-                    <g key={seg.id} onClick={() => setActiveSegmentId(seg.id)} style={{ cursor: "pointer" }}>
+                    <g key={seg.id}>
                       <polygon
                         points={ptsStr}
                         fill={seg.color}
-                        fillOpacity={isActive ? "0.15" : "0.08"}
+                        fillOpacity={isActive ? "0.18" : "0.08"}
                         stroke={seg.color}
                         strokeWidth={isActive ? "3" : "1.8"}
                         strokeDasharray={isActive ? "none" : "6 4"}
+                        style={{ cursor: "move" }}
+                        onPointerDown={e => {
+                          e.stopPropagation();
+                          setActiveSegmentId(seg.id);
+                          setDraggingSegmentId(seg.id);
+                          dragSegmentStartRef.current = {
+                            mouseX: e.clientX,
+                            mouseY: e.clientY,
+                            initialPoly: seg.polygon.map(p => ({ ...p })),
+                          };
+                          (e.currentTarget as any).setPointerCapture(e.pointerId);
+                        }}
                       />
                       {/* Floating Segment Badge */}
-                      <g transform={`translate(${originX + avgX * scale - 45}, ${originY + minY * scale + 10})`}>
+                      <g
+                        transform={`translate(${originX + avgX * scale - 45}, ${originY + minY * scale + 10})`}
+                        style={{ cursor: "pointer" }}
+                        onClick={() => setActiveSegmentId(seg.id)}
+                      >
                         <rect
                           width="90"
                           height="22"
@@ -1585,9 +1786,47 @@ export default function PVLayout({
                           {seg.name}
                         </text>
                       </g>
+
+                      {/* 4 Draggable Corner Handles for Active Segment */}
+                      {isActive && seg.polygon.map((pt, idx) => (
+                        <circle
+                          key={idx}
+                          cx={originX + pt.x * scale}
+                          cy={originY + pt.y * scale}
+                          r={6}
+                          fill="#ffffff"
+                          stroke={seg.color}
+                          strokeWidth={2.5}
+                          style={{ cursor: "crosshair" }}
+                          onPointerDown={e => {
+                            e.stopPropagation();
+                            setDraggingCorner({ segId: seg.id, cornerIndex: idx });
+                            dragCornerStartRef.current = {
+                              mouseX: e.clientX,
+                              mouseY: e.clientY,
+                              initialPt: { ...pt },
+                            };
+                            (e.currentTarget as any).setPointerCapture(e.pointerId);
+                          }}
+                        />
+                      ))}
                     </g>
                   );
                 })}
+
+                {/* 5b. Interactive Drawing Box Preview */}
+                {drawingRect && (
+                  <rect
+                    x={originX + Math.min(drawingRect.startX, drawingRect.currentX) * scale}
+                    y={originY + Math.min(drawingRect.startY, drawingRect.currentY) * scale}
+                    width={Math.abs(drawingRect.currentX - drawingRect.startX) * scale}
+                    height={Math.abs(drawingRect.currentY - drawingRect.startY) * scale}
+                    fill="#b8f36b25"
+                    stroke="#b8f36b"
+                    strokeWidth="2"
+                    strokeDasharray="4 3"
+                  />
+                )}
 
                 {/* 6. PV Modules: Authentic Crystalline Solar Cells */}
                 {layers.pvModules && segments.map(seg => {
