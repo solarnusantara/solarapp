@@ -4,7 +4,7 @@ import type { ConditionSet, StageSummary, StringingReport } from "../engine/type
 import type { EngineResultSummary } from "../engine/types/local";
 import type { SolarYieldResult } from "../gisSolarService";
 import type { SavedLayout } from "../engine/layoutStore";
-import { weatherLabel } from "../engine/weather";
+import { weatherLabel, weatherSourceName } from "../engine/weather";
 import { firstOf, isNum, pick } from "./format";
 import { LOSS_SLICES, helioscopeStageLabel } from "./labels";
 
@@ -112,7 +112,16 @@ export function horizonPoints(r: EngineResultSummary | null | undefined, layout:
  * else the weather meta helio echoed in the output (results from before the weather panel). "—" if neither.
  */
 export function sourceLabel(r: EngineResultSummary | null | undefined): string {
-  return weatherLabel(r?.weather_used, out(r)?.weather);
+  const used: any = r?.weather_used, w = out(r)?.weather;
+  // A single dataset is named after the project, so print what it is (provider / source) and where, not its name.
+  if (used?.kind === "dataset" && typeof used.id === "string" && used.id.trim()) {
+    const provider = (typeof w?.source === "string" && w.source.trim()) || weatherSourceName(used.source);
+    if (provider) {
+      const where = isNum(w?.latitude) && isNum(w?.longitude) ? ` · lat ${w.latitude.toFixed(4)}°, lon ${w.longitude.toFixed(4)}°` : "";
+      return provider + where;
+    }
+  }
+  return weatherLabel(r?.weather_used, w);
 }
 
 /** Inter-annual variability helio returned in `output.uncertainty`; every field null when absent. */
@@ -212,6 +221,28 @@ export function iamTable(r: EngineResultSummary | null | undefined): Array<{ ang
 
 /** production.engineering (helio >= 9fd4da8) or null. */
 export const engineering = (r: EngineResultSummary | null | undefined) => (prod(r)?.engineering ?? null) as import("../engine/types/local").EngineeringCalc | null;
+
+/**
+ * Inverter ratings for the PV Array pages. Nominal AC (e.g. 150 kWac) is not p_max_ac (the 30 degC maximum, 165 kW);
+ * the MPPT window comes from the circuit's inverter node (built from the characterization) per inverter id.
+ */
+export function inverterRatings(r: EngineResultSummary | null | undefined) {
+  const inv: any = r?.components?.inverter;
+  const first = (...v: unknown[]): number | null => (v.find(isNum) as number | undefined) ?? null;
+  const nomW = first(inv?.ratings?.p_nom_ac_w, inv?.p_nom_ac_w, inv?.nameplate_w);
+  const summary: any[] = Array.isArray(out(r)?.inverters_summary) ? out(r).inverters_summary : [];
+  const nodes: any[] = ((r?.circuit_auto as any)?.circuit?.nodes ?? []).filter((x: any) => x?.type === "inverter");
+  const pMaxW = first(inv?.ratings?.p_max_ac_w, inv?.p_max_ac_w);
+  return {
+    nomAcKw: nomW !== null ? nomW / 1000 : first(summary[0]?.nominal_ac_kw),
+    pMaxAcKw: pMaxW !== null ? pMaxW / 1000 : null,
+    mpptWindow(inverterId: string): { minV: number; maxV: number } | null {
+      const nd = nodes.find((x) => x.id === inverterId);
+      const lo = first(nd?.v_mppt_min_v, inv?.ratings?.v_mppt_min_v), hi = first(nd?.v_mppt_max_v, inv?.ratings?.v_mppt_max_v);
+      return lo !== null && hi !== null ? { minV: lo, maxV: hi } : null;
+    },
+  };
+}
 
 export const mean = (a: number[]) => a.reduce((x, y) => x + y, 0) / a.length;
 export const pickNum = (o: unknown, ...p: Array<string | number>) => { const v = pick(o, ...p); return isNum(v) ? v : null; };
