@@ -4,11 +4,12 @@
 import { createContext, useContext, type ReactNode } from "react";
 import { reportAssetUrl } from "../engine/client";
 import { monthlyBalance, monthlyBalanceFromEngineering, dailyInOut, powerHistogram, horizonAverage, horizonDiffuseFactor, pvsystAzimuth, sunPathSegments, splitAtAzimuthWrap, behindPlaneSegments, sunBandQuads, col, type MonthlyBalance } from "./aggregate";
-import { NormalCurve, Scatter, StackedBars, StepHistogram, SunPathChart, Waterfall, BarChart, type SunCurve, type SunHourLine, type WaterfallItem } from "./charts";
+import { IsoShadingChart, NormalCurve, Scatter, StackedBars, StepHistogram, SunPathChart, Waterfall, BarChart, type SunCurve, type SunHourLine, type WaterfallItem } from "./charts";
 import { DASH, MONTHS_SHORT, MONTHS_EN, dateLong, firstOf, dateTime, isNum, monthlyUniform, n, pct, plain, text } from "./format";
 import { moduleAreaStats } from "./layoutGeometry";
 import NearShadingScene from "./NearShadingScene";
 import { buildIsoScene } from "./isoProjection";
+import { hasIsoData, isoAttenuationText, isoContourSegments, isoMissingNote } from "./isoShading";
 import LossDiagram from "./LossFunnel";
 import { exportModeLabel } from "../engine/exportMode";
 import { sigmaEnergy, Z } from "./probability";
@@ -25,7 +26,7 @@ const Box = ({ title, children }: { title: string; children: ReactNode }) => (
 const MOUNTING: Record<string, string> = { fixed_tilt: "Tables on a building", flush_mount: "Flush mounted on a building roof", east_west: "East-West tables on a building", carport: "Carport (shed) structure" };
 
 export default function EngineeringCalc({ data, projectId, project }: ReportProps) {
-  const { result, layout, meta, hourly, sun, shade } = data;
+  const { result, layout, meta, hourly, sun, shade, iso } = data;
   const m = meta.data;
   const lay = layout.data;
   const o = out(result), p = prod(result);
@@ -327,6 +328,7 @@ export default function EngineeringCalc({ data, projectId, project }: ReportProp
 
   // near shading 3D (+ iso note)
   const isoScene = lay ? buildIsoScene(lay) : null;
+  const isoData = hasIsoData(iso.data) ? iso.data : null;
   const isoUsable = !!(shade.data && typeof shade.data === "object" && ((shade.data as any).iso || (shade.data as any).orientations?.some?.((x: any) => x?.iso)));
   sim("Near shading definition - Iso-shadings diagram", (
     <Box title="Near shadings parameter">
@@ -334,9 +336,32 @@ export default function EngineeringCalc({ data, projectId, project }: ReportProp
       {isoScene ? (
         <div style={{ border: "1px solid #cbd5e1", background: "#fff" }}><NearShadingScene layout={lay} height="125mm" /></div>
       ) : <div className="sim-note">{DASH} layout belum dimuat</div>}
-      <div className="sim-note" style={{ marginTop: 8 }}>{isoUsable ? "Diagram iso-shading tersedia dari engine (lihat lampiran shade)." : "Diagram iso-shading belum disediakan engine."}</div>
+      {!isoData && <div className="sim-note" style={{ marginTop: 8 }}>{isoUsable ? "Diagram iso-shading tersedia dari engine (lihat lampiran shade)." : isoMissingNote(iso)}</div>}
     </Box>
   ));
+
+  // iso-shadings diagram: one sun-path chart per orientation with the engine's shading-loss contours
+  if (isoData) {
+    const isoOrients = isoData.orientations;
+    for (let i = 0; i < isoOrients.length; i += 2) {
+      sim(undefined, (
+        <Box title="Iso-shadings diagram">
+          {isoOrients.slice(i, i + 2).map((io, k) => {
+            const tilt = io.orientation.tilt_deg, az = azP(io.orientation.azimuth_deg);
+            return (
+              <IsoShadingChart key={i + k} w={560} h={330}
+                curves={curves} hourLines={hourLines} horizon={horizonLine} band={sunBand}
+                behind={behindPlaneSegments(tilt, az)}
+                contours={io.contours.map((c) => ({ level: c.level, segments: isoContourSegments(c, latDeg) }))}
+                attenuation={isoAttenuationText(io, isoData.warnings)}
+                title={`Orientation #${i + k + 1}`}
+                subtitle={`Fixed plane, Tilts/azimuths: ${n(tilt, 0, { group: false })}°/ ${n(az, 0, { group: false })}°`} />
+            );
+          })}
+        </Box>
+      ));
+    }
+  }
 
   // main results
   const sumArr = (a: Array<number | null>) => (a.every(isNum) ? (a as number[]).reduce((x, y) => x + y, 0) : null);

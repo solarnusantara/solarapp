@@ -1,8 +1,9 @@
 // Hand-drawn SVG charts (no chart library, no canvas). Every chart takes already-sourced numbers and
 // renders an explicit "—" box when it has nothing to draw.
-import type { ReactNode } from "react";
+import { useId, type ReactNode } from "react";
 import { DASH, isNum } from "./format";
 import { normalCurve, phi } from "./probability";
+import { ISO_LEVEL_STYLES, isoLevelStyle } from "./isoShading";
 
 const FONT = "Arial, Helvetica, sans-serif";
 
@@ -304,15 +305,18 @@ export interface SunHourLine { hour: number; segments: Array<Array<[number, numb
  * direction of the equator, east is negative. Curves are engine sun positions; `band` is the swept
  * region between the solstice paths; hour lines join the same solar hour across the dates.
  */
+export interface SunPathCtx { X: (az: number) => number; Y: (el: number) => number; f: Frame; iw: number; ih: number }
+
 export function SunPathChart({ curves, hourLines, behind, horizon, band, title, subtitle, w = 340, h = 210, extra }: {
-  curves: SunCurve[]; hourLines?: SunHourLine[]; behind?: Array<Array<[number, number]>>; band?: Array<Array<[number, number]>>; horizon: Array<[number, number]> | null; title: string; subtitle?: string; w?: number; h?: number; extra?: ReactNode;
+  curves: SunCurve[]; hourLines?: SunHourLine[]; behind?: Array<Array<[number, number]>>; band?: Array<Array<[number, number]>>; horizon: Array<[number, number]> | null; title: string; subtitle?: string; w?: number; h?: number; extra?: ReactNode | ((c: SunPathCtx) => ReactNode);
 }) {
   const f: Frame = { l: 34, r: 8, t: 8, b: 26 };
   const iw = w - f.l - f.r, ih = h - f.t - f.b;
   const X = (az: number) => f.l + ((180 - az) / 360) * iw, Y = (el: number) => f.t + ih - (el / 90) * ih;
   const usable = curves.filter((c) => c.segments.some((s) => s.length > 1));
   const line = (pts: Array<[number, number]>) => pts.map(([a, e]) => `${X(a)},${Y(e)}`).join(" ");
-  const clipId = `sp-clip-${title.replace(/\W+/g, "")}`;
+  // unique per instance: the same title ("Orientation #1") appears on the horizon page and the iso page
+  const clipId = `sp-clip-${useId().replace(/\W+/g, "")}`;
   return (
     <div style={{ breakInside: "avoid", pageBreakInside: "avoid" }}>
       <div style={{ textAlign: "center", fontWeight: 700, fontSize: 12 }}>{title}</div>
@@ -366,9 +370,44 @@ export function SunPathChart({ curves, hourLines, behind, horizon, band, title, 
           <g fill="#111827" fontSize="8">
             {usable.map((c, i) => <text key={`lg${c.num}`} x={X(0) - 36} y={Y(46) + i * 9}>{c.num}: {c.label}</text>)}
           </g>
-          {extra}
+          {typeof extra === "function" ? extra({ X, Y, f, iw, ih }) : extra}
         </svg>
       )}
     </div>
+  );
+}
+
+export interface IsoContourLine { level: number; segments: Array<Array<[number, number]>> }
+
+/**
+ * PVsyst "Iso-shadings diagram": the full sun-path diagram of one orientation with the shading-loss
+ * contours on top. Contours arrive already in the sun-path azimuth convention (see isoShading.ts).
+ */
+export function IsoShadingChart({ contours, attenuation, ...sun }: { contours: IsoContourLine[]; attenuation: string } & Parameters<typeof SunPathChart>[0]) {
+  return (
+    <SunPathChart
+      {...sun}
+      extra={({ X, Y, f, iw }) => (
+        <g data-testid="iso-overlay">
+          {contours.map((c) => {
+            const st = isoLevelStyle(c.level);
+            return c.segments.filter((s) => s.length > 1).map((s, i) => (
+              <polyline key={`${c.level}-${i}`} data-level={c.level} points={s.map(([a, e]) => `${X(a)},${Y(e)}`).join(" ")} fill="none" stroke="#000" strokeWidth={st.width} strokeDasharray={st.dash} />
+            ));
+          })}
+          <g fontSize="8.5" fill="#111827" data-testid="iso-legend">
+            {ISO_LEVEL_STYLES.map((st, i) => (
+              <g key={st.level}>
+                <line x1={f.l + 6} x2={f.l + 36} y1={f.t + 9 + i * 10} y2={f.t + 9 + i * 10} stroke="#000" strokeWidth={st.width} strokeDasharray={st.dash} />
+                <text x={f.l + 40} y={f.t + 12 + i * 10}>{st.label}</text>
+              </g>
+            ))}
+          </g>
+          <text x={f.l + iw / 2} y={f.t + 14} textAnchor="middle" fontSize="10" fontWeight="700" fill="#111827" data-testid="iso-attenuation">
+            {attenuation.split(" and ").map((ln, i) => <tspan key={i} x={f.l + iw / 2} dy={i === 0 ? 0 : 12}>{i === 0 ? ln : `and ${ln}`}</tspan>)}
+          </text>
+        </g>
+      )}
+    />
   );
 }
