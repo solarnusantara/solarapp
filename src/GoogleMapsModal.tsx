@@ -894,7 +894,8 @@ export default function GoogleMapsModal({
           URL.revokeObjectURL(blobUrl);
         }
       } catch (e) {
-        console.warn("Static Map fetch failed (likely referrer restriction), continuing with dimensions only:", e);
+        console.warn("Static Map fetch failed (likely referrer restriction), using direct static URL fallback:", e);
+        croppedDataUrl = staticUrl;
       }
 
       onApply({

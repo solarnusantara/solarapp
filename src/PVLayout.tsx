@@ -20,16 +20,66 @@ import {
   ZoomIn,
   ZoomOut,
   Maximize2,
-  Hand
+  Hand,
+  Plus,
+  Eye,
+  EyeOff,
+  Layers,
+  Ban,
+  Square,
+  Sliders,
+  Check,
+  Compass,
+  Table,
+  Activity,
+  CheckCircle2,
+  Share2
 } from "lucide-react";
 import GoogleMapsModal from "./GoogleMapsModal";
 import * as api from "./api";
 
 type Lang = "en" | "id";
-type Panel = { id: number; x: number; y: number; w: number; h: number };
-type SystemType = "Rooftop" | "Ground-mounted";
-type Obstacle = { id: number; x: number; y: number; w: number; h: number; label: string };
-type Site = {
+export type Panel = { id: number; x: number; y: number; w: number; h: number; segmentId?: string };
+export type SystemType = "Rooftop" | "Ground-mounted";
+export type Obstacle = { id: number; x: number; y: number; w: number; h: number; label: string; heightM?: number };
+
+export interface FieldSegment {
+  id: string;
+  name: string;
+  color: string;
+  polygon: Array<{ x: number; y: number }>;
+  orientation: "landscape" | "portrait";
+  tilt: number;
+  azimuth: number;
+  gap: number; // mm
+  setback: number; // mm
+  moduleWatts: number;
+  moduleWidth: number; // mm
+  moduleHeight: number; // mm
+  panels: Panel[];
+  visible: boolean;
+}
+
+export interface Walkway {
+  id: string;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  label?: string;
+}
+
+export interface LayerState {
+  siteBoundary: boolean;
+  fieldSegments: boolean;
+  pvModules: boolean;
+  keepouts: boolean;
+  walkway: boolean;
+  roofBuilding: boolean;
+  satellite: boolean;
+}
+
+export type Site = {
   coordinates: { lat: number; lng: number };
   address: string;
   polygonPoints?: Array<{ lat: number; lng: number }>;
@@ -43,8 +93,8 @@ type Site = {
 const STORAGE_KEY = "solar-apps-pv-layout-v1";
 const defaults = {
   system: "Rooftop" as SystemType,
-  areaWidth: 12000,
-  areaHeight: 8000,
+  areaWidth: 65000,
+  areaHeight: 34000,
   moduleWidth: 2278,
   moduleHeight: 1134,
   gap: 20,
@@ -54,17 +104,18 @@ const defaults = {
   tilt: 10,
   orientation: "landscape" as "landscape" | "portrait",
   setback: 300,
-  obstacleWidth: 1000,
-  obstacleHeight: 1000,
+  obstacleWidth: 3000,
+  obstacleHeight: 3000,
 };
 
 function storageKey(userId: string, projectId: string | null) {
   return `${STORAGE_KEY}:${userId}:${projectId ?? "unassigned"}`;
 }
 
+const SEGMENT_PALETTE = ["#3b82f6", "#8b5cf6", "#f97316", "#10b981", "#f43f5e", "#06b6d4", "#eab308"];
+
 /**
- * Insets a polygon by setback distance. Works for convex quadrilaterals (trapezoids,
- * parallelograms, rectangles) in screen coordinates (where Y grows downwards).
+ * Insets a polygon by setback distance. Works for convex polygons in mm
  */
 function computeInsetPolygon(
   corners: Array<{ x: number; y: number }>,
@@ -118,21 +169,19 @@ function computeInsetPolygon(
       insetVertices.push({ x: Math.round(x), y: Math.round(y) });
     }
   }
-
-  return insetVertices;
+  return insetVertices.length >= 3 ? insetVertices : corners;
 }
 
-/**
- * Standard ray-casting point-in-polygon algorithm
- */
-function isPointInPolygon(px: number, py: number, poly: Array<{ x: number; y: number }>): boolean {
+function isPointInPolygon(
+  x: number,
+  y: number,
+  poly: Array<{ x: number; y: number }>
+): boolean {
   let inside = false;
-  const n = poly.length;
-  for (let i = 0, j = n - 1; i < n; j = i++) {
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
     const xi = poly[i].x, yi = poly[i].y;
     const xj = poly[j].x, yj = poly[j].y;
-    const intersect = ((yi > py) !== (yj > py)) &&
-      (px < ((xj - xi) * (py - yi)) / (yj - yi) + xi);
+    const intersect = yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi;
     if (intersect) inside = !inside;
   }
   return inside;
@@ -151,24 +200,76 @@ function isPanelInsidePolygon(
   return corners.every(c => isPointInPolygon(c.x, c.y, poly));
 }
 
-function loadSaved(userId: string, projectId: string | null): {
-  settings: typeof defaults;
-  panels: Panel[];
-  obstacles?: Obstacle[];
-  backgroundImage?: string;
-  backgroundOpacity?: number;
-  site?: Site | null;
-} | null {
+export function generatePanelsForSegment(
+  seg: FieldSegment,
+  obstacles: Obstacle[] = [],
+  walkways: Walkway[] = []
+): Panel[] {
+  const boundary = seg.polygon && seg.polygon.length >= 3 ? seg.polygon : [
+    { x: 0, y: 0 },
+    { x: 20000, y: 0 },
+    { x: 20000, y: 10000 },
+    { x: 0, y: 10000 },
+  ];
+  const setbackPoly = computeInsetPolygon(boundary, seg.setback);
+
+  const isLandscape = seg.orientation === "landscape";
+  const modW = isLandscape ? Math.max(seg.moduleWidth, seg.moduleHeight) : Math.min(seg.moduleWidth, seg.moduleHeight);
+  const modH = isLandscape ? Math.min(seg.moduleWidth, seg.moduleHeight) : Math.max(seg.moduleWidth, seg.moduleHeight);
+
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  for (const pt of setbackPoly) {
+    if (pt.x < minX) minX = pt.x;
+    if (pt.x > maxX) maxX = pt.x;
+    if (pt.y < minY) minY = pt.y;
+    if (pt.y > maxY) maxY = pt.y;
+  }
+
+  const stepX = modW + seg.gap;
+  const stepY = modH + seg.gap;
+  const result: Panel[] = [];
+  let idCounter = Date.now() + Math.floor(Math.random() * 50000);
+
+  const collidesWithObsOrWalk = (p: { x: number; y: number; w: number; h: number }) => {
+    for (const obs of obstacles) {
+      if (p.x < obs.x + obs.w && p.x + p.w > obs.x && p.y < obs.y + obs.h && p.y + p.h > obs.y) return true;
+    }
+    for (const w of walkways) {
+      if (p.x < w.x + w.w && p.x + p.w > w.x && p.y < w.y + w.h && p.y + p.h > w.y) return true;
+    }
+    return false;
+  };
+
+  for (let y = minY; y <= maxY - modH; y += stepY) {
+    for (let x = minX; x <= maxX - modW; x += stepX) {
+      const candidate: Panel = { id: ++idCounter, x, y, w: modW, h: modH, segmentId: seg.id };
+      if (isPanelInsidePolygon(candidate, setbackPoly) && !collidesWithObsOrWalk(candidate)) {
+        result.push(candidate);
+      }
+    }
+  }
+  return result;
+}
+
+function loadSaved(userId: string, projectId: string | null): any {
   try {
     const raw = localStorage.getItem(storageKey(userId, projectId));
     if (raw) {
       const parsed = JSON.parse(raw);
-      if (parsed?.settings && Array.isArray(parsed?.panels) && parsed.panels.length > 0) return parsed;
+      if (parsed?.settings || parsed?.segments || (Array.isArray(parsed?.panels) && parsed.panels.length > 0)) {
+        return parsed;
+      }
     }
-  } catch { /* ignore invalid local draft */ }
+  } catch { /* ignore */ }
   const defaultData = getProjectDefaultLayout(projectId);
   if (defaultData) return defaultData as any;
   return null;
+}
+
+interface HistoryEntry {
+  segments: FieldSegment[];
+  obstacles: Obstacle[];
+  walkways: Walkway[];
 }
 
 export default function PVLayout({
@@ -185,167 +286,310 @@ export default function PVLayout({
   projectType?: SystemType | null;
 }) {
   const saved = useMemo(() => loadSaved(userId, projectId), [userId, projectId]);
+  const isId = lang === "id";
+
   const [settings, setSettings] = useState({
     ...defaults,
     system: projectType ?? defaults.system,
     ...(saved?.settings ?? {})
   });
-  const [panels, setPanels] = useState<Panel[]>(saved?.panels ?? []);
+
+  // Multi-segment state
+  const initialSegments = useMemo<FieldSegment[]>(() => {
+    if (saved?.segments && Array.isArray(saved.segments) && saved.segments.length > 0) {
+      return saved.segments;
+    }
+    // If legacy panels exist without segments, create default Segment A
+    if (saved?.panels && Array.isArray(saved.panels) && saved.panels.length > 0) {
+      return [{
+        id: "seg-a",
+        name: "Segment A",
+        color: "#3b82f6",
+        polygon: saved?.site?.polygonCorners ?? [
+          { x: 0, y: 0 },
+          { x: saved.settings?.areaWidth ?? defaults.areaWidth, y: 0 },
+          { x: saved.settings?.areaWidth ?? defaults.areaWidth, y: saved.settings?.areaHeight ?? defaults.areaHeight },
+          { x: 0, y: saved.settings?.areaHeight ?? defaults.areaHeight },
+        ],
+        orientation: (saved.settings?.orientation ?? defaults.orientation) as "landscape" | "portrait",
+        tilt: saved.settings?.tilt ?? defaults.tilt,
+        azimuth: saved.settings?.azimuth ?? 0,
+        gap: saved.settings?.gap ?? defaults.gap,
+        setback: saved.settings?.setback ?? defaults.setback,
+        moduleWatts: saved.settings?.panelWatts ?? saved.settings?.watts ?? defaults.watts,
+        moduleWidth: saved.settings?.panelWidth ?? saved.settings?.moduleWidth ?? defaults.moduleWidth,
+        moduleHeight: saved.settings?.panelHeight ?? saved.settings?.moduleHeight ?? defaults.moduleHeight,
+        panels: saved.panels,
+        visible: true,
+      }];
+    }
+    // Default 3 segments if fresh Mas Silueta project
+    if (projectId === "proj-mas-silueta-224kwp") {
+      const defaultLayout = getProjectDefaultLayout(projectId) as any;
+      if (defaultLayout?.segments) return defaultLayout.segments;
+    }
+    // Standard fresh single segment
+    return [{
+      id: "seg-a",
+      name: "Segment A",
+      color: "#3b82f6",
+      polygon: [
+        { x: 2000, y: 2000 },
+        { x: (settings.areaWidth || defaults.areaWidth) - 2000, y: 2000 },
+        { x: (settings.areaWidth || defaults.areaWidth) - 2000, y: (settings.areaHeight || defaults.areaHeight) - 2000 },
+        { x: 2000, y: (settings.areaHeight || defaults.areaHeight) - 2000 },
+      ],
+      orientation: "landscape",
+      tilt: 10,
+      azimuth: 0,
+      gap: 20,
+      setback: 300,
+      moduleWatts: 580,
+      moduleWidth: 2278,
+      moduleHeight: 1134,
+      panels: [],
+      visible: true,
+    }];
+  }, [saved, projectId, settings.areaWidth, settings.areaHeight]);
+
+  const [segments, setSegments] = useState<FieldSegment[]>(initialSegments);
+  const [activeSegmentId, setActiveSegmentId] = useState<string>(initialSegments[0]?.id || "seg-a");
+  const [walkways, setWalkways] = useState<Walkway[]>(saved?.walkways ?? []);
   const [obstacles, setObstacles] = useState<Obstacle[]>(saved?.obstacles ?? []);
   const [backgroundImage, setBackgroundImage] = useState<string>(saved?.backgroundImage ?? "");
-  const [backgroundOpacity, setBackgroundOpacity] = useState<number>(saved?.backgroundOpacity ?? 0.8);
-  const [site, setSite] = useState<Site | null>(saved?.site ?? null);
+  const [backgroundOpacity, setBackgroundOpacity] = useState<number>(saved?.backgroundOpacity ?? 0.85);
+  const [site, setSite] = useState<Site | null>(saved?.site ?? {
+    coordinates: { lat: -6.9616, lng: 110.3333 },
+    address: projectName || "PT Mas Silueta Indonesia, Jawa Tengah",
+    polygonCorners: [
+      { x: 0, y: 0 },
+      { x: 65000, y: 0 },
+      { x: 65000, y: 34000 },
+      { x: 0, y: 34000 },
+    ],
+  });
+
+  // UI state
+  const [activeStep, setActiveStep] = useState<number>(2); // 1: Site GIS, 2: Mechanical, 3: Keepouts, 4: Electrical, 5: Advanced
+  const [activeLeftTab, setActiveLeftTab] = useState<"segment" | "module">("segment");
+  const [toolMode, setToolMode] = useState<"select" | "pan" | "polygon" | "rectangle" | "keepout" | "walkway" | "autoarray">("select");
+  const [isMapsModalOpen, setIsMapsModalOpen] = useState(false);
+  const [notice, setNotice] = useState("");
   const imageInputRef = useRef<HTMLInputElement>(null);
 
-  // Multi-selection state
+  // Layers Visibility
+  const [layers, setLayers] = useState<LayerState>({
+    siteBoundary: true,
+    fieldSegments: true,
+    pvModules: true,
+    keepouts: true,
+    walkway: true,
+    roofBuilding: true,
+    satellite: true,
+  });
+
+  // Selection & drag state
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [selectedObstacleId, setSelectedObstacleId] = useState<number | null>(null);
-
-  // Dragging state
   const [draggingObstacleId, setDraggingObstacleId] = useState<number | null>(null);
   const [draggingId, setDraggingId] = useState<number | null>(null);
-  const dragStartMouseRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
-  const dragStartPositionsRef = useRef<Map<number, { x: number; y: number }>>(new Map());
   const [hasMovedDuringDrag, setHasMovedDuringDrag] = useState(false);
+  const [marquee, setMarquee] = useState<{ startX: number; startY: number; currentX: number; currentY: number } | null>(null);
 
-  // Zoom & Pan state
+  // Viewport Pan & Zoom
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
-  const [toolMode, setToolMode] = useState<"select" | "pan">("select");
   const isPanningRef = useRef(false);
-  const panStartRef = useRef<{ clientX: number; clientY: number; startPanX: number; startPanY: number }>({ clientX: 0, clientY: 0, startPanX: 0, startPanY: 0 });
+  const panStartRef = useRef({ x: 0, y: 0 });
   const isSpacePressedRef = useRef(false);
+  const svgRef = useRef<SVGSVGElement>(null);
 
-  // Marquee selection state
-  const [marquee, setMarquee] = useState<{ startX: number; startY: number; currentX: number; currentY: number } | null>(null);
-  const marqueeStartRef = useRef<{ x: number; y: number } | null>(null);
-  const isMarqueeDraggingRef = useRef(false);
-  const [showZoomHint, setShowZoomHint] = useState(false);
-  const zoomHintTimeoutRef = useRef<number | null>(null);
-
-  const [notice, setNotice] = useState("");
-  const [isMapsModalOpen, setIsMapsModalOpen] = useState(false);
-  const id = lang === "id";
-
-  // History stack for Undo / Redo (HelioScope / PVsyst CAD standard)
-  type HistoryEntry = { panels: Panel[]; obstacles: Obstacle[] };
+  // History for Undo/Redo
   const [history, setHistory] = useState<HistoryEntry[]>([{
-    panels: saved?.panels ?? [],
-    obstacles: saved?.obstacles ?? []
+    segments: initialSegments,
+    obstacles: saved?.obstacles ?? [],
+    walkways: saved?.walkways ?? [],
   }]);
   const [historyIndex, setHistoryIndex] = useState(0);
 
-  function pushHistory(newPanels: Panel[], newObstacles: Obstacle[] = obstacles) {
-    setHistory(prev => {
-      const trimmed = prev.slice(0, historyIndex + 1);
-      if (trimmed.length >= 50) trimmed.shift();
-      return [...trimmed, { panels: newPanels, obstacles: newObstacles }];
-    });
-    setHistoryIndex(prev => Math.min(49, prev + 1));
-  }
+  const activeSegment = useMemo(() => {
+    return segments.find(s => s.id === activeSegmentId) || segments[0] || null;
+  }, [segments, activeSegmentId]);
 
-  function handleUndo() {
+  // Flattened panels for backwards compatibility & 3D Twin sync
+  const allPanels = useMemo<Panel[]>(() => {
+    return segments.filter(s => s.visible).flatMap(s => s.panels);
+  }, [segments]);
+
+  // Aggregate Key Metrics
+  const totalModul = allPanels.length;
+  const totalCapacityKwp = useMemo(() => {
+    return segments.filter(s => s.visible).reduce((sum, s) => {
+      return sum + (s.panels.length * (s.moduleWatts || 580)) / 1000;
+    }, 0);
+  }, [segments]);
+
+  const totalModuleArea = useMemo(() => {
+    return segments.filter(s => s.visible).reduce((sum, s) => {
+      const areaPerMod = ((s.moduleWidth || 2278) * (s.moduleHeight || 1134)) / 1e6;
+      return sum + s.panels.length * areaPerMod;
+    }, 0);
+  }, [segments]);
+
+  const totalRoofArea = useMemo(() => {
+    return Math.max(1, (settings.areaWidth * settings.areaHeight) / 1e6);
+  }, [settings.areaWidth, settings.areaHeight]);
+
+  const areaUtilizationPct = useMemo(() => {
+    return Math.min(100, (totalModuleArea / totalRoofArea) * 100);
+  }, [totalModuleArea, totalRoofArea]);
+
+  // Auto-save layout
+  const saveDraft = (
+    nextSegments: FieldSegment[] = segments,
+    nextObstacles: Obstacle[] = obstacles,
+    nextWalkways: Walkway[] = walkways,
+    nextSite: Site | null = site,
+    nextBg: string = backgroundImage,
+    nextBgOpacity: number = backgroundOpacity
+  ) => {
+    const flattened = nextSegments.filter(s => s.visible).flatMap(s => s.panels);
+    const payload = {
+      projectId,
+      settings,
+      segments: nextSegments,
+      walkways: nextWalkways,
+      obstacles: nextObstacles,
+      panels: flattened,
+      site: nextSite,
+      backgroundImage: nextBg,
+      backgroundOpacity: nextBgOpacity,
+      layers,
+    };
+    try {
+      localStorage.setItem(storageKey(userId, projectId), JSON.stringify(payload));
+    } catch { /* ignore storage error */ }
+    if (projectId) {
+      api.saveProjectLayout(projectId, payload);
+    }
+  };
+
+  const pushHistory = (nextSegs: FieldSegment[], nextObs: Obstacle[], nextWalks: Walkway[]) => {
+    const nextEntry: HistoryEntry = { segments: nextSegs, obstacles: nextObs, walkways: nextWalks };
+    const truncated = history.slice(0, historyIndex + 1);
+    const updated = [...truncated, nextEntry].slice(-30);
+    setHistory(updated);
+    setHistoryIndex(updated.length - 1);
+  };
+
+  const handleUndo = () => {
     if (historyIndex > 0) {
-      const prevIdx = historyIndex - 1;
-      const prev = history[prevIdx];
-      setHistoryIndex(prevIdx);
-      setPanels(prev.panels);
-      setObstacles(prev.obstacles);
-      setSelectedIds(new Set());
-      saveDraft(prev.panels, settings, prev.obstacles);
-      setNotice(id ? "↩ Undo: Aksi sebelumnya dibatalkan." : "↩ Undo: Action undone.");
+      const target = history[historyIndex - 1];
+      setSegments(target.segments);
+      setObstacles(target.obstacles);
+      setWalkways(target.walkways);
+      setHistoryIndex(historyIndex - 1);
+      saveDraft(target.segments, target.obstacles, target.walkways);
     }
-  }
+  };
 
-  function handleRedo() {
+  const handleRedo = () => {
     if (historyIndex < history.length - 1) {
-      const nextIdx = historyIndex + 1;
-      const next = history[nextIdx];
-      setHistoryIndex(nextIdx);
-      setPanels(next.panels);
-      setObstacles(next.obstacles);
-      setSelectedIds(new Set());
-      saveDraft(next.panels, settings, next.obstacles);
-      setNotice(id ? "↪ Redo: Aksi diterapkan kembali." : "↪ Redo: Action redone.");
+      const target = history[historyIndex + 1];
+      setSegments(target.segments);
+      setObstacles(target.obstacles);
+      setWalkways(target.walkways);
+      setHistoryIndex(historyIndex + 1);
+      saveDraft(target.segments, target.obstacles, target.walkways);
     }
-  }
-
-  function handleResetView() {
-    setZoom(1);
-    setPan({ x: 0, y: 0 });
-    setNotice(id ? "🔍 Tampilan kanvas di-reset ke 100%." : "🔍 Canvas view reset to 100%.");
-  }
-
-  useEffect(() => {
-    if (!projectId) return;
-    const targetId = projectId;
-    let isCancelled = false;
-    async function loadRemoteLayout() {
-      const remote = await api.fetchProjectLayout(targetId);
-      if (remote && !isCancelled) {
-        if (remote.settings) setSettings(prev => ({ ...prev, ...remote.settings }));
-        if (Array.isArray(remote.panels) && remote.panels.length > 0) {
-          setPanels(remote.panels);
-          setHistory([{ panels: remote.panels, obstacles: remote.obstacles ?? [] }]);
-          setHistoryIndex(0);
-        }
-        if (Array.isArray(remote.obstacles)) setObstacles(remote.obstacles);
-        if (remote.site) setSite(remote.site);
-        if (remote.backgroundImage) setBackgroundImage(remote.backgroundImage);
-        if (remote.backgroundOpacity !== undefined) setBackgroundOpacity(remote.backgroundOpacity);
-      }
-    }
-    loadRemoteLayout();
-    return () => { isCancelled = true; };
-  }, [projectId]);
-
-  const copy = id ? {
-    eyebrow: "EDITOR LAYOUT PV", title: "PV Layout 2D", subtitle: "Generate susunan modul otomatis, lalu rapikan secara manual di kanvas.",
-    system: "Jenis sistem", roof: "Rooftop / Atap", ground: "Ground-mounted / Lahan", area: "Batas area (mm)", width: "Lebar", height: "Panjang", module: "Spesifikasi modul", mw: "Lebar modul", mh: "Tinggi modul", gap: "Jarak antarmodul", watts: "Daya modul (Wp)", layout: "Susunan", rows: "Baris", cols: "Kolom", tilt: "Kemiringan (°)", orientation: "Orientasi modul", landscape: "Landscape", portrait: "Portrait", generate: "Grid Teratur", fillArea: "Penuhi Atap (Max Pack)", reset: "Reset layout", selected: "Panel dipilih", delete: "Hapus panel", hint: "Klik area kosong untuk menambah panel. Seret panel atau obstacle untuk memindahkannya.", capacity: "Kapasitas DC", count: "Jumlah modul", used: "Area modul (perkiraan)", fit: "Status batas area", fits: "Layout masuk batas area", overflow: "Sebagian modul di luar batas", export: "Ekspor CSV", exportDxf: "Ekspor DXF", exportedDxf: "DXF layout diunduh.", saved: "Draft tersimpan di browser", empty: "Belum ada panel. Klik Penuhi Atap atau Grid Teratur untuk mulai.", canvas: "Kanvas desain", snap: "Koordinat dalam mm", confirmReset: "Layout direset.", generated: "Layout otomatis dibuat.", exported: "CSV layout diunduh.", manual: "Panel ditambahkan.", obstacles: "Obstacle / area terlarang", satellite: "Citra lokasi / satelit", uploadImage: "Unggah citra", removeImage: "Hapus citra", imageOpacity: "Transparansi citra", imageHelp: "Unggah screenshot Google Earth atau citra lokasi. Atur lebar/panjang area agar sesuai ukuran bangunan yang diketahui.", setback: "Jarak bebas tepi (mm)", obstacleWidth: "Lebar obstacle", obstacleHeight: "Panjang obstacle", addObstacle: "Tambah obstacle tengah", deleteObstacle: "Hapus obstacle dipilih", obstacleAdded: "Obstacle ditambahkan.", obstacleDeleted: "Obstacle dihapus.", obstacleOverlap: "Panel tidak boleh menutupi obstacle atau setback."
-  } : {
-    eyebrow: "PV LAYOUT EDITOR", title: "PV Layout 2D", subtitle: "Generate a module arrangement, then refine it manually on the canvas.",
-    system: "System type", roof: "Rooftop", ground: "Ground-mounted", area: "Site boundary (mm)", width: "Width", height: "Length", module: "Module specification", mw: "Module width", mh: "Module height", gap: "Module gap", watts: "Module power (Wp)", layout: "Array arrangement", rows: "Rows", cols: "Columns", tilt: "Tilt (°)", orientation: "Module orientation", landscape: "Landscape", portrait: "Portrait", generate: "Generate Grid", fillArea: "Fill Area (Max Pack)", reset: "Reset layout", selected: "Selected panel", delete: "Delete panel", hint: "Click empty space to add a panel. Drag panels or obstacles to move them.", capacity: "DC capacity", count: "Module count", used: "Approx. module area", fit: "Boundary check", fits: "Layout fits boundary", overflow: "Some modules are outside boundary", export: "Export CSV", exportDxf: "Export DXF", exportedDxf: "DXF layout downloaded.", saved: "Draft saved in this browser", empty: "No panels yet. Select Fill Area or Generate Grid to start.", canvas: "Design canvas", snap: "Coordinates in mm", confirmReset: "Layout reset.", generated: "Automatic layout generated.", exported: "Layout CSV downloaded.", manual: "Panel added.", obstacles: "Obstacles / exclusion zones", satellite: "Site / satellite image", uploadImage: "Upload image", removeImage: "Remove image", imageOpacity: "Image opacity", imageHelp: "Upload a Google Earth screenshot or site image. Set area width/length to match a known building dimension.", setback: "Edge setback (mm)", obstacleWidth: "Obstacle width", obstacleHeight: "Obstacle length", addObstacle: "Add centered obstacle", deleteObstacle: "Delete selected obstacle", obstacleAdded: "Obstacle added.", obstacleDeleted: "Obstacle deleted.", obstacleOverlap: "Panels cannot overlap obstacles or the edge setback."
   };
 
-  const moduleW = settings.orientation === "landscape" ? settings.moduleWidth : settings.moduleHeight;
-  const moduleH = settings.orientation === "landscape" ? settings.moduleHeight : settings.moduleWidth;
-  const capacity = (panels.length * settings.watts) / 1000;
-  const moduleArea = (panels.reduce((sum, p) => sum + p.w * p.h, 0)) / 1_000_000;
-
-  // Active polygon corners in mm: use custom polygon if available (e.g. Trapezoid from Google Maps Satellite Scanner)
-  const activeCorners = useMemo<Array<{ x: number; y: number }>>(() => {
-    if (site?.polygonCorners && Array.isArray(site.polygonCorners) && site.polygonCorners.length >= 3) {
-      return site.polygonCorners;
-    }
-    return [
-      { x: 0, y: 0 },
-      { x: settings.areaWidth, y: 0 },
-      { x: settings.areaWidth, y: settings.areaHeight },
-      { x: 0, y: settings.areaHeight },
-    ];
-  }, [site?.polygonCorners, settings.areaWidth, settings.areaHeight]);
-
-  const setbackPolygon = useMemo<Array<{ x: number; y: number }>>(() => {
-    return computeInsetPolygon(activeCorners, settings.setback);
-  }, [activeCorners, settings.setback]);
-
-  const isCustomPolygon = Boolean(site?.polygonCorners && Array.isArray(site.polygonCorners) && site.polygonCorners.length >= 3);
-  const selectedObstacle = obstacles.find(o => o.id === selectedObstacleId) ?? null;
-
-  const withinSetback = (p: Pick<Panel, "x" | "y" | "w" | "h">) => {
-    const boundary = setbackPolygon.length >= 3 ? setbackPolygon : activeCorners;
-    return isPanelInsidePolygon(p, boundary);
+  // --- Segment Management ---
+  const handleAddSegment = () => {
+    const letter = String.fromCharCode(65 + segments.length);
+    const color = SEGMENT_PALETTE[segments.length % SEGMENT_PALETTE.length];
+    const newId = `seg-${Date.now()}`;
+    const offset = (segments.length * 8000) % Math.max(10000, settings.areaHeight - 10000);
+    const newSeg: FieldSegment = {
+      id: newId,
+      name: `Segment ${letter}`,
+      color,
+      polygon: [
+        { x: 3000, y: 2000 + offset },
+        { x: Math.max(10000, settings.areaWidth - 3000), y: 2000 + offset },
+        { x: Math.max(10000, settings.areaWidth - 3000), y: Math.min(settings.areaHeight - 2000, 8000 + offset) },
+        { x: 3000, y: Math.min(settings.areaHeight - 2000, 8000 + offset) },
+      ],
+      orientation: "landscape",
+      tilt: 10,
+      azimuth: 0,
+      gap: 20,
+      setback: 300,
+      moduleWatts: 580,
+      moduleWidth: 2278,
+      moduleHeight: 1134,
+      panels: [],
+      visible: true,
+    };
+    const next = [...segments, newSeg];
+    setSegments(next);
+    setActiveSegmentId(newId);
+    pushHistory(next, obstacles, walkways);
+    saveDraft(next);
+    setNotice(isId ? `Segmen baru (${newSeg.name}) berhasil ditambahkan.` : `New segment (${newSeg.name}) added.`);
   };
 
-  const intersectsObstacle = (p: Pick<Panel, "x" | "y" | "w" | "h">, o: Obstacle) =>
-    p.x < o.x + o.w && p.x + p.w > o.x && p.y < o.y + o.h && p.y + p.h > o.y;
+  const handleUpdateActiveSegment = (key: keyof FieldSegment, value: any) => {
+    if (!activeSegment) return;
+    const next = segments.map(s => s.id === activeSegment.id ? { ...s, [key]: value } : s);
+    setSegments(next);
+    saveDraft(next);
+  };
 
-  const isPlacementValid = (p: Pick<Panel, "x" | "y" | "w" | "h">, list: Obstacle[] = obstacles) =>
-    withinSetback(p) && !list.some(o => intersectsObstacle(p, o));
+  const handleDeleteSegment = (segId: string) => {
+    if (segments.length <= 1) {
+      setNotice(isId ? "Minimal harus ada 1 segmen field." : "At least one segment must exist.");
+      return;
+    }
+    const next = segments.filter(s => s.id !== segId);
+    setSegments(next);
+    if (activeSegmentId === segId) {
+      setActiveSegmentId(next[0]?.id || "");
+    }
+    pushHistory(next, obstacles, walkways);
+    saveDraft(next);
+    setNotice(isId ? "Segmen berhasil dihapus." : "Segment deleted.");
+  };
 
-  const overflow = panels.some(p => !isPlacementValid(p, obstacles));
+  const handleToggleSegmentVisibility = (segId: string) => {
+    const next = segments.map(s => s.id === segId ? { ...s, visible: !s.visible } : s);
+    setSegments(next);
+    saveDraft(next);
+  };
 
-  function handleGoogleMapsApply(data: {
+  const handleGenerateSegmentPanels = (segId: string) => {
+    const target = segments.find(s => s.id === segId);
+    if (!target) return;
+    const generated = generatePanelsForSegment(target, obstacles, walkways);
+    const next = segments.map(s => s.id === segId ? { ...s, panels: generated } : s);
+    setSegments(next);
+    pushHistory(next, obstacles, walkways);
+    saveDraft(next);
+    setNotice(isId ? `⚡ ${generated.length} modul berhasil digenerate untuk ${target.name}.` : `⚡ ${generated.length} modules generated for ${target.name}.`);
+  };
+
+  const handleClearSegmentPanels = (segId: string) => {
+    const target = segments.find(s => s.id === segId);
+    if (!target) return;
+    const next = segments.map(s => s.id === segId ? { ...s, panels: [] } : s);
+    setSegments(next);
+    pushHistory(next, obstacles, walkways);
+    saveDraft(next);
+    setNotice(isId ? `Panel pada ${target.name} telah dikosongkan.` : `Panels in ${target.name} cleared.`);
+  };
+
+  // Google Maps scanner callback
+  const handleGoogleMapsApply = (data: {
     widthMm: number;
     heightMm: number;
     imageSrc: string;
@@ -357,7 +601,7 @@ export default function PVLayout({
     pitchDegrees?: number;
     azimuthDegrees?: number;
     googleSolarData?: any;
-  }) {
+  }) => {
     const nextSettings = { ...settings, areaWidth: data.widthMm, areaHeight: data.heightMm };
     const nextSite: Site = {
       coordinates: data.coordinates,
@@ -369,1431 +613,1302 @@ export default function PVLayout({
       azimuthDegrees: data.azimuthDegrees,
       googleSolarData: data.googleSolarData,
     };
-    setSite(nextSite);
     setSettings(nextSettings);
+    setSite(nextSite);
     if (data.imageSrc) {
       setBackgroundImage(data.imageSrc);
     }
-    const safePanels = panels.filter(p => isPlacementValid(p, obstacles));
-    setPanels(safePanels);
-    pushHistory(safePanels, obstacles);
-    saveDraft(safePanels, nextSettings, obstacles, nextSite, data.imageSrc || backgroundImage);
-    const solarInfo = data.pitchDegrees !== undefined ? ` [Google Solar Pitch: ${data.pitchDegrees}°, Azimuth: ${data.azimuthDegrees}°]` : "";
-    const rotInfo = data.rotationDeg ? ` [Rotasi: ${data.rotationDeg}°]` : "";
-    const polyInfo = data.polygonCornersMm && data.polygonCornersMm.length >= 3 ? " [Bentuk Trapesium/Poligon Kustom Diterapkan]" : "";
-    setNotice(id ? `Dimensi & batas area diperbarui: ${data.widthMm.toLocaleString()} × ${data.heightMm.toLocaleString()} mm.${polyInfo}${rotInfo}${solarInfo}` : `Area dimensions & boundary updated: ${data.widthMm.toLocaleString()} × ${data.heightMm.toLocaleString()} mm.${polyInfo}${rotInfo}${solarInfo}`);
-  }
+    saveDraft(segments, obstacles, walkways, nextSite, data.imageSrc);
+    setNotice(isId ? `Peta satelit Google & batas tapak (${data.widthMm / 1000}m × ${data.heightMm / 1000}m) berhasil diterapkan!` : `Google satellite map applied!`);
+  };
 
-  function handleBackgroundUpload(file?: File) {
-    if (!file) return;
-    if (!file.type.startsWith("image/")) { setNotice(id ? "Pilih file gambar yang valid." : "Choose a valid image file."); return; }
-    const reader = new FileReader();
-    reader.onload = () => {
-      const image = new Image();
-      image.onload = () => {
-        const maxSide = 1600;
-        const ratio = Math.min(1, maxSide / Math.max(image.width, image.height));
-        const canvas = document.createElement("canvas");
-        canvas.width = Math.max(1, Math.round(image.width * ratio));
-        canvas.height = Math.max(1, Math.round(image.height * ratio));
-        const ctx = canvas.getContext("2d");
-        if (!ctx) { setNotice(id ? "Gagal memproses gambar." : "Could not process image."); return; }
-        ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
-        const dataUrl = canvas.toDataURL("image/jpeg", 0.78);
-        setBackgroundImage(dataUrl);
-        try {
-          localStorage.setItem(storageKey(userId, projectId), JSON.stringify({ projectId, settings, panels, obstacles, site, backgroundImage: dataUrl, backgroundOpacity }));
-          setNotice(id ? "Citra lokasi ditambahkan dan draft disimpan." : "Site image added and draft saved.");
-        } catch {
-          setNotice(id ? "Citra ditambahkan, tetapi terlalu besar untuk disimpan di browser. Gunakan gambar lebih kecil." : "Image added, but too large for browser storage. Try a smaller image.");
-        }
-      };
-      image.onerror = () => setNotice(id ? "Gambar tidak dapat dibaca." : "Could not read the image.");
-      image.src = String(reader.result || "");
-    };
-    reader.readAsDataURL(file);
-  }
-
-  function removeBackgroundImage() {
-    setBackgroundImage("");
-    try { localStorage.setItem(storageKey(userId, projectId), JSON.stringify({ projectId, settings, panels, obstacles, site, backgroundImage: "", backgroundOpacity })); } catch { /* ignore storage errors */ }
-    setNotice(id ? "Citra lokasi dihapus." : "Site image removed.");
-  }
-
-  function update<K extends keyof typeof defaults>(key: K, value: (typeof defaults)[K]) {
-    const nextSettings = { ...settings, [key]: value };
-    setSettings(nextSettings);
-    saveDraft(panels, nextSettings, obstacles);
-  }
-
-  function saveDraft(
-    nextPanels = panels,
-    nextSettings = settings,
-    nextObstacles = obstacles,
-    nextSite = site,
-    nextBgImage = backgroundImage,
-    nextBgOpacity = backgroundOpacity
-  ) {
-    const payload = {
-      projectId,
-      settings: nextSettings,
-      panels: nextPanels,
-      obstacles: nextObstacles,
-      site: nextSite,
-      backgroundImage: nextBgImage,
-      backgroundOpacity: nextBgOpacity,
-    };
-    try {
-      localStorage.setItem(storageKey(userId, projectId), JSON.stringify(payload));
-    } catch { /* image or draft may exceed browser storage quota */ }
-
-    if (projectId) {
-      api.saveProjectLayout(projectId, payload);
-    }
-  }
-
-  // --- Grid Generation ---
-  function generate() {
-    const rows = Math.max(1, Math.min(100, Math.floor(Number(settings.rows) || 1)));
-    const cols = Math.max(1, Math.min(100, Math.floor(Number(settings.cols) || 1)));
-    const totalW = cols * moduleW + (cols - 1) * settings.gap;
-    const totalH = rows * moduleH + (rows - 1) * settings.gap;
-    const startX = Math.max(0, (settings.areaWidth - totalW) / 2);
-    const startY = Math.max(0, (settings.areaHeight - totalH) / 2);
-    const next: Panel[] = [];
-    for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
-      const candidate = {
-        id: Date.now() + r * cols + c,
-        x: startX + c * (moduleW + settings.gap),
-        y: startY + r * (moduleH + settings.gap),
-        w: moduleW,
-        h: moduleH
-      };
-      if (isPlacementValid(candidate)) next.push(candidate);
-    }
-    setPanels(next);
-    setSelectedIds(new Set());
-    pushHistory(next, obstacles);
-    saveDraft(next);
-    setNotice(copy.generated);
-  }
-
-  // --- HelioScope Max Pack / Auto-Fill Boundary ---
-  function autoFillArea() {
-    const boundary = setbackPolygon.length >= 3 ? setbackPolygon : activeCorners;
-    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-    for (const pt of boundary) {
-      if (pt.x < minX) minX = pt.x;
-      if (pt.x > maxX) maxX = pt.x;
-      if (pt.y < minY) minY = pt.y;
-      if (pt.y > maxY) maxY = pt.y;
-    }
-    minX = Math.max(0, minX);
-    minY = Math.max(0, minY);
-    maxX = Math.min(settings.areaWidth, maxX);
-    maxY = Math.min(settings.areaHeight, maxY);
-
-    const stepX = moduleW + settings.gap;
-    const stepY = moduleH + settings.gap;
-
-    const next: Panel[] = [];
-    let idCounter = Date.now();
-
-    for (let y = minY; y <= maxY - moduleH; y += stepY) {
-      for (let x = minX; x <= maxX - moduleW; x += stepX) {
-        const candidate: Panel = { id: ++idCounter, x, y, w: moduleW, h: moduleH };
-        if (isPlacementValid(candidate, obstacles)) {
-          next.push(candidate);
-        }
-      }
-    }
-
-    if (next.length > 0) {
-      setPanels(next);
-      setSelectedIds(new Set());
-      pushHistory(next, obstacles);
-      saveDraft(next);
-      const kwp = (next.length * settings.watts / 1000).toFixed(2);
-      setNotice(id ? `⚡ Penuhi Atap: ${next.length} modul (${kwp} kWp) tersusun optimal.` : `⚡ Auto-Fill: ${next.length} modules (${kwp} kWp) placed.`);
-    } else {
-      setNotice(id ? "Area atap terlalu sempit untuk modul ini." : "Area is too small to fit modules.");
-    }
-  }
-
-  function reset() {
-    setPanels([]);
-    setSelectedIds(new Set());
-    pushHistory([], obstacles);
-    saveDraft([]);
-    setNotice(copy.confirmReset);
-  }
-
-  // --- Obstacle Management ---
-  function addObstacle() {
-    const w = Math.max(100, Math.min(settings.obstacleWidth, settings.areaWidth));
-    const h = Math.max(100, Math.min(settings.obstacleHeight, settings.areaHeight));
-    const next = [
-      ...obstacles,
-      {
-        id: Date.now(),
-        x: Math.max(0, (settings.areaWidth - w) / 2),
-        y: Math.max(0, (settings.areaHeight - h) / 2),
-        w,
-        h,
-        label: `OBS-${String(obstacles.length + 1).padStart(2, "0")}`
-      }
-    ];
-    setObstacles(next);
-    setSelectedObstacleId(next[next.length - 1].id);
-    const safePanels = panels.filter(p => isPlacementValid(p, next));
-    setPanels(safePanels);
-    pushHistory(safePanels, next);
-    saveDraft(safePanels, settings, next);
-    setNotice(copy.obstacleAdded);
-  }
-
-  function deleteSelectedObstacle() {
-    if (selectedObstacleId === null) return;
-    const next = obstacles.filter(o => o.id !== selectedObstacleId);
-    setObstacles(next);
-    setSelectedObstacleId(null);
-    pushHistory(panels, next);
-    saveDraft(panels, settings, next);
-    setNotice(copy.obstacleDeleted);
-  }
-
-  // --- Multi-Select & Bulk Operations ---
-  function handleSelectAll() {
-    setSelectedIds(new Set(panels.map(p => p.id)));
-    setSelectedObstacleId(null);
-    setNotice(id ? `${panels.length} panel dipilih.` : `${panels.length} panels selected.`);
-  }
-
-  function handleClearSelection() {
-    setSelectedIds(new Set());
-    setSelectedObstacleId(null);
-  }
-
-  function deleteSelectedPanels() {
-    if (selectedIds.size === 0) return;
-    const count = selectedIds.size;
-    const next = panels.filter(p => !selectedIds.has(p.id));
-    setPanels(next);
-    setSelectedIds(new Set());
-    pushHistory(next, obstacles);
-    saveDraft(next);
-    setNotice(id ? `🗑️ ${count} panel dihapus.` : `🗑️ ${count} panels deleted.`);
-  }
-
-  function rotateSelectedPanels() {
-    if (selectedIds.size === 0) return;
-    let rotatedCount = 0;
-    const next = panels.map(p => {
-      if (!selectedIds.has(p.id)) return p;
-      const candidate = { ...p, w: p.h, h: p.w };
-      if (isPlacementValid(candidate, obstacles)) {
-        rotatedCount++;
-        return candidate;
-      }
-      return p;
-    });
-    if (rotatedCount > 0) {
-      setPanels(next);
-      pushHistory(next, obstacles);
-      saveDraft(next);
-      setNotice(id ? `🔄 ${rotatedCount} panel diputar (Landscape ⇄ Portrait).` : `🔄 ${rotatedCount} panels rotated.`);
-    } else {
-      setNotice(id ? "Panel yang dipilih tidak muat jika diputar di posisinya." : "Selected panels do not fit when rotated.");
-    }
-  }
-
-  function duplicateSelectedPanels() {
-    if (selectedIds.size === 0) return;
-    const selectedList = panels.filter(p => selectedIds.has(p.id));
-    const newPanels: Panel[] = [];
-    const offset = moduleW + settings.gap;
-    const offsetY = moduleH + settings.gap;
-
-    let baseId = Date.now();
-    for (const p of selectedList) {
-      let candidate = { ...p, id: ++baseId, x: p.x + offset };
-      if (!isPlacementValid(candidate, obstacles)) {
-        candidate = { ...p, id: ++baseId, y: p.y + offsetY };
-      }
-      if (isPlacementValid(candidate, obstacles)) {
-        newPanels.push(candidate);
-      }
-    }
-
-    if (newPanels.length > 0) {
-      const next = [...panels, ...newPanels];
-      setPanels(next);
-      setSelectedIds(new Set(newPanels.map(p => p.id)));
-      pushHistory(next, obstacles);
-      saveDraft(next);
-      setNotice(id ? `📋 ${newPanels.length} panel diduplikat.` : `📋 ${newPanels.length} panels duplicated.`);
-    } else {
-      setNotice(id ? "Ruang atap tidak cukup untuk menduplikat panel yang dipilih." : "Not enough space to duplicate selected panels.");
-    }
-  }
-
-  // Keyboard Shortcuts (Undo, Redo, Delete, Select All, Zoom, Pan, Escape)
+  // Keyboard listeners (Space to pan, Ctrl+Z, Ctrl+Y, Ctrl+A, Delete)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      const tag = (e.target as HTMLElement)?.tagName?.toLowerCase();
-      if (tag === "input" || tag === "textarea" || tag === "select") return;
-
-      if (e.code === "Space") {
+      const activeEl = document.activeElement;
+      if (activeEl && (activeEl.tagName === "INPUT" || activeEl.tagName === "SELECT" || activeEl.tagName === "TEXTAREA")) return;
+      if (e.code === "Space" && !e.repeat) {
         isSpacePressedRef.current = true;
       }
-
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") {
         e.preventDefault();
-        if (e.shiftKey) {
-          handleRedo();
-        } else {
-          handleUndo();
-        }
-      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "y") {
+        if (e.shiftKey) handleRedo();
+        else handleUndo();
+      }
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "y") {
         e.preventDefault();
         handleRedo();
-      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "a") {
+      }
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "a") {
         e.preventDefault();
-        handleSelectAll();
-      } else if (e.key === "Delete" || e.key === "Backspace") {
-        if (selectedObstacleId !== null) {
+        setSelectedIds(new Set(allPanels.map(p => p.id)));
+      }
+      if (e.key === "Delete" || e.key === "Backspace") {
+        if (selectedIds.size > 0) {
           e.preventDefault();
-          deleteSelectedObstacle();
-        } else if (selectedIds.size > 0) {
-          e.preventDefault();
-          deleteSelectedPanels();
+          const next = segments.map(s => ({
+            ...s,
+            panels: s.panels.filter(p => !selectedIds.has(p.id))
+          }));
+          setSegments(next);
+          setSelectedIds(new Set());
+          pushHistory(next, obstacles, walkways);
+          saveDraft(next);
         }
-      } else if (e.key === "Escape") {
-        e.preventDefault();
-        handleClearSelection();
-      } else if ((e.ctrlKey || e.metaKey) && (e.key === "=" || e.key === "+")) {
-        e.preventDefault();
-        setZoom(prev => Math.min(3.5, Number((prev + 0.2).toFixed(2))));
-      } else if ((e.ctrlKey || e.metaKey) && (e.key === "-" || e.key === "_")) {
-        e.preventDefault();
-        setZoom(prev => Math.max(0.4, Number((prev - 0.2).toFixed(2))));
-      } else if ((e.ctrlKey || e.metaKey) && e.key === "0") {
-        e.preventDefault();
-        handleResetView();
       }
     };
-
     const handleKeyUp = (e: KeyboardEvent) => {
-      if (e.code === "Space") {
-        isSpacePressedRef.current = false;
-      }
+      if (e.code === "Space") isSpacePressedRef.current = false;
     };
-
     window.addEventListener("keydown", handleKeyDown);
     window.addEventListener("keyup", handleKeyUp);
     return () => {
       window.removeEventListener("keydown", handleKeyDown);
       window.removeEventListener("keyup", handleKeyUp);
     };
-  }, [historyIndex, history, selectedIds, selectedObstacleId, panels, obstacles, settings, zoom]);
+  }, [segments, obstacles, walkways, selectedIds, historyIndex, history]);
 
-  // Coordinate transforms with Zoom and Pan
-  function pointFromEvent(event: React.PointerEvent<SVGElement> | React.MouseEvent<SVGElement>) {
-    const svg = (event.currentTarget as SVGElement).ownerSVGElement || (event.currentTarget as SVGSVGElement);
-    const rect = (svg || event.currentTarget).getBoundingClientRect();
-    const sx = ((event.clientX - rect.left) / rect.width) * 1000;
-    const sy = ((event.clientY - rect.top) / rect.height) * 600;
-    // Invert zoom & pan around center (500, 300)
-    const contentSx = (sx - 500 - pan.x) / zoom + 500;
-    const contentSy = (sy - 300 - pan.y) / zoom + 300;
-    return { x: (contentSx - originX) / scale, y: (contentSy - originY) / scale };
-  }
-
-  const scale = Math.min(840 / Math.max(settings.areaWidth, 1), 430 / Math.max(settings.areaHeight, 1));
-  const originX = (1000 - settings.areaWidth * scale) / 2;
-  const originY = (600 - settings.areaHeight * scale) / 2;
-
-  const svgPolygonPoints = useMemo(() => {
-    return activeCorners.map(p => `${originX + p.x * scale},${originY + p.y * scale}`).join(" ");
-  }, [activeCorners, originX, originY, scale]);
-
-  const svgSetbackPolygonPoints = useMemo(() => {
-    return setbackPolygon.map(p => `${originX + p.x * scale},${originY + p.y * scale}`).join(" ");
-  }, [setbackPolygon, originX, originY, scale]);
-
-  function handleWheel(e: React.WheelEvent<HTMLElement>) {
-    // Only zoom when Ctrl or Cmd key is pressed (Google Maps & Figma CAD standard)
-    if (e.ctrlKey || e.metaKey) {
-      e.preventDefault();
-      const delta = e.deltaY < 0 ? 0.12 : -0.12;
-      setZoom(prev => Math.max(0.4, Math.min(3.5, Number((prev + delta).toFixed(2)))));
-    } else {
-      // Show helpful overlay without trapping page scroll
-      setShowZoomHint(true);
-      if (zoomHintTimeoutRef.current) clearTimeout(zoomHintTimeoutRef.current);
-      zoomHintTimeoutRef.current = window.setTimeout(() => {
-        setShowZoomHint(false);
-      }, 1400);
-      // Let standard page scrolling proceed naturally!
-    }
-  }
-
-  // Pointer interactions
-  function canvasPointerDown(event: React.PointerEvent<SVGSVGElement>) {
-    if ((event.target as Element).closest("[data-panel]")) return;
-    if ((event.target as Element).closest("[data-obstacle]")) return;
-
-    // Pan mode or middle-click or Space held
-    if (event.button === 1 || toolMode === "pan" || isSpacePressedRef.current) {
-      isPanningRef.current = true;
-      panStartRef.current = {
-        clientX: event.clientX,
-        clientY: event.clientY,
-        startPanX: pan.x,
-        startPanY: pan.y
-      };
-      (event.currentTarget as SVGSVGElement).setPointerCapture(event.pointerId);
-      return;
-    }
-
-    // Select mode: start potential marquee or click
-    const p = pointFromEvent(event);
-    marqueeStartRef.current = p;
-    isMarqueeDraggingRef.current = false;
-    setMarquee(null);
-    (event.currentTarget as SVGSVGElement).setPointerCapture(event.pointerId);
-  }
-
-  function handlePanelPointerDown(e: React.PointerEvent<SVGGElement>, panel: Panel) {
-    e.stopPropagation();
-
-    if (toolMode === "pan" || isSpacePressedRef.current) {
-      isPanningRef.current = true;
-      panStartRef.current = {
-        clientX: e.clientX,
-        clientY: e.clientY,
-        startPanX: pan.x,
-        startPanY: pan.y
-      };
-      (e.currentTarget as SVGGElement).ownerSVGElement?.setPointerCapture(e.pointerId);
-      return;
-    }
-
-    const isMulti = e.shiftKey || e.ctrlKey || e.metaKey;
-
-    let currentSelected = selectedIds;
-    if (isMulti) {
-      currentSelected = new Set(selectedIds);
-      if (currentSelected.has(panel.id)) {
-        currentSelected.delete(panel.id);
-      } else {
-        currentSelected.add(panel.id);
-      }
-      setSelectedIds(currentSelected);
-    } else {
-      if (!selectedIds.has(panel.id)) {
-        currentSelected = new Set([panel.id]);
-        setSelectedIds(currentSelected);
-      }
-    }
-
-    setSelectedObstacleId(null);
-    setDraggingId(panel.id);
-    setHasMovedDuringDrag(false);
-
-    const pt = pointFromEvent(e);
-    dragStartMouseRef.current = { x: pt.x, y: pt.y };
-
-    const movingIds = currentSelected.has(panel.id) ? Array.from(currentSelected) : [panel.id];
-    const posMap = new Map<number, { x: number; y: number }>();
-    for (const p of panels) {
-      if (movingIds.includes(p.id)) {
-        posMap.set(p.id, { x: p.x, y: p.y });
-      }
-    }
-    dragStartPositionsRef.current = posMap;
-    (e.currentTarget as SVGGElement).ownerSVGElement?.setPointerCapture(e.pointerId);
-  }
-
-  function canvasPointerMove(event: React.PointerEvent<SVGSVGElement>) {
-    if (isPanningRef.current) {
-      const dx = event.clientX - panStartRef.current.clientX;
-      const dy = event.clientY - panStartRef.current.clientY;
-      const rect = event.currentTarget.getBoundingClientRect();
-      const scaleX = 1000 / Math.max(rect.width, 1);
-      const scaleY = 600 / Math.max(rect.height, 1);
-      setPan({
-        x: Math.round(panStartRef.current.startPanX + dx * scaleX),
-        y: Math.round(panStartRef.current.startPanY + dy * scaleY)
-      });
-      return;
-    }
-
-    if (draggingObstacleId !== null) {
-      const p = pointFromEvent(event);
-      const moving = obstacles.find(o => o.id === draggingObstacleId);
-      if (!moving) return;
-      const candidate = {
-        ...moving,
-        x: Math.max(0, Math.min(settings.areaWidth - moving.w, Math.round((p.x - moving.w / 2) / 50) * 50)),
-        y: Math.max(0, Math.min(settings.areaHeight - moving.h, Math.round((p.y - moving.h / 2) / 50) * 50)),
-      };
-      const nextObstacles = obstacles.map(o => o.id === draggingObstacleId ? candidate : o);
-      const nextPanels = panels.filter(panel => isPlacementValid(panel, nextObstacles));
-      setObstacles(nextObstacles);
-      setPanels(nextPanels);
-      setHasMovedDuringDrag(true);
-      return;
-    }
-
-    if (draggingId !== null) {
-      const p = pointFromEvent(event);
-      const dx = Math.round((p.x - dragStartMouseRef.current.x) / 50) * 50;
-      const dy = Math.round((p.y - dragStartMouseRef.current.y) / 50) * 50;
-      if (dx === 0 && dy === 0) return;
-
-      const posMap = dragStartPositionsRef.current;
-      if (!posMap || posMap.size === 0) return;
-
-      const proposedPanels = panels.map(panel => {
-        const startPos = posMap.get(panel.id);
-        if (!startPos) return panel;
-        const nextX = Math.max(0, Math.min(settings.areaWidth - panel.w, startPos.x + dx));
-        const nextY = Math.max(0, Math.min(settings.areaHeight - panel.h, startPos.y + dy));
-        return { ...panel, x: nextX, y: nextY };
-      });
-
-      const allValid = proposedPanels.every(panel => {
-        if (!posMap.has(panel.id)) return true;
-        return isPlacementValid(panel, obstacles);
-      });
-
-      if (allValid) {
-        setPanels(proposedPanels);
-        setHasMovedDuringDrag(true);
-      }
-      return;
-    }
-
-    if (marqueeStartRef.current !== null) {
-      const p = pointFromEvent(event);
-      const dist = Math.hypot(p.x - marqueeStartRef.current.x, p.y - marqueeStartRef.current.y);
-      if (dist > 80 || isMarqueeDraggingRef.current) {
-        isMarqueeDraggingRef.current = true;
-        setMarquee({
-          startX: marqueeStartRef.current.x,
-          startY: marqueeStartRef.current.y,
-          currentX: p.x,
-          currentY: p.y
-        });
-      }
-    }
-  }
-
-  function finishDrag(event?: React.PointerEvent<SVGSVGElement>) {
-    if (isPanningRef.current) {
-      isPanningRef.current = false;
-      return;
-    }
-
-    if (isMarqueeDraggingRef.current && marquee) {
-      const minX = Math.min(marquee.startX, marquee.currentX);
-      const maxX = Math.max(marquee.startX, marquee.currentX);
-      const minY = Math.min(marquee.startY, marquee.currentY);
-      const maxY = Math.max(marquee.startY, marquee.currentY);
-
-      const hitPanels = panels.filter(p =>
-        p.x < maxX && p.x + p.w > minX &&
-        p.y < maxY && p.y + p.h > minY
-      );
-
-      const isAdditive = event?.shiftKey || event?.ctrlKey || event?.metaKey;
-      if (isAdditive) {
-        setSelectedIds(prev => new Set([...prev, ...hitPanels.map(p => p.id)]));
-      } else {
-        setSelectedIds(new Set(hitPanels.map(p => p.id)));
-      }
-
-      if (hitPanels.length > 0) {
-        const kwp = (hitPanels.length * settings.watts / 1000).toFixed(2);
-        setNotice(id ? `🟦 ${hitPanels.length} panel dipilih dengan kotak seleksi (${kwp} kWp).` : `🟦 ${hitPanels.length} panels selected (${kwp} kWp).`);
-      } else if (!isAdditive) {
-        setSelectedIds(new Set());
-      }
-
-      setMarquee(null);
-      marqueeStartRef.current = null;
-      isMarqueeDraggingRef.current = false;
-      return;
-    }
-
-    if (marqueeStartRef.current && !isMarqueeDraggingRef.current) {
-      const clickP = marqueeStartRef.current;
-      marqueeStartRef.current = null;
-      setMarquee(null);
-
-      if (!event?.shiftKey && !event?.ctrlKey && !event?.metaKey) {
-        setSelectedIds(new Set());
-        setSelectedObstacleId(null);
-      }
-
-      if (clickP.x >= 0 && clickP.y >= 0 && clickP.x <= settings.areaWidth && clickP.y <= settings.areaHeight) {
-        const x = Math.max(0, Math.min(settings.areaWidth - moduleW, Math.round((clickP.x - moduleW / 2) / 50) * 50));
-        const y = Math.max(0, Math.min(settings.areaHeight - moduleH, Math.round((clickP.y - moduleH / 2) / 50) * 50));
-        const candidate = { id: Date.now(), x, y, w: moduleW, h: moduleH };
-
-        if (isPlacementValid(candidate)) {
-          const next = [...panels, candidate];
-          setPanels(next);
-          setSelectedIds(new Set([candidate.id]));
-          pushHistory(next, obstacles);
-          saveDraft(next);
-          setNotice(copy.manual);
-        }
-      }
-    }
-
-    if (hasMovedDuringDrag) {
-      pushHistory(panels, obstacles);
-      saveDraft(panels, settings, obstacles);
-      setHasMovedDuringDrag(false);
-    }
-    setDraggingId(null);
-    setDraggingObstacleId(null);
-    dragStartPositionsRef.current.clear();
-  }
-
-  function exportCsv() {
-    const lines = [
-      ["Panel ID", "X (mm)", "Y (mm)", "Width (mm)", "Height (mm)", "Power (Wp)"],
-      ...panels.map((p, i) => [`PV-${String(i + 1).padStart(3, "0")}`, p.x, p.y, p.w, p.h, settings.watts])
+  // Export CAD DXF
+  const handleExportDxf = () => {
+    let dxf = "0\nSECTION\n2\nHEADER\n0\nENDSEC\n0\nSECTION\n2\nTABLES\n0\nENDSEC\n0\nSECTION\n2\nBLOCKS\n0\nENDSEC\n0\nSECTION\n2\nENTITIES\n";
+    // Site boundary
+    dxf += `0\nPOLYLINE\n8\nSITE_BOUNDARY\n66\n1\n70\n1\n`;
+    const corners = site?.polygonCorners || [
+      { x: 0, y: 0 }, { x: settings.areaWidth, y: 0 }, { x: settings.areaWidth, y: settings.areaHeight }, { x: 0, y: settings.areaHeight }
     ];
-    const csv = lines.map(row => row.map(v => `"${String(v).replace(/"/g, '""')}"`).join(",")).join("\r\n");
-    const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
+    corners.forEach(c => {
+      dxf += `0\nVERTEX\n8\nSITE_BOUNDARY\n10\n${c.x}\n20\n${c.y}\n30\n0.0\n`;
+    });
+    dxf += "0\nSEQEND\n";
+
+    // Panels
+    allPanels.forEach(p => {
+      dxf += `0\nPOLYLINE\n8\nPV_PANELS\n66\n1\n70\n1\n`;
+      const pts = [{ x: p.x, y: p.y }, { x: p.x + p.w, y: p.y }, { x: p.x + p.w, y: p.y + p.h }, { x: p.x, y: p.y + p.h }];
+      pts.forEach(pt => {
+        dxf += `0\nVERTEX\n8\nPV_PANELS\n10\n${pt.x}\n20\n${pt.y}\n30\n0.0\n`;
+      });
+      dxf += "0\nSEQEND\n";
+    });
+
+    dxf += "0\nENDSEC\n0\nEOF\n";
+    const blob = new Blob([dxf], { type: "application/dxf" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = "solar-apps-pv-layout.csv";
+    a.download = `SolarApp-2D-Layout-${projectId || "CAD"}.dxf`;
     a.click();
     URL.revokeObjectURL(url);
-    setNotice(copy.exported);
-  }
+    setNotice(isId ? "File DXF (AutoCAD) berhasil diunduh!" : "DXF file downloaded!");
+  };
 
-  function exportDxf() {
-    const pair = (code: number | string, value: number | string) => `${code}\r\n${value}\r\n`;
-    const entities: string[] = [];
-    const addLine = (x1: number, y1: number, x2: number, y2: number, layer: string) => {
-      entities.push(pair(0, "LINE"), pair(8, layer), pair(10, x1), pair(20, y1), pair(30, 0), pair(11, x2), pair(21, y2), pair(31, 0));
-    };
-    const addRect = (x: number, y: number, w: number, h: number, layer: string) => {
-      addLine(x, y, x + w, y, layer);
-      addLine(x + w, y, x + w, y + h, layer);
-      addLine(x + w, y + h, x, y + h, layer);
-      addLine(x, y + h, x, y, layer);
-    };
-
-    if (activeCorners && activeCorners.length >= 3) {
-      for (let i = 0; i < activeCorners.length; i++) {
-        const nextI = (i + 1) % activeCorners.length;
-        const p1 = activeCorners[i];
-        const p2 = activeCorners[nextI];
-        addLine(p1.x, settings.areaHeight - p1.y, p2.x, settings.areaHeight - p2.y, "SITE_BOUNDARY");
-      }
-    } else {
-      addRect(0, 0, settings.areaWidth, settings.areaHeight, "SITE_BOUNDARY");
-    }
-
-    obstacles.forEach(obstacle => {
-      const y = settings.areaHeight - obstacle.y - obstacle.h;
-      addRect(obstacle.x, y, obstacle.w, obstacle.h, "OBSTACLES");
+  // Export CSV BoQ
+  const handleExportCsv = () => {
+    let csv = "Segment,Modul ID,X (mm),Y (mm),Lebar (mm),Panjang (mm),Watt (Wp)\n";
+    segments.forEach(seg => {
+      seg.panels.forEach(p => {
+        csv += `"${seg.name}",${p.id},${p.x},${p.y},${p.w},${p.h},${seg.moduleWatts}\n`;
+      });
     });
-
-    panels.forEach((panel, index) => {
-      const x = panel.x;
-      const y = settings.areaHeight - panel.y - panel.h;
-      addRect(x, y, panel.w, panel.h, "PV_MODULES");
-      const textHeight = Math.max(40, Math.min(120, Math.min(panel.w, panel.h) / 8));
-      if (panel.w > textHeight * 2 && panel.h > textHeight * 1.5) {
-        entities.push(pair(0, "TEXT"), pair(8, "PANEL_ID"), pair(10, x + panel.w / 2 - textHeight), pair(20, y + panel.h / 2), pair(30, 0), pair(40, textHeight), pair(1, `PV-${String(index + 1).padStart(3, "0")}`), pair(50, 0));
-      }
-    });
-
-    const header = [
-      pair(0, "SECTION"), pair(2, "HEADER"),
-      pair(9, "$ACADVER"), pair(1, "AC1009"),
-      pair(9, "$INSBASE"), pair(10, 0), pair(20, 0), pair(30, 0),
-      pair(9, "$INSUNITS"), pair(70, 4),
-      pair(0, "ENDSEC"),
-      pair(0, "SECTION"), pair(2, "TABLES"),
-      pair(0, "TABLE"), pair(2, "LAYER"), pair(70, 4),
-      pair(0, "LAYER"), pair(2, "SITE_BOUNDARY"), pair(70, 0), pair(62, 3), pair(6, "CONTINUOUS"),
-      pair(0, "LAYER"), pair(2, "PV_MODULES"), pair(70, 0), pair(62, 4), pair(6, "CONTINUOUS"),
-      pair(0, "LAYER"), pair(2, "PANEL_ID"), pair(70, 0), pair(62, 7), pair(6, "CONTINUOUS"),
-      pair(0, "LAYER"), pair(2, "OBSTACLES"), pair(70, 0), pair(62, 1), pair(6, "CONTINUOUS"),
-      pair(0, "ENDTAB"), pair(0, "ENDSEC"),
-      pair(0, "SECTION"), pair(2, "ENTITIES")
-    ].join("");
-    const footer = [pair(0, "ENDSEC"), pair(0, "EOF")].join("");
-    const dxf = header + entities.join("") + footer;
-    const blob = new Blob([dxf], { type: "application/dxf;charset=utf-8;" });
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = "solar-apps-pv-layout.dxf";
-    document.body.appendChild(a);
+    a.download = `SolarApp-BoQ-Modules-${projectId || "Layout"}.csv`;
     a.click();
-    a.remove();
     URL.revokeObjectURL(url);
-    setNotice(copy.exportedDxf);
-  }
+    setNotice(isId ? "Daftar modul CSV BoQ berhasil diunduh!" : "Module CSV BoQ downloaded!");
+  };
+
+  // Canvas Geometry calculations
+  const viewBoxW = 1000;
+  const viewBoxH = 600;
+  const siteW = settings.areaWidth || 65000;
+  const siteH = settings.areaHeight || 34000;
+  const scale = useMemo(() => {
+    return Math.min((viewBoxW * 0.88) / siteW, (viewBoxH * 0.82) / siteH);
+  }, [siteW, siteH]);
+
+  const originX = (viewBoxW - siteW * scale) / 2;
+  const originY = (viewBoxH - siteH * scale) / 2;
+
+  // Background image upload
+  const handleBackgroundUpload = (file?: File) => {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = e => {
+      const src = e.target?.result as string;
+      setBackgroundImage(src);
+      saveDraft(segments, obstacles, walkways, site, src);
+      setNotice(isId ? "Citra latar satelit berhasil diunggah." : "Satellite background uploaded.");
+    };
+    reader.readAsDataURL(file);
+  };
 
   return (
-    <section className="pv-layout-page">
-      <div className="pv-layout-heading">
-        <div>
-          <div className="eyebrow"><span className="live-dot" />{copy.eyebrow}</div>
-          <div style={{ marginBottom: 10, color: "var(--muted, #9aa9a0)" }}>
-            {projectName ? <>Project aktif: <strong style={{ color: "var(--text, #edf5ef)" }}>{projectName}</strong></> : "Belum ada project aktif — draft pribadi."}
+    <section className="pv-studio-wrap">
+      {/* ─── TOP APP BAR / HEADER & STATS ─── */}
+      <div className="pv-studio-topbar">
+        <div className="pv-studio-title-area">
+          <div className="pv-studio-tag">
+            <span className="dot" />
+            <span>PV LAYOUT 2D STUDIO</span>
           </div>
-          <h1>{copy.title}</h1>
-          <p>{copy.subtitle}</p>
+          <h1 className="pv-studio-project-name">
+            {projectName ? `Project: ${projectName}` : "Project: Mas Silueta Indonesia"}
+          </h1>
         </div>
-        <div className="pv-heading-actions">
-          <button className="secondary-button" onClick={reset}><RotateCcw size={15} />{copy.reset}</button>
-          <button className="secondary-button" onClick={exportCsv} disabled={!panels.length}><Download size={15} />{copy.export}</button>
-          <button className="primary-button" onClick={exportDxf} disabled={!panels.length}><Download size={15} />{copy.exportDxf}</button>
+
+        {/* 4 Key Stat Badges */}
+        <div className="pv-studio-kpis">
+          <div className="pv-kpi-badge">
+            <div className="icon-wrap"><Grid2X2 size={16} /></div>
+            <div className="kpi-info">
+              <span className="kpi-label">Total Modul</span>
+              <strong className="kpi-val">{totalModul} modul</strong>
+            </div>
+          </div>
+
+          <div className="pv-kpi-badge">
+            <div className="icon-wrap"><Zap size={16} /></div>
+            <div className="kpi-info">
+              <span className="kpi-label">Kapasitas DC</span>
+              <strong className="kpi-val" style={{ color: "var(--green, #b8f36b)" }}>
+                {totalCapacityKwp.toFixed(2)} kWp
+              </strong>
+            </div>
+          </div>
+
+          <div className="pv-kpi-badge">
+            <div className="icon-wrap"><Maximize2 size={16} /></div>
+            <div className="kpi-info">
+              <span className="kpi-label">Luas Modul</span>
+              <strong className="kpi-val" style={{ color: "#38bdf8" }}>
+                {totalModuleArea.toFixed(2)} m²
+              </strong>
+            </div>
+          </div>
+
+          <div className="pv-kpi-badge">
+            <div className="icon-wrap"><Activity size={16} /></div>
+            <div className="kpi-info">
+              <span className="kpi-label">Utilisasi Area</span>
+              <strong className="kpi-val" style={{ color: areaUtilizationPct > 70 ? "#10b981" : "#f59e0b" }}>
+                {areaUtilizationPct.toFixed(1)} %
+              </strong>
+            </div>
+          </div>
         </div>
       </div>
 
-      <div className="pv-stat-grid">
-        <div className="pv-stat">
-          <span>{copy.count}</span>
-          <strong>{panels.length.toLocaleString()}</strong>
-          <small>PV modules</small>
-        </div>
-        <div className="pv-stat">
-          <span>{copy.capacity}</span>
-          <strong>{capacity.toLocaleString(undefined, { maximumFractionDigits: 2 })} <small>kWp</small></strong>
-          <small>{settings.watts} Wp × {panels.length}</small>
-        </div>
-        <div className="pv-stat">
-          <span>{copy.used}</span>
-          <strong>{moduleArea.toLocaleString(undefined, { maximumFractionDigits: 2 })} <small>m²</small></strong>
-          <small>Panel area only</small>
-        </div>
-        <div className="pv-stat">
-          <span>{copy.fit}</span>
-          <strong className={overflow ? "pv-warning" : "pv-good"}>
-            {overflow ? "!" : "✓"} <small>{overflow ? copy.overflow : copy.fits}</small>
-          </strong>
-          <small>Geometric check only</small>
-        </div>
-      </div>
+      {/* ─── 5-STEP WORKFLOW RIBBON ─── */}
+      <nav className="pv-step-ribbon">
+        <button
+          type="button"
+          className={`pv-step-btn ${activeStep === 1 ? "is-active" : ""}`}
+          onClick={() => {
+            setActiveStep(1);
+            setIsMapsModalOpen(true);
+          }}
+        >
+          <span className="pv-step-num">1</span>
+          <MapPin size={14} />
+          <span>Site (GIS)</span>
+        </button>
 
-      <div className="pv-workspace-grid">
-        <aside className="panel pv-controls">
-          <div className="pv-section-title"><Grid2X2 size={16} /><strong>{copy.system}</strong></div>
-          <select value={settings.system} onChange={e => update("system", e.target.value as SystemType)}>
-            <option value="Rooftop">{copy.roof}</option>
-            <option value="Ground-mounted">{copy.ground}</option>
-          </select>
+        <button
+          type="button"
+          className={`pv-step-btn ${activeStep === 2 ? "is-active" : ""}`}
+          onClick={() => setActiveStep(2)}
+        >
+          <span className="pv-step-num">2</span>
+          <Grid2X2 size={14} />
+          <span>Mechanical</span>
+        </button>
 
-          <div className="pv-section-title"><strong>{copy.area}</strong></div>
-          <div className="pv-input-grid">
-            <NumberField label={copy.width} value={settings.areaWidth} min={1000} step={100} onChange={v => update("areaWidth", v)} />
-            <NumberField label={copy.height} value={settings.areaHeight} min={1000} step={100} onChange={v => update("areaHeight", v)} />
-            <NumberField label={copy.setback} value={settings.setback} min={0} step={50} onChange={v => update("setback", v)} />
-          </div>
+        <button
+          type="button"
+          className={`pv-step-btn ${activeStep === 3 ? "is-active" : ""}`}
+          onClick={() => {
+            setActiveStep(3);
+            setToolMode("keepout");
+            setNotice(isId ? "Mode Rintangan / Keepout aktif. Klik kanvas untuk menandai rintangan." : "Keepout mode active.");
+          }}
+        >
+          <span className="pv-step-num">3</span>
+          <Ban size={14} />
+          <span>Keepouts</span>
+        </button>
 
-          {isCustomPolygon && (
-            <div style={{
-              background: "#16251b",
-              border: "1px solid #2e4a36",
-              borderRadius: 6,
-              padding: "8px 10px",
-              fontSize: 11,
-              color: "#b8f36b",
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "center",
-              marginTop: 6,
-              marginBottom: 8,
-            }}>
-              <span>📐 Bentuk: Trapesium / Poligon 4-Sudut</span>
-              <button
-                type="button"
-                className="secondary-button"
-                style={{ fontSize: 10, padding: "3px 8px", height: "auto" }}
-                onClick={() => {
-                  if (!site) return;
-                  const nextSite: Site = { ...site, polygonCorners: undefined };
-                  setSite(nextSite);
-                  saveDraft(panels, settings, obstacles, nextSite);
-                  setNotice(id ? "Bentuk atap dikembalikan ke persegi panjang standar." : "Roof shape reset to standard rectangle.");
-                }}
-              >
-                {id ? "Reset Kotak" : "Reset Rect"}
-              </button>
-            </div>
-          )}
+        <button
+          type="button"
+          className={`pv-step-btn ${activeStep === 4 ? "is-active" : ""}`}
+          onClick={() => {
+            setActiveStep(4);
+            setNotice(isId ? "Electrical Stringing: 16-18 modul/string terkonfigurasi otomatis." : "Electrical stringing view.");
+          }}
+        >
+          <span className="pv-step-num">4</span>
+          <Share2 size={14} />
+          <span>Electrical</span>
+        </button>
 
-          <div className="pv-section-title"><ImagePlus size={16} /><strong>{copy.satellite}</strong></div>
+        <button
+          type="button"
+          className={`pv-step-btn ${activeStep === 5 ? "is-active" : ""}`}
+          onClick={() => {
+            setActiveStep(5);
+            setNotice(isId ? "Pengaturan Lanjutan: Koefisien Shading, Derating, & LCOE." : "Advanced settings.");
+          }}
+        >
+          <span className="pv-step-num">5</span>
+          <Sliders size={14} />
+          <span>Advanced</span>
+        </button>
+      </nav>
 
-          {site?.coordinates && (
-            <div style={{
-              background: "#131d16",
-              border: "1px solid #28422d",
-              borderRadius: 8,
-              padding: "10px 12px",
-              marginBottom: 10,
-              fontSize: 11,
-              color: "#d0ded4",
-              display: "flex",
-              flexDirection: "column",
-              gap: 6,
-            }}>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                <span style={{ display: "inline-flex", alignItems: "center", gap: 5, color: "var(--green, #b8f36b)", fontWeight: 700, fontSize: 11 }}>
-                  <MapPin size={13} /> {id ? "Geolokasi Terhubung" : "Linked Geolocation"}
-                </span>
-                {site.rotationDeg !== undefined && (
-                  <span style={{ fontSize: 10, color: "#93a69a", background: "#1c2a1f", padding: "1px 6px", borderRadius: 4, border: "1px solid #2e4734" }}>
-                    ↻ {site.rotationDeg}°
-                  </span>
-                )}
-              </div>
-
-              {site.address && (
-                <div style={{ fontSize: 11, fontWeight: 600, color: "#edf5ef", lineHeight: 1.4, wordBreak: "break-word" }}>
-                  📍 {site.address}
-                </div>
-              )}
-
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", color: "#93a69a", fontSize: 10, borderTop: "1px solid #1f2e22", paddingTop: 5 }}>
-                <span>Koordinat (GPS):</span>
-                <strong style={{ color: "var(--green, #b8f36b)", fontFamily: "monospace" }}>
-                  {site.coordinates.lat.toFixed(5)}, {site.coordinates.lng.toFixed(5)}
-                </strong>
-              </div>
-
-              {site.pitchDegrees !== undefined && (
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", color: "#93a69a", fontSize: 10 }}>
-                  <span>Google Solar:</span>
-                  <strong style={{ color: "#edf5ef" }}>
-                    Pitch {site.pitchDegrees}° · Azimuth {site.azimuthDegrees}°
-                  </strong>
-                </div>
-              )}
-            </div>
-          )}
-
-          <button
-            type="button"
-            style={{
-              width: "100%",
-              marginBottom: 8,
-              background: "linear-gradient(135deg, #1e3825 0%, #132418 100%)",
-              border: "1px solid #3d6e44",
-              color: "#edf5ef",
-              borderRadius: 7,
-              padding: "10px 14px",
-              fontSize: 12,
-              fontWeight: 700,
-              display: "inline-flex",
-              justifyContent: "center",
-              alignItems: "center",
-              gap: 8,
-              cursor: "pointer",
-              boxShadow: "0 2px 6px rgba(0,0,0,0.3)",
-            }}
-            onClick={() => setIsMapsModalOpen(true)}
-          >
-            <Globe size={16} style={{ color: "var(--green, #b8f36b)" }} />
-            <span style={{ color: "#edf5ef", fontWeight: 700 }}>{id ? "🛰️ Cari di Peta Satelit Google" : "🛰️ Scan with Google Maps"}</span>
-          </button>
-
-          <input ref={imageInputRef} type="file" accept="image/*" style={{ display: "none" }} onChange={e => { handleBackgroundUpload(e.target.files?.[0]); e.currentTarget.value = ""; }} />
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            <button className="secondary-button" type="button" onClick={() => imageInputRef.current?.click()}><ImagePlus size={15} />{copy.uploadImage}</button>
-            {backgroundImage && <button className="secondary-button" type="button" onClick={removeBackgroundImage}><X size={15} />{copy.removeImage}</button>}
-          </div>
-          <div style={{ fontSize: 12, color: "var(--muted, #93a69a)", lineHeight: 1.5 }}>{copy.imageHelp}</div>
-          {backgroundImage && (
-            <label className="pv-field">
-              <span>{copy.imageOpacity} ({Math.round(backgroundOpacity * 100)}%)</span>
-              <input
-                type="range"
-                min="0"
-                max="1"
-                step="0.05"
-                value={backgroundOpacity}
-                onChange={e => {
-                  const value = Number(e.target.value);
-                  setBackgroundOpacity(value);
-                  try {
-                    localStorage.setItem(storageKey(userId, projectId), JSON.stringify({ projectId, settings, panels, obstacles, site, backgroundImage, backgroundOpacity: value }));
-                  } catch { /* ignore storage errors */ }
-                }}
-              />
-            </label>
-          )}
-
-          <div className="pv-section-title"><strong>{copy.obstacles}</strong></div>
-          <div className="pv-input-grid">
-            <NumberField label={copy.obstacleWidth} value={settings.obstacleWidth} min={100} step={100} onChange={v => update("obstacleWidth", v)} />
-            <NumberField label={copy.obstacleHeight} value={settings.obstacleHeight} min={100} step={100} onChange={v => update("obstacleHeight", v)} />
-          </div>
-          <button className="secondary-button pv-generate" onClick={addObstacle}><Grid2X2 size={15} />{copy.addObstacle}</button>
-          <div className="pv-selected-box">
-            <span>{copy.obstacles}</span>
-            <strong>{selectedObstacle?.label ?? `${obstacles.length} total`}</strong>
-            <button className="secondary-button" disabled={!selectedObstacle} onClick={deleteSelectedObstacle}><Trash2 size={14} />{copy.deleteObstacle}</button>
-          </div>
-
-          <div className="pv-section-title"><strong>{copy.module}</strong></div>
-          <div className="pv-input-grid">
-            <NumberField label={copy.mw} value={settings.moduleWidth} min={100} step={1} onChange={v => update("moduleWidth", v)} />
-            <NumberField label={copy.mh} value={settings.moduleHeight} min={100} step={1} onChange={v => update("moduleHeight", v)} />
-            <NumberField label={copy.gap} value={settings.gap} min={0} step={5} onChange={v => update("gap", v)} />
-            <NumberField label={copy.watts} value={settings.watts} min={1} step={5} onChange={v => update("watts", v)} />
-          </div>
-
-          <div className="pv-section-title"><strong>{copy.layout}</strong></div>
-          <div className="pv-input-grid">
-            <NumberField label={copy.rows} value={settings.rows} min={1} max={100} step={1} onChange={v => update("rows", v)} />
-            <NumberField label={copy.cols} value={settings.cols} min={1} max={100} step={1} onChange={v => update("cols", v)} />
-            <NumberField label={copy.tilt} value={settings.tilt} min={0} max={60} step={1} onChange={v => update("tilt", v)} />
-          </div>
-          <label className="pv-field">
-            <span>{copy.orientation}</span>
-            <select value={settings.orientation} onChange={e => update("orientation", e.target.value as "landscape" | "portrait")}>
-              <option value="landscape">{copy.landscape}</option>
-              <option value="portrait">{copy.portrait}</option>
-            </select>
-          </label>
-
-          {/* HelioScope Auto-Pack & Grid Buttons */}
-          <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 4 }}>
+      {/* ─── 3-COLUMN STUDIO WORKSPACE ─── */}
+      <div className="pv-studio-grid">
+        {/* ════ LEFT COLUMN: MULTI-SEGMENT & MODULE MANAGER ════ */}
+        <aside className="panel" style={{ padding: "14px 16px", display: "flex", flexDirection: "column", gap: 14 }}>
+          {/* Top Tab Bar: [ Field Segment ] [ PV Module ] */}
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 4, background: "#0b120d", padding: 3, borderRadius: 8, border: "1px solid #1a2a1f" }}>
             <button
-              className="primary-button pv-generate"
+              type="button"
               style={{
-                background: "linear-gradient(135deg, #10b981 0%, #059669 100%)",
-                borderColor: "#34d399",
-                color: "#ffffff",
-                fontWeight: 700,
-                boxShadow: "0 2px 8px rgba(16, 185, 129, 0.25)",
+                background: activeLeftTab === "segment" ? "var(--green, #b8f36b)" : "transparent",
+                color: activeLeftTab === "segment" ? "#0a130c" : "#8da092",
+                fontWeight: activeLeftTab === "segment" ? 800 : 600,
+                border: "none",
+                borderRadius: 6,
+                padding: "7px 10px",
+                fontSize: 11.5,
+                cursor: "pointer",
+                transition: "all 0.15s ease",
               }}
-              onClick={autoFillArea}
+              onClick={() => setActiveLeftTab("segment")}
             >
-              <Zap size={16} />{copy.fillArea}
+              Field Segment
             </button>
-            <button className="secondary-button pv-generate" onClick={generate}>
-              <WandSparkles size={15} />{copy.generate}
+            <button
+              type="button"
+              style={{
+                background: activeLeftTab === "module" ? "var(--green, #b8f36b)" : "transparent",
+                color: activeLeftTab === "module" ? "#0a130c" : "#8da092",
+                fontWeight: activeLeftTab === "module" ? 800 : 600,
+                border: "none",
+                borderRadius: 6,
+                padding: "7px 10px",
+                fontSize: 11.5,
+                cursor: "pointer",
+                transition: "all 0.15s ease",
+              }}
+              onClick={() => setActiveLeftTab("module")}
+            >
+              PV Module
             </button>
           </div>
 
-          {/* Bulk & Selection Card */}
-          <div style={{
-            marginTop: 10,
-            padding: "12px",
-            background: selectedIds.size > 0 ? "#14251a" : "#0f1712",
-            border: selectedIds.size > 0 ? "1px solid #325a3d" : "1px solid #1e2d23",
-            borderRadius: 8,
-            display: "flex",
-            flexDirection: "column",
-            gap: 8,
-          }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <span style={{ fontSize: 11, fontWeight: 700, color: selectedIds.size > 0 ? "var(--green, #b8f36b)" : "var(--muted, #93a69a)", display: "flex", alignItems: "center", gap: 5 }}>
-                <CheckSquare size={13} />
-                {selectedIds.size > 0
-                  ? (id ? `${selectedIds.size} Panel Terpilih` : `${selectedIds.size} Panels Selected`)
-                  : (id ? "Tidak ada panel dipilih" : "No panels selected")}
-              </span>
-              {selectedIds.size > 0 && (
-                <span style={{ fontSize: 10, color: "#edf5ef", fontFamily: "monospace" }}>
-                  {(selectedIds.size * settings.watts / 1000).toFixed(2)} kWp
+          {activeLeftTab === "segment" ? (
+            <>
+              {/* Field Segments List Header & Add Button */}
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <span style={{ fontSize: 13, fontWeight: 800, color: "#edf5ef" }}>
+                  Field Segments ({segments.length})
                 </span>
+                <button
+                  type="button"
+                  style={{
+                    background: "rgba(184, 243, 107, 0.15)",
+                    border: "1px solid var(--green, #b8f36b)",
+                    color: "var(--green, #b8f36b)",
+                    borderRadius: 6,
+                    padding: "4px 10px",
+                    fontSize: 11,
+                    fontWeight: 800,
+                    cursor: "pointer",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 5,
+                  }}
+                  onClick={handleAddSegment}
+                >
+                  <Plus size={13} /> Add Segment
+                </button>
+              </div>
+
+              {/* Segment Cards */}
+              <div style={{ display: "flex", flexDirection: "column", gap: 8, maxHeight: 240, overflowY: "auto" }}>
+                {segments.map(seg => {
+                  const isActive = seg.id === activeSegment?.id;
+                  const kwp = ((seg.panels.length * (seg.moduleWatts || 580)) / 1000).toFixed(2);
+                  return (
+                    <div
+                      key={seg.id}
+                      className={`pv-segment-card ${isActive ? "is-active" : ""}`}
+                      onClick={() => setActiveSegmentId(seg.id)}
+                    >
+                      <div className="pv-segment-info">
+                        <div className="pv-segment-color-tag" style={{ background: seg.color }} />
+                        <div>
+                          <div style={{ fontSize: 12.5, fontWeight: 800, color: "#edf5ef" }}>{seg.name}</div>
+                          <div style={{ fontSize: 10, color: "#8ca293", marginTop: 2 }}>
+                            {seg.panels.length} modul · {kwp} kWp
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="pv-segment-actions" onClick={e => e.stopPropagation()}>
+                        <button
+                          type="button"
+                          className="pv-icon-btn"
+                          title={seg.visible ? "Sembunyikan Segmen" : "Tampilkan Segmen"}
+                          onClick={() => handleToggleSegmentVisibility(seg.id)}
+                        >
+                          {seg.visible ? <Eye size={13} /> : <EyeOff size={13} style={{ color: "#ef4444" }} />}
+                        </button>
+                        <button
+                          type="button"
+                          className="pv-icon-btn"
+                          title="Hapus Segmen"
+                          onClick={() => handleDeleteSegment(seg.id)}
+                        >
+                          <Trash2 size={13} style={{ color: "#f87171" }} />
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Selected Segment Parameters */}
+              {activeSegment && (
+                <div style={{ background: "#0e1611", border: "1.5px solid #233728", borderRadius: 8, padding: "12px 14px", display: "flex", flexDirection: "column", gap: 10, marginTop: 4 }}>
+                  <div style={{ fontSize: 12, fontWeight: 800, color: "var(--green, #b8f36b)", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                    <span>Pengaturan Segment ({activeSegment.name})</span>
+                    <span style={{ width: 8, height: 8, borderRadius: "50%", background: activeSegment.color }} />
+                  </div>
+
+                  <div>
+                    <label style={{ fontSize: 10, color: "#8aa092", display: "block", marginBottom: 4 }}>Nama Segment</label>
+                    <input
+                      type="text"
+                      value={activeSegment.name}
+                      onChange={e => handleUpdateActiveSegment("name", e.target.value)}
+                      style={{ width: "100%", background: "#080d09", border: "1px solid #1f3325", borderRadius: 6, padding: "6px 9px", color: "#edf5ef", fontSize: 11 }}
+                    />
+                  </div>
+
+                  {/* Orientation Toggle: Portrait vs Landscape */}
+                  <div>
+                    <label style={{ fontSize: 10, color: "#8aa092", display: "block", marginBottom: 4 }}>Orientasi Modul</label>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
+                      <button
+                        type="button"
+                        style={{
+                          background: activeSegment.orientation === "portrait" ? "var(--green, #b8f36b)" : "#131f16",
+                          color: activeSegment.orientation === "portrait" ? "#071109" : "#8ea394",
+                          fontWeight: 700,
+                          border: "1px solid #2a4531",
+                          borderRadius: 6,
+                          padding: "6px",
+                          fontSize: 11,
+                          cursor: "pointer",
+                        }}
+                        onClick={() => handleUpdateActiveSegment("orientation", "portrait")}
+                      >
+                        Portrait
+                      </button>
+                      <button
+                        type="button"
+                        style={{
+                          background: activeSegment.orientation === "landscape" ? "var(--green, #b8f36b)" : "#131f16",
+                          color: activeSegment.orientation === "landscape" ? "#071109" : "#8ea394",
+                          fontWeight: 700,
+                          border: "1px solid #2a4531",
+                          borderRadius: 6,
+                          padding: "6px",
+                          fontSize: 11,
+                          cursor: "pointer",
+                        }}
+                        onClick={() => handleUpdateActiveSegment("orientation", "landscape")}
+                      >
+                        Landscape
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Tilt & Azimuth */}
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                    <div>
+                      <label style={{ fontSize: 10, color: "#8aa092", display: "block", marginBottom: 3 }}>Tilt (°)</label>
+                      <input
+                        type="number"
+                        value={activeSegment.tilt}
+                        onChange={e => handleUpdateActiveSegment("tilt", Number(e.target.value))}
+                        style={{ width: "100%", background: "#080d09", border: "1px solid #1f3325", borderRadius: 6, padding: "5px 8px", color: "#edf5ef", fontSize: 11 }}
+                      />
+                    </div>
+                    <div>
+                      <label style={{ fontSize: 10, color: "#8aa092", display: "block", marginBottom: 3 }}>Azimuth (°)</label>
+                      <input
+                        type="number"
+                        value={activeSegment.azimuth}
+                        onChange={e => handleUpdateActiveSegment("azimuth", Number(e.target.value))}
+                        style={{ width: "100%", background: "#080d09", border: "1px solid #1f3325", borderRadius: 6, padding: "5px 8px", color: "#edf5ef", fontSize: 11 }}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Spacing & Setback */}
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                    <div>
+                      <label style={{ fontSize: 10, color: "#8aa092", display: "block", marginBottom: 3 }}>Jarak antar modul (m)</label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        value={(activeSegment.gap / 1000).toFixed(2)}
+                        onChange={e => handleUpdateActiveSegment("gap", Math.round(Number(e.target.value) * 1000))}
+                        style={{ width: "100%", background: "#080d09", border: "1px solid #1f3325", borderRadius: 6, padding: "5px 8px", color: "#edf5ef", fontSize: 11 }}
+                      />
+                    </div>
+                    <div>
+                      <label style={{ fontSize: 10, color: "#8aa092", display: "block", marginBottom: 3 }}>Setback tepi (m)</label>
+                      <input
+                        type="number"
+                        step="0.05"
+                        value={(activeSegment.setback / 1000).toFixed(2)}
+                        onChange={e => handleUpdateActiveSegment("setback", Math.round(Number(e.target.value) * 1000))}
+                        style={{ width: "100%", background: "#080d09", border: "1px solid #1f3325", borderRadius: 6, padding: "5px 8px", color: "#edf5ef", fontSize: 11 }}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Action Buttons */}
+                  <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 4 }}>
+                    <button
+                      type="button"
+                      style={{
+                        background: "var(--green, #b8f36b)",
+                        color: "#0a150d",
+                        border: "none",
+                        borderRadius: 7,
+                        padding: "9px 12px",
+                        fontSize: 12,
+                        fontWeight: 800,
+                        cursor: "pointer",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        gap: 6,
+                        boxShadow: "0 2px 10px rgba(184, 243, 107, 0.3)",
+                      }}
+                      onClick={() => handleGenerateSegmentPanels(activeSegment.id)}
+                    >
+                      <Zap size={14} /> Generate Panel ({activeSegment.name})
+                    </button>
+
+                    <button
+                      type="button"
+                      style={{
+                        background: "transparent",
+                        color: "#f87171",
+                        border: "1px solid #4a2222",
+                        borderRadius: 6,
+                        padding: "6px 10px",
+                        fontSize: 11,
+                        fontWeight: 700,
+                        cursor: "pointer",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        gap: 5,
+                      }}
+                      onClick={() => handleClearSegmentPanels(activeSegment.id)}
+                    >
+                      <Trash2 size={13} /> Hapus Panel Segment
+                    </button>
+                  </div>
+                </div>
               )}
+            </>
+          ) : (
+            /* Tab 2: PV Module Specifications */
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              <div style={{ fontSize: 13, fontWeight: 800, color: "#edf5ef" }}>Katalog Modul Surya</div>
+              <div>
+                <label style={{ fontSize: 10, color: "#8aa092", display: "block", marginBottom: 4 }}>Pilih Model Presets</label>
+                <select
+                  style={{ width: "100%", background: "#080d09", border: "1px solid #1f3325", borderRadius: 6, padding: "7px 9px", color: "#edf5ef", fontSize: 11 }}
+                  onChange={e => {
+                    const val = e.target.value;
+                    if (val === "longi-580") {
+                      handleUpdateActiveSegment("moduleWidth", 2278);
+                      handleUpdateActiveSegment("moduleHeight", 1134);
+                      handleUpdateActiveSegment("moduleWatts", 580);
+                    } else if (val === "mas-744") {
+                      handleUpdateActiveSegment("moduleWidth", 2278);
+                      handleUpdateActiveSegment("moduleHeight", 1134);
+                      handleUpdateActiveSegment("moduleWatts", 744);
+                    } else if (val === "jinko-620") {
+                      handleUpdateActiveSegment("moduleWidth", 2382);
+                      handleUpdateActiveSegment("moduleHeight", 1134);
+                      handleUpdateActiveSegment("moduleWatts", 620);
+                    } else if (val === "trina-660") {
+                      handleUpdateActiveSegment("moduleWidth", 2384);
+                      handleUpdateActiveSegment("moduleHeight", 1303);
+                      handleUpdateActiveSegment("moduleWatts", 660);
+                    }
+                  }}
+                >
+                  <option value="mas-744">PT Mas Silueta N-Type Bifacial (744 Wp)</option>
+                  <option value="longi-580">LONGi Hi-MO 6 Explorer (580 Wp)</option>
+                  <option value="jinko-620">Jinko Tiger Neo N-Type (620 Wp)</option>
+                  <option value="trina-660">Trina Solar Vertex Ultra (660 Wp)</option>
+                </select>
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                <div>
+                  <label style={{ fontSize: 10, color: "#8aa092", display: "block", marginBottom: 3 }}>Lebar (mm)</label>
+                  <input
+                    type="number"
+                    value={activeSegment?.moduleWidth || 2278}
+                    onChange={e => handleUpdateActiveSegment("moduleWidth", Number(e.target.value))}
+                    style={{ width: "100%", background: "#080d09", border: "1px solid #1f3325", borderRadius: 6, padding: "5px 8px", color: "#edf5ef", fontSize: 11 }}
+                  />
+                </div>
+                <div>
+                  <label style={{ fontSize: 10, color: "#8aa092", display: "block", marginBottom: 3 }}>Tinggi (mm)</label>
+                  <input
+                    type="number"
+                    value={activeSegment?.moduleHeight || 1134}
+                    onChange={e => handleUpdateActiveSegment("moduleHeight", Number(e.target.value))}
+                    style={{ width: "100%", background: "#080d09", border: "1px solid #1f3325", borderRadius: 6, padding: "5px 8px", color: "#edf5ef", fontSize: 11 }}
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label style={{ fontSize: 10, color: "#8aa092", display: "block", marginBottom: 3 }}>Daya Nominal (Wp)</label>
+                <input
+                  type="number"
+                  value={activeSegment?.moduleWatts || 580}
+                  onChange={e => handleUpdateActiveSegment("moduleWatts", Number(e.target.value))}
+                  style={{ width: "100%", background: "#080d09", border: "1px solid #1f3325", borderRadius: 6, padding: "5px 8px", color: "#edf5ef", fontSize: 11 }}
+                />
+              </div>
+
+              <div style={{ background: "#111a14", border: "1px solid #1f3024", borderRadius: 6, padding: "10px", fontSize: 11, color: "#8ca093", lineHeight: 1.4 }}>
+                💡 Spesifikasi modul berlaku untuk segmen yang aktif dan akan mengkalkulasi output daya serta luas fisik modul secara otomatis.
+              </div>
             </div>
-
-            {selectedIds.size > 0 ? (
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, marginTop: 4 }}>
-                <button
-                  type="button"
-                  className="secondary-button"
-                  style={{ fontSize: 11, padding: "6px 8px", display: "inline-flex", justifyContent: "center", alignItems: "center", gap: 5 }}
-                  onClick={rotateSelectedPanels}
-                  title={id ? "Putar Landscape ⇄ Portrait" : "Rotate Landscape ⇄ Portrait"}
-                >
-                  <RotateCw size={12} />
-                  <span>{id ? "Putar" : "Rotate"}</span>
-                </button>
-
-                <button
-                  type="button"
-                  className="secondary-button"
-                  style={{ fontSize: 11, padding: "6px 8px", display: "inline-flex", justifyContent: "center", alignItems: "center", gap: 5 }}
-                  onClick={duplicateSelectedPanels}
-                  title={id ? "Duplikat panel terpilih" : "Duplicate selected panels"}
-                >
-                  <Copy size={12} />
-                  <span>{id ? "Duplikat" : "Duplicate"}</span>
-                </button>
-
-                <button
-                  type="button"
-                  className="secondary-button"
-                  style={{ fontSize: 11, padding: "6px 8px", color: "#ff8b8b", borderColor: "#552828", display: "inline-flex", justifyContent: "center", alignItems: "center", gap: 5 }}
-                  onClick={deleteSelectedPanels}
-                >
-                  <Trash2 size={12} />
-                  <span>{id ? `Hapus (${selectedIds.size})` : `Delete (${selectedIds.size})`}</span>
-                </button>
-
-                <button
-                  type="button"
-                  className="secondary-button"
-                  style={{ fontSize: 11, padding: "6px 8px", display: "inline-flex", justifyContent: "center", alignItems: "center", gap: 5 }}
-                  onClick={handleClearSelection}
-                >
-                  <X size={12} />
-                  <span>{id ? "Batal" : "Deselect"}</span>
-                </button>
-              </div>
-            ) : (
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", paddingTop: 2 }}>
-                <span style={{ fontSize: 10, color: "#829588" }}>
-                  {id ? "Tarik kotak seleksi di kanvas" : "Drag selection box on canvas"}
-                </span>
-                <button
-                  type="button"
-                  className="secondary-button"
-                  style={{ fontSize: 10, padding: "3px 8px", height: "auto" }}
-                  onClick={handleSelectAll}
-                  disabled={panels.length === 0}
-                >
-                  {id ? "Pilih Semua (Ctrl+A)" : "Select All (Ctrl+A)"}
-                </button>
-              </div>
-            )}
-          </div>
+          )}
         </aside>
 
-        <div className="panel pv-canvas-panel">
-          <div className="pv-canvas-toolbar" style={{ flexWrap: "wrap", gap: 8, padding: "8px 12px" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-              {/* Tool Mode: Select or Pan */}
-              <div style={{ display: "flex", background: "#0e1511", padding: 2, borderRadius: 5, border: "1px solid #233528" }}>
+        {/* ════ CENTER COLUMN: CANVAS & TOOLBAR ════ */}
+        <div className="panel pv-canvas-panel" style={{ display: "flex", flexDirection: "column" }}>
+          {/* Top Canvas Toolbar */}
+          <div className="pv-canvas-toolbar" style={{ flexWrap: "wrap", padding: "8px 12px", background: "#0a110c", borderBottom: "1.5px solid #1d2e22" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap" }}>
+              {/* Tool Mode Buttons */}
+              <div style={{ display: "flex", background: "#111a14", padding: 2, borderRadius: 6, border: "1px solid #233527" }}>
                 <button
                   type="button"
-                  title={id ? "Mode Seleksi (Tarik kotak untuk memilih banyak)" : "Select Mode (Drag box to select)"}
+                  title="Pointer / Seleksi & Geser"
                   onClick={() => setToolMode("select")}
                   style={{
-                    background: toolMode === "select" ? "#1e3525" : "transparent",
-                    color: toolMode === "select" ? "#b8f36b" : "#7a8f81",
+                    background: toolMode === "select" ? "var(--green, #b8f36b)" : "transparent",
+                    color: toolMode === "select" ? "#0b140e" : "#8da294",
                     border: "none",
                     borderRadius: 4,
-                    padding: "3px 8px",
+                    padding: "4px 8px",
+                    cursor: "pointer",
                     display: "inline-flex",
                     alignItems: "center",
-                    gap: 4,
-                    fontSize: 11,
-                    cursor: "pointer",
-                    fontWeight: toolMode === "select" ? 700 : 400
                   }}
                 >
-                  <MousePointer2 size={13} />
-                  <span>{id ? "Seleksi" : "Select"}</span>
+                  <MousePointer2 size={14} />
                 </button>
 
                 <button
                   type="button"
-                  title={id ? "Mode Geser / Pan (Bisa juga tahan tombol Spasi + drag)" : "Pan Mode (Or hold Space + drag)"}
-                  onClick={() => setToolMode("pan")}
+                  title="Poligon Segmen (Bentuk Bebas)"
+                  onClick={() => setToolMode("polygon")}
                   style={{
-                    background: toolMode === "pan" ? "#1e3525" : "transparent",
-                    color: toolMode === "pan" ? "#b8f36b" : "#7a8f81",
+                    background: toolMode === "polygon" ? "var(--green, #b8f36b)" : "transparent",
+                    color: toolMode === "polygon" ? "#0b140e" : "#8da294",
                     border: "none",
                     borderRadius: 4,
-                    padding: "3px 8px",
+                    padding: "4px 8px",
+                    cursor: "pointer",
                     display: "inline-flex",
                     alignItems: "center",
-                    gap: 4,
-                    fontSize: 11,
-                    cursor: "pointer",
-                    fontWeight: toolMode === "pan" ? 700 : 400
                   }}
                 >
-                  <Hand size={13} />
-                  <span>{id ? "Geser" : "Pan"}</span>
+                  <Square size={14} style={{ transform: "rotate(45deg)" }} />
+                </button>
+
+                <button
+                  type="button"
+                  title="Kotak Segmen (Rectangle Atap)"
+                  onClick={() => setToolMode("rectangle")}
+                  style={{
+                    background: toolMode === "rectangle" ? "var(--green, #b8f36b)" : "transparent",
+                    color: toolMode === "rectangle" ? "#0b140e" : "#8da294",
+                    border: "none",
+                    borderRadius: 4,
+                    padding: "4px 8px",
+                    cursor: "pointer",
+                    display: "inline-flex",
+                    alignItems: "center",
+                  }}
+                >
+                  <Square size={14} />
+                </button>
+
+                <button
+                  type="button"
+                  title="Keepout / Rintangan (Skylight, Chiller)"
+                  onClick={() => setToolMode("keepout")}
+                  style={{
+                    background: toolMode === "keepout" ? "#ef4444" : "transparent",
+                    color: toolMode === "keepout" ? "#ffffff" : "#8da294",
+                    border: "none",
+                    borderRadius: 4,
+                    padding: "4px 8px",
+                    cursor: "pointer",
+                    display: "inline-flex",
+                    alignItems: "center",
+                  }}
+                >
+                  <Ban size={14} />
+                </button>
+
+                <button
+                  type="button"
+                  title="Walkway (Jalur Inspeksi / Damkar)"
+                  onClick={() => {
+                    const newWalk: Walkway = {
+                      id: `w-${Date.now()}`,
+                      x: 2000,
+                      y: 11000,
+                      w: settings.areaWidth - 4000,
+                      h: 2000,
+                      label: "Walkway 2m",
+                    };
+                    const next = [...walkways, newWalk];
+                    setWalkways(next);
+                    pushHistory(segments, obstacles, next);
+                    saveDraft(segments, obstacles, next);
+                    setNotice("Jalur walkway pemeliharaan berhasil ditambahkan.");
+                  }}
+                  style={{
+                    background: toolMode === "walkway" ? "#ea580c" : "transparent",
+                    color: toolMode === "walkway" ? "#ffffff" : "#8da294",
+                    border: "none",
+                    borderRadius: 4,
+                    padding: "4px 8px",
+                    cursor: "pointer",
+                    display: "inline-flex",
+                    alignItems: "center",
+                  }}
+                >
+                  <Table size={14} />
+                </button>
+
+                <button
+                  type="button"
+                  title="Auto-Populate / Generate Semua Segmen"
+                  onClick={() => {
+                    const next = segments.map(seg => ({
+                      ...seg,
+                      panels: generatePanelsForSegment(seg, obstacles, walkways),
+                    }));
+                    setSegments(next);
+                    pushHistory(next, obstacles, walkways);
+                    saveDraft(next);
+                    setNotice("⚡ Seluruh segmen berhasil di-generate secara otomatis!");
+                  }}
+                  style={{
+                    background: "transparent",
+                    color: "var(--green, #b8f36b)",
+                    border: "none",
+                    borderRadius: 4,
+                    padding: "4px 8px",
+                    cursor: "pointer",
+                    display: "inline-flex",
+                    alignItems: "center",
+                  }}
+                >
+                  <WandSparkles size={14} />
                 </button>
               </div>
 
               {/* Zoom Controls */}
-              <div style={{ display: "flex", alignItems: "center", gap: 3, background: "#0e1511", padding: "2px 4px", borderRadius: 5, border: "1px solid #233528" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 3, background: "#111a14", padding: "2px 4px", borderRadius: 6, border: "1px solid #233527" }}>
                 <button
                   type="button"
-                  title={id ? "Perkecil (Zoom Out / Ctrl+-)" : "Zoom Out (Ctrl+-)"}
                   onClick={() => setZoom(prev => Math.max(0.4, Number((prev - 0.15).toFixed(2))))}
-                  style={{ background: "transparent", border: "none", color: "#a5b8ad", padding: 3, cursor: "pointer", display: "inline-flex" }}
+                  style={{ background: "transparent", border: "none", color: "#a5b8ad", padding: 3, cursor: "pointer" }}
+                  title="Zoom Out"
                 >
                   <ZoomOut size={13} />
                 </button>
-                <button
-                  type="button"
-                  title={id ? "Klik untuk reset zoom ke 100%" : "Click to reset zoom to 100%"}
-                  onClick={handleResetView}
-                  style={{ background: "transparent", border: "none", color: "#edf5ef", fontSize: 10, fontFamily: "monospace", padding: "2px 4px", cursor: "pointer", minWidth: 42, textAlign: "center" }}
-                >
+                <span style={{ fontSize: 10, fontFamily: "monospace", color: "#edf5ef", minWidth: 38, textAlign: "center" }}>
                   {Math.round(zoom * 100)}%
-                </button>
+                </span>
                 <button
                   type="button"
-                  title={id ? "Perbesar (Zoom In / Ctrl++)" : "Zoom In (Ctrl++)"}
                   onClick={() => setZoom(prev => Math.min(3.5, Number((prev + 0.15).toFixed(2))))}
-                  style={{ background: "transparent", border: "none", color: "#a5b8ad", padding: 3, cursor: "pointer", display: "inline-flex" }}
+                  style={{ background: "transparent", border: "none", color: "#a5b8ad", padding: 3, cursor: "pointer" }}
+                  title="Zoom In"
                 >
                   <ZoomIn size={13} />
                 </button>
                 <button
                   type="button"
-                  title={id ? "Reset Tampilan Penuh" : "Fit / Reset View"}
-                  onClick={handleResetView}
-                  style={{ background: "transparent", border: "none", color: "#7a8f81", padding: 3, cursor: "pointer", display: "inline-flex", borderLeft: "1px solid #233528", marginLeft: 2 }}
+                  onClick={() => { setZoom(1); setPan({ x: 0, y: 0 }); }}
+                  style={{ background: "transparent", border: "none", color: "#8da294", padding: 3, cursor: "pointer", borderLeft: "1px solid #233527", marginLeft: 2 }}
+                  title="Fit to Screen"
                 >
                   <Maximize2 size={12} />
                 </button>
               </div>
 
-              {/* Undo / Redo toolbar buttons */}
-              <div style={{ display: "flex", alignItems: "center", gap: 3, borderLeft: "1px solid #233528", paddingLeft: 8 }}>
+              {/* Undo / Redo */}
+              <div style={{ display: "flex", alignItems: "center", gap: 3, borderLeft: "1px solid #233527", paddingLeft: 6 }}>
                 <button
                   type="button"
-                  title="Undo (Ctrl+Z)"
                   onClick={handleUndo}
                   disabled={historyIndex <= 0}
-                  style={{
-                    background: historyIndex > 0 ? "#1c2a1f" : "transparent",
-                    border: "1px solid",
-                    borderColor: historyIndex > 0 ? "#2e4a36" : "#1f2a22",
-                    color: historyIndex > 0 ? "#edf5ef" : "#4e6154",
-                    borderRadius: 4,
-                    padding: "3px 6px",
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: 3,
-                    fontSize: 10,
-                    cursor: historyIndex > 0 ? "pointer" : "not-allowed",
-                  }}
+                  style={{ background: "transparent", border: "none", color: historyIndex > 0 ? "#edf5ef" : "#445548", cursor: historyIndex > 0 ? "pointer" : "default", padding: 3 }}
+                  title="Undo (Ctrl+Z)"
                 >
-                  <Undo2 size={12} />
-                  <span>Undo</span>
+                  <Undo2 size={13} />
                 </button>
-
                 <button
                   type="button"
-                  title="Redo (Ctrl+Y)"
                   onClick={handleRedo}
                   disabled={historyIndex >= history.length - 1}
-                  style={{
-                    background: historyIndex < history.length - 1 ? "#1c2a1f" : "transparent",
-                    border: "1px solid",
-                    borderColor: historyIndex < history.length - 1 ? "#2e4a36" : "#1f2a22",
-                    color: historyIndex < history.length - 1 ? "#edf5ef" : "#4e6154",
-                    borderRadius: 4,
-                    padding: "3px 6px",
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: 3,
-                    fontSize: 10,
-                    cursor: historyIndex < history.length - 1 ? "pointer" : "not-allowed",
-                  }}
+                  style={{ background: "transparent", border: "none", color: historyIndex < history.length - 1 ? "#edf5ef" : "#445548", cursor: historyIndex < history.length - 1 ? "pointer" : "default", padding: 3 }}
+                  title="Redo (Ctrl+Y)"
                 >
-                  <Redo2 size={12} />
-                  <span>Redo</span>
+                  <Redo2 size={13} />
                 </button>
               </div>
-
-              {/* Quick selection pill if items are selected */}
-              {selectedIds.size > 0 && (
-                <div style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: 5,
-                  background: "#193522",
-                  border: "1px solid #386b45",
-                  padding: "2px 7px",
-                  borderRadius: 4,
-                  fontSize: 10,
-                  color: "#b8f36b",
-                }}>
-                  <CheckSquare size={11} />
-                  <span>{selectedIds.size} {id ? "terpilih" : "selected"}</span>
-                  <button
-                    type="button"
-                    onClick={deleteSelectedPanels}
-                    title={id ? "Hapus modul terpilih" : "Delete selected modules"}
-                    style={{ background: "transparent", border: "none", color: "#ff8b8b", cursor: "pointer", display: "inline-flex", padding: 0 }}
-                  >
-                    <Trash2 size={11} />
-                  </button>
-                </div>
-              )}
             </div>
 
-            <div style={{ display: "flex", alignItems: "center", gap: 10, marginLeft: "auto" }}>
-              {site?.coordinates && (
-                <span style={{ fontSize: 10, color: "var(--green, #b8f36b)", display: "inline-flex", alignItems: "center", gap: 4, background: "#152419", padding: "2px 8px", borderRadius: 4, border: "1px solid #2e4a35" }}>
-                  <MapPin size={11} />
-                  <span style={{ maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    {site.address || `${site.coordinates.lat.toFixed(4)}, ${site.coordinates.lng.toFixed(4)}`}
-                  </span>
-                </span>
-              )}
-              <span style={{ fontSize: 10, color: "var(--muted, #93a69a)" }}>{settings.areaWidth.toLocaleString()} × {settings.areaHeight.toLocaleString()} mm</span>
+            {/* GPS Coordinates Pill */}
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <div style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 5,
+                background: "#142419",
+                border: "1px solid #2b4733",
+                padding: "3px 9px",
+                borderRadius: 20,
+                fontSize: 10,
+                color: "var(--green, #b8f36b)",
+                fontFamily: "monospace",
+                fontWeight: 700,
+              }}>
+                <MapPin size={11} />
+                <span>Koordinat ({site?.coordinates.lat.toFixed(4)}, {site?.coordinates.lng.toFixed(4)})</span>
+              </div>
             </div>
           </div>
 
-          <div className="pv-canvas-wrap" onWheel={handleWheel} style={{ position: "relative" }}>
-            {showZoomHint && (
-              <div style={{
-                position: "absolute",
-                top: "50%",
-                left: "50%",
-                transform: "translate(-50%, -50%)",
-                background: "rgba(10, 16, 12, 0.88)",
-                border: "1px solid #386b45",
-                color: "#edf5ef",
-                padding: "8px 16px",
-                borderRadius: 8,
-                fontSize: 12,
-                fontWeight: 600,
-                pointerEvents: "none",
-                zIndex: 20,
-                boxShadow: "0 4px 16px rgba(0,0,0,0.5)",
-                display: "flex",
-                alignItems: "center",
-                gap: 8,
-                backdropFilter: "blur(4px)",
-              }}>
-                <span style={{ color: "var(--green, #b8f36b)", fontSize: 13 }}>💡</span>
-                <span>{id ? "Tahan tombol Ctrl + Scroll untuk Zoom kanvas" : "Hold Ctrl + scroll to zoom canvas"}</span>
-              </div>
-            )}
+          {/* SVG Canvas Viewport */}
+          <div
+            className="pv-canvas-wrap"
+            style={{
+              flex: 1,
+              position: "relative",
+              overflow: "hidden",
+              minHeight: 480,
+              background: "#080e0a",
+              cursor: toolMode === "pan" ? "grab" : "default",
+            }}
+            onPointerDown={e => {
+              if (toolMode === "pan" || isSpacePressedRef.current || e.button === 1) {
+                isPanningRef.current = true;
+                panStartRef.current = { x: e.clientX - pan.x, y: e.clientY - pan.y };
+                (e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId);
+              }
+            }}
+            onPointerMove={e => {
+              if (isPanningRef.current) {
+                setPan({ x: e.clientX - panStartRef.current.x, y: e.clientY - panStartRef.current.y });
+              }
+            }}
+            onPointerUp={e => {
+              isPanningRef.current = false;
+              try { (e.currentTarget as HTMLDivElement).releasePointerCapture(e.pointerId); } catch { /* ignore */ }
+            }}
+            onWheel={e => {
+              e.preventDefault();
+              const delta = e.deltaY < 0 ? 0.1 : -0.1;
+              setZoom(prev => Math.min(3.5, Math.max(0.4, Number((prev + delta).toFixed(2)))));
+            }}
+          >
             <svg
-              className="pv-canvas"
-              viewBox="0 0 1000 600"
-              role="img"
-              aria-label="Interactive photovoltaic panel layout canvas"
-              onPointerDown={canvasPointerDown}
-              onPointerMove={canvasPointerMove}
-              onPointerUp={finishDrag}
-              onPointerLeave={finishDrag}
-              style={{
-                cursor: isPanningRef.current ? "grabbing" : (toolMode === "pan" || isSpacePressedRef.current ? "grab" : "crosshair")
-              }}
+              ref={svgRef}
+              viewBox={`0 0 ${viewBoxW} ${viewBoxH}`}
+              style={{ width: "100%", height: "100%", display: "block" }}
             >
-              <defs>
-                <pattern id="pv-grid-small" width="20" height="20" patternUnits="userSpaceOnUse">
-                  <path d="M 20 0 L 0 0 0 20" fill="none" stroke="#25322b" strokeWidth="0.7" />
-                </pattern>
-                <pattern id="pv-grid-large" width="100" height="100" patternUnits="userSpaceOnUse">
-                  <rect width="100" height="100" fill="url(#pv-grid-small)" />
-                  <path d="M 100 0 L 0 0 0 100" fill="none" stroke="#34463a" strokeWidth="1" />
-                </pattern>
-                <clipPath id="polygon-boundary-clip">
-                  <polygon points={svgPolygonPoints} />
-                </clipPath>
-              </defs>
-              <rect width="1000" height="600" fill="url(#pv-grid-large)" />
-
-              {/* Master transformed group for Zoom & Pan */}
-              <g transform={`translate(${500 + pan.x}, ${300 + pan.y}) scale(${zoom}) translate(-500, -300)`}>
-                {backgroundImage && (
-                  <g clipPath="url(#polygon-boundary-clip)">
-                    <image
-                      href={backgroundImage}
-                      x={originX}
-                      y={originY}
-                      width={settings.areaWidth * scale}
-                      height={settings.areaHeight * scale}
-                      preserveAspectRatio="none"
-                      opacity={backgroundOpacity}
-                      pointerEvents="none"
-                    />
-                  </g>
-                )}
-
-                {/* Site boundary polygon (Trapezoid / Custom Quad / Rect) */}
-                <polygon
-                  points={svgPolygonPoints}
-                  fill="#14221a"
-                  fillOpacity={backgroundImage ? ".15" : ".65"}
-                  stroke="#b8f36b"
-                  strokeWidth="2"
-                  strokeDasharray="8 4"
-                />
-
-                {/* Obstacles */}
-                {obstacles.map(obstacle => (
-                  <g
-                    key={obstacle.id}
-                    data-obstacle="true"
-                    onPointerDown={e => {
-                      if (toolMode === "pan" || isSpacePressedRef.current) return;
-                      e.stopPropagation();
-                      setSelectedObstacleId(obstacle.id);
-                      setSelectedIds(new Set());
-                      setDraggingObstacleId(obstacle.id);
-                      (e.currentTarget as SVGGElement).ownerSVGElement?.setPointerCapture(e.pointerId);
-                    }}
-                    style={{ cursor: "move" }}
-                  >
-                    <rect
-                      x={originX + obstacle.x * scale}
-                      y={originY + obstacle.y * scale}
-                      width={Math.max(1, obstacle.w * scale)}
-                      height={Math.max(1, obstacle.h * scale)}
-                      fill={selectedObstacleId === obstacle.id ? "#ff9f9f" : "#d45d5d"}
-                      fillOpacity=".38"
-                      stroke={selectedObstacleId === obstacle.id ? "#ffd0d0" : "#ff7777"}
-                      strokeWidth="2"
-                      strokeDasharray="5 3"
-                    />
-                    <text
-                      x={originX + (obstacle.x + obstacle.w / 2) * scale}
-                      y={originY + (obstacle.y + obstacle.h / 2) * scale}
-                      textAnchor="middle"
-                      dominantBaseline="middle"
-                      fill="#ffe2e2"
-                      fontSize="11"
-                    >
-                      {obstacle.label}
-                    </text>
-                  </g>
-                ))}
-
-                {/* Inset setback boundary polygon */}
-                <polygon
-                  points={svgSetbackPolygonPoints}
-                  fill="none"
-                  stroke="#e8b86b"
-                  strokeWidth="1.5"
-                  strokeDasharray="3 5"
-                />
-
-                {/* Vertex handles if custom polygon */}
-                {isCustomPolygon && activeCorners.map((pt, idx) => (
-                  <circle
-                    key={idx}
-                    cx={originX + pt.x * scale}
-                    cy={originY + pt.y * scale}
-                    r="4"
-                    fill="#b8f36b"
-                    stroke="#111713"
-                    strokeWidth="1.5"
-                  />
-                ))}
-
-                {/* PV Modules */}
-                {panels.map((panel, index) => {
-                  const isSelected = selectedIds.has(panel.id);
-                  return (
-                    <g
-                      key={panel.id}
-                      data-panel="true"
-                      onPointerDown={e => handlePanelPointerDown(e, panel)}
-                      style={{ cursor: "move" }}
-                    >
-                      <rect
-                        x={originX + panel.x * scale}
-                        y={originY + panel.y * scale}
-                        width={Math.max(1, panel.w * scale)}
-                        height={Math.max(1, panel.h * scale)}
-                        rx="2"
-                        fill={isSelected ? "#4fa672" : "#387a55"}
-                        fillOpacity={isSelected ? ".96" : ".86"}
-                        stroke={isSelected ? "#b8f36b" : "#7ec696"}
-                        strokeWidth={isSelected ? 2.5 : 1}
-                      />
-                      {isSelected && (
-                        <rect
-                          x={originX + panel.x * scale - 1}
-                          y={originY + panel.y * scale - 1}
-                          width={Math.max(1, panel.w * scale) + 2}
-                          height={Math.max(1, panel.h * scale) + 2}
-                          fill="none"
-                          stroke="#b8f36b"
-                          strokeWidth="0.8"
-                          strokeDasharray="3 2"
-                          pointerEvents="none"
-                        />
-                      )}
-                      <path
-                        d={`M ${originX + panel.x * scale + panel.w * scale / 2} ${originY + panel.y * scale} V ${originY + (panel.y + panel.h) * scale}`}
-                        stroke="#10251b"
-                        strokeWidth="1"
-                      />
-                      <path
-                        d={`M ${originX + panel.x * scale} ${originY + panel.y * scale + panel.h * scale / 2} H ${originX + (panel.x + panel.w) * scale}`}
-                        stroke="#10251b"
-                        strokeWidth="1"
-                      />
-                      {panel.w * scale > 26 && panel.h * scale > 16 && (
-                        <text
-                          x={originX + (panel.x + panel.w / 2) * scale}
-                          y={originY + (panel.y + panel.h / 2) * scale + 3}
-                          textAnchor="middle"
-                          fontSize="9"
-                          fill={isSelected ? "#b8f36b" : "#e2f3e8"}
-                          fontWeight="700"
-                        >
-                          {String(index + 1).padStart(2, "0")}
-                        </text>
-                      )}
-                    </g>
-                  );
-                })}
-
-                {/* Marquee Box Selection Overlay */}
-                {marquee && (
-                  <rect
-                    x={originX + Math.min(marquee.startX, marquee.currentX) * scale}
-                    y={originY + Math.min(marquee.startY, marquee.currentY) * scale}
-                    width={Math.max(1, Math.abs(marquee.currentX - marquee.startX) * scale)}
-                    height={Math.max(1, Math.abs(marquee.currentY - marquee.startY) * scale)}
-                    fill="rgba(184, 243, 107, 0.22)"
-                    stroke="#b8f36b"
-                    strokeWidth={1.5 / zoom}
-                    strokeDasharray={`${6 / zoom} ${3 / zoom}`}
+              <g transform={`translate(${pan.x}, ${pan.y}) scale(${zoom})`} transform-origin="center">
+                {/* 1. Cropped Satellite Map Background */}
+                {layers.satellite && backgroundImage && (
+                  <image
+                    href={backgroundImage}
+                    x={originX}
+                    y={originY}
+                    width={siteW * scale}
+                    height={siteH * scale}
+                    preserveAspectRatio="none"
+                    opacity={backgroundOpacity}
                     pointerEvents="none"
                   />
                 )}
 
-                <text x={originX} y={Math.max(18, originY - 12)} fill="#b8f36b" fontSize="12">
-                  SITE BOUNDARY · {settings.system.toUpperCase()}{isCustomPolygon ? " (TRAPEZIUM / POLIGON)" : ""}
-                </text>
+                {/* 2. Site Boundary Polygon */}
+                {layers.siteBoundary && (
+                  <rect
+                    x={originX}
+                    y={originY}
+                    width={siteW * scale}
+                    height={siteH * scale}
+                    fill={backgroundImage ? "#0f171220" : "#0d1a12"}
+                    stroke="#22c55e"
+                    strokeWidth="2.5"
+                    strokeDasharray="6 4"
+                    rx="4"
+                  />
+                )}
+
+                {/* 3. Walkways (Orange Corridors) */}
+                {layers.walkway && walkways.map(w => (
+                  <g key={w.id}>
+                    <rect
+                      x={originX + w.x * scale}
+                      y={originY + w.y * scale}
+                      width={w.w * scale}
+                      height={w.h * scale}
+                      fill="#ea580c"
+                      fillOpacity="0.45"
+                      stroke="#f97316"
+                      strokeWidth="1.5"
+                      strokeDasharray="4 3"
+                    />
+                    <text
+                      x={originX + (w.x + w.w / 2) * scale}
+                      y={originY + (w.y + w.h / 2) * scale}
+                      textAnchor="middle"
+                      dominantBaseline="middle"
+                      fill="#fed7aa"
+                      fontSize="9"
+                      fontWeight="700"
+                    >
+                      {w.label || "WALKWAY"}
+                    </text>
+                  </g>
+                ))}
+
+                {/* 4. Keepouts / Obstacles */}
+                {layers.keepouts && obstacles.map(obs => (
+                  <g key={obs.id}>
+                    <rect
+                      x={originX + obs.x * scale}
+                      y={originY + obs.y * scale}
+                      width={obs.w * scale}
+                      height={obs.h * scale}
+                      fill="#ef4444"
+                      fillOpacity="0.4"
+                      stroke="#f87171"
+                      strokeWidth="2"
+                      strokeDasharray="5 3"
+                    />
+                    <text
+                      x={originX + (obs.x + obs.w / 2) * scale}
+                      y={originY + (obs.y + obs.h / 2) * scale}
+                      textAnchor="middle"
+                      dominantBaseline="middle"
+                      fill="#ffffff"
+                      fontSize="10"
+                      fontWeight="800"
+                    >
+                      {obs.label}
+                    </text>
+                  </g>
+                ))}
+
+                {/* 5. Field Segments Outlines & Tags */}
+                {layers.fieldSegments && segments.map(seg => {
+                  if (!seg.visible || !seg.polygon || seg.polygon.length < 3) return null;
+                  const ptsStr = seg.polygon.map(p => `${originX + p.x * scale},${originY + p.y * scale}`).join(" ");
+                  const isActive = seg.id === activeSegment?.id;
+
+                  // Center position for segment badge
+                  const avgX = seg.polygon.reduce((acc, p) => acc + p.x, 0) / seg.polygon.length;
+                  const minY = Math.min(...seg.polygon.map(p => p.y));
+
+                  return (
+                    <g key={seg.id} onClick={() => setActiveSegmentId(seg.id)} style={{ cursor: "pointer" }}>
+                      <polygon
+                        points={ptsStr}
+                        fill={seg.color}
+                        fillOpacity={isActive ? "0.15" : "0.08"}
+                        stroke={seg.color}
+                        strokeWidth={isActive ? "3" : "1.8"}
+                        strokeDasharray={isActive ? "none" : "6 4"}
+                      />
+                      {/* Floating Segment Badge */}
+                      <g transform={`translate(${originX + avgX * scale - 45}, ${originY + minY * scale + 10})`}>
+                        <rect
+                          width="90"
+                          height="22"
+                          rx="4"
+                          fill="#0f172af2"
+                          stroke={seg.color}
+                          strokeWidth="1.5"
+                        />
+                        <text
+                          x="45"
+                          y="15"
+                          textAnchor="middle"
+                          fill="#ffffff"
+                          fontSize="10.5"
+                          fontWeight="800"
+                        >
+                          {seg.name}
+                        </text>
+                      </g>
+                    </g>
+                  );
+                })}
+
+                {/* 6. PV Modules: Authentic Crystalline Solar Cells */}
+                {layers.pvModules && segments.map(seg => {
+                  if (!seg.visible) return null;
+                  return seg.panels.map(panel => {
+                    const isSelected = selectedIds.has(panel.id);
+                    const px = originX + panel.x * scale;
+                    const py = originY + panel.y * scale;
+                    const pw = Math.max(1, panel.w * scale);
+                    const ph = Math.max(1, panel.h * scale);
+
+                    return (
+                      <g
+                        key={panel.id}
+                        onClick={e => {
+                          e.stopPropagation();
+                          if (e.shiftKey) {
+                            const next = new Set(selectedIds);
+                            if (next.has(panel.id)) next.delete(panel.id);
+                            else next.add(panel.id);
+                            setSelectedIds(next);
+                          } else {
+                            setSelectedIds(new Set([panel.id]));
+                          }
+                        }}
+                      >
+                        {/* Outer Aluminum Frame */}
+                        <rect
+                          x={px}
+                          y={py}
+                          width={pw}
+                          height={ph}
+                          rx="1"
+                          fill="#0f172a"
+                          stroke={isSelected ? "#b8f36b" : (seg.color || "#38bdf8")}
+                          strokeWidth={isSelected ? 2 : 0.8}
+                        />
+                        {/* Photovoltaic Deep Blue Cell Surface */}
+                        <rect
+                          x={px + 0.8}
+                          y={py + 0.8}
+                          width={Math.max(1, pw - 1.6)}
+                          height={Math.max(1, ph - 1.6)}
+                          fill={isSelected ? "#1d4ed8" : "#1e3a8a"}
+                          opacity="0.94"
+                        />
+                        {/* Silver Busbars & Grid Texture */}
+                        {pw > 16 && ph > 10 && (
+                          <>
+                            <line
+                              x1={px + pw / 2}
+                              y1={py + 1}
+                              x2={px + pw / 2}
+                              y2={py + ph - 1}
+                              stroke="#93c5fd"
+                              strokeWidth="0.6"
+                              strokeOpacity="0.75"
+                            />
+                            <line
+                              x1={px + 1}
+                              y1={py + ph / 2}
+                              x2={px + pw - 1}
+                              y2={py + ph / 2}
+                              stroke="#93c5fd"
+                              strokeWidth="0.5"
+                              strokeOpacity="0.6"
+                            />
+                          </>
+                        )}
+                      </g>
+                    );
+                  });
+                })}
+              </g>
+
+              {/* ── Overlays: Scale Bar & North Compass ── */}
+              {/* Compass Rose */}
+              <g transform={`translate(${viewBoxW - 55}, ${viewBoxH - 85})`}>
+                <circle cx="20" cy="20" r="18" fill="#0f172af0" stroke="#38bdf8" strokeWidth="1.5" />
+                <path d="M 20 6 L 25 20 L 20 17 L 15 20 Z" fill="#ef4444" />
+                <path d="M 20 34 L 25 20 L 20 17 L 15 20 Z" fill="#94a3b8" />
+                <text x="20" y="5" textAnchor="middle" fill="#38bdf8" fontSize="8" fontWeight="800">N</text>
+              </g>
+
+              {/* Metric Scale Bar */}
+              <g transform={`translate(${viewBoxW - 140}, ${viewBoxH - 30})`}>
+                <rect width="125" height="18" rx="3" fill="#0f172af0" stroke="#334155" strokeWidth="1" />
+                <line x1="12" y1="12" x2="112" y2="12" stroke="#ffffff" strokeWidth="2" />
+                <line x1="12" y1="8" x2="12" y2="14" stroke="#ffffff" strokeWidth="2" />
+                <line x1="45" y1="9" x2="45" y2="13" stroke="#ffffff" strokeWidth="1.5" />
+                <line x1="78" y1="9" x2="78" y2="13" stroke="#ffffff" strokeWidth="1.5" />
+                <line x1="112" y1="8" x2="112" y2="14" stroke="#ffffff" strokeWidth="2" />
+                <text x="12" y="7" fill="#cbd5e1" fontSize="7" fontWeight="700">0</text>
+                <text x="45" y="7" fill="#cbd5e1" fontSize="7" fontWeight="700">10</text>
+                <text x="78" y="7" fill="#cbd5e1" fontSize="7" fontWeight="700">20</text>
+                <text x="112" y="7" fill="#cbd5e1" fontSize="7" fontWeight="700">30 m</text>
               </g>
             </svg>
           </div>
 
-          <div className="pv-canvas-footer">
-            <span><i className="pv-legend-dot" /> {panels.length} modules</span>
+          {/* Canvas Footer Bar */}
+          <div className="pv-canvas-footer" style={{ background: "#0a110c", borderTop: "1.5px solid #1c2b20" }}>
             <span>
-              {copy.hint} · <strong style={{ color: "#b8f36b" }}>Tarik Kotak</strong> Seleksi Bulk · <strong style={{ color: "#b8f36b" }}>Scroll</strong> Zoom · <strong style={{ color: "#b8f36b" }}>Space+Drag</strong> Geser · <strong style={{ color: "#b8f36b" }}>Ctrl+Z</strong> Undo
+              <i className="pv-legend-dot" /> {totalModul} modules ({totalCapacityKwp.toFixed(2)} kWp) across {segments.length} segments
+            </span>
+            <span>
+              {isId ? "Klik segmen untuk mengedit · Seret untuk geser kanvas · Scroll untuk zoom" : "Click segment to edit · Drag to pan · Scroll to zoom"}
             </span>
           </div>
-
           {notice && <div className="pv-notice">{notice}</div>}
-          {!panels.length && <div className="pv-empty-note">{copy.empty}</div>}
         </div>
+
+        {/* ════ RIGHT COLUMN: LAYERS & DESIGN SUMMARY ════ */}
+        <aside style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+          {/* Card 1: Layers Controller */}
+          <div className="panel" style={{ padding: "14px 16px" }}>
+            <div style={{ fontSize: 13, fontWeight: 800, color: "#edf5ef", display: "flex", alignItems: "center", gap: 7, marginBottom: 12 }}>
+              <Layers size={16} style={{ color: "var(--green, #b8f36b)" }} />
+              <span>Layers</span>
+            </div>
+
+            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              <div className="pv-layer-row" onClick={() => setLayers(prev => ({ ...prev, siteBoundary: !prev.siteBoundary }))}>
+                <label>
+                  <input type="checkbox" checked={layers.siteBoundary} onChange={() => {}} />
+                  <span className="pv-layer-dot" style={{ background: "#22c55e" }} />
+                  <span>Boundary Site</span>
+                </label>
+              </div>
+
+              <div className="pv-layer-row" onClick={() => setLayers(prev => ({ ...prev, fieldSegments: !prev.fieldSegments }))}>
+                <label>
+                  <input type="checkbox" checked={layers.fieldSegments} onChange={() => {}} />
+                  <span className="pv-layer-dot" style={{ background: "#8b5cf6" }} />
+                  <span>Field Segments</span>
+                </label>
+              </div>
+
+              <div className="pv-layer-row" onClick={() => setLayers(prev => ({ ...prev, pvModules: !prev.pvModules }))}>
+                <label>
+                  <input type="checkbox" checked={layers.pvModules} onChange={() => {}} />
+                  <span className="pv-layer-dot" style={{ background: "#3b82f6" }} />
+                  <span>PV Modules</span>
+                </label>
+              </div>
+
+              <div className="pv-layer-row" onClick={() => setLayers(prev => ({ ...prev, keepouts: !prev.keepouts }))}>
+                <label>
+                  <input type="checkbox" checked={layers.keepouts} onChange={() => {}} />
+                  <span className="pv-layer-dot" style={{ background: "#ef4444" }} />
+                  <span>Keepouts / Obstacle</span>
+                </label>
+              </div>
+
+              <div className="pv-layer-row" onClick={() => setLayers(prev => ({ ...prev, walkway: !prev.walkway }))}>
+                <label>
+                  <input type="checkbox" checked={layers.walkway} onChange={() => {}} />
+                  <span className="pv-layer-dot" style={{ background: "#f97316" }} />
+                  <span>Walkway</span>
+                </label>
+              </div>
+
+              <div className="pv-layer-row" onClick={() => setLayers(prev => ({ ...prev, roofBuilding: !prev.roofBuilding }))}>
+                <label>
+                  <input type="checkbox" checked={layers.roofBuilding} onChange={() => {}} />
+                  <span className="pv-layer-dot" style={{ background: "#64748b" }} />
+                  <span>Roof / Building</span>
+                </label>
+              </div>
+
+              <div className="pv-layer-row" onClick={() => setLayers(prev => ({ ...prev, satellite: !prev.satellite }))}>
+                <label>
+                  <input type="checkbox" checked={layers.satellite} onChange={() => {}} />
+                  <span className="pv-layer-dot" style={{ background: "#06b6d4" }} />
+                  <span>Citra Satelit</span>
+                </label>
+              </div>
+            </div>
+
+            {/* Satellite Background Upload / Remove */}
+            <div style={{ marginTop: 12, paddingTop: 10, borderTop: "1px solid #1a2a1f", display: "flex", flexDirection: "column", gap: 8 }}>
+              <input ref={imageInputRef} type="file" accept="image/*" style={{ display: "none" }} onChange={e => { handleBackgroundUpload(e.target.files?.[0]); e.currentTarget.value = ""; }} />
+              <button
+                type="button"
+                className="secondary-button"
+                style={{ width: "100%", fontSize: 11, padding: "7px 10px", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}
+                onClick={() => imageInputRef.current?.click()}
+              >
+                <ImagePlus size={14} /> {isId ? "Unggah Screenshot Atap" : "Upload Satellite Image"}
+              </button>
+
+              {backgroundImage && (
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <label style={{ fontSize: 10, color: "#8da294", flex: 1 }}>
+                    Opacity: {Math.round(backgroundOpacity * 100)}%
+                    <input
+                      type="range"
+                      min="0.1"
+                      max="1"
+                      step="0.05"
+                      value={backgroundOpacity}
+                      onChange={e => {
+                        const val = Number(e.target.value);
+                        setBackgroundOpacity(val);
+                        saveDraft(segments, obstacles, walkways, site, backgroundImage, val);
+                      }}
+                      style={{ width: "100%", marginTop: 2 }}
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    className="pv-icon-btn"
+                    title="Hapus Citra"
+                    onClick={() => {
+                      setBackgroundImage("");
+                      saveDraft(segments, obstacles, walkways, site, "");
+                    }}
+                  >
+                    <X size={14} style={{ color: "#ef4444" }} />
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Card 2: Ringkasan Desain (Design Summary Table) */}
+          <div className="panel" style={{ padding: "14px 16px" }}>
+            <div style={{ fontSize: 13, fontWeight: 800, color: "#edf5ef", display: "flex", alignItems: "center", gap: 7, marginBottom: 12 }}>
+              <Table size={16} style={{ color: "var(--green, #b8f36b)" }} />
+              <span>Ringkasan Desain</span>
+            </div>
+
+            <table className="pv-summary-table">
+              <thead>
+                <tr>
+                  <th>Segment</th>
+                  <th>Modul</th>
+                  <th>Kapasitas (kWp)</th>
+                  <th>Luas (m²)</th>
+                </tr>
+              </thead>
+              <tbody>
+                {segments.map(seg => {
+                  const kwp = ((seg.panels.length * (seg.moduleWatts || 580)) / 1000).toFixed(2);
+                  const areaM2 = (seg.panels.length * ((seg.moduleWidth || 2278) * (seg.moduleHeight || 1134)) / 1e6).toFixed(1);
+                  return (
+                    <tr key={seg.id}>
+                      <td style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                        <span style={{ width: 8, height: 8, borderRadius: "50%", background: seg.color }} />
+                        <span style={{ fontWeight: 700 }}>{seg.name}</span>
+                      </td>
+                      <td>{seg.panels.length}</td>
+                      <td style={{ color: "var(--green, #b8f36b)", fontWeight: 700 }}>{kwp}</td>
+                      <td>{areaM2}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+              <tfoot>
+                <tr>
+                  <td>Total</td>
+                  <td>{totalModul}</td>
+                  <td>{totalCapacityKwp.toFixed(2)}</td>
+                  <td>{totalModuleArea.toFixed(2)}</td>
+                </tr>
+              </tfoot>
+            </table>
+
+            {/* Ekspor Button */}
+            <div style={{ marginTop: 14 }}>
+              <button
+                type="button"
+                style={{
+                  width: "100%",
+                  background: "var(--green, #b8f36b)",
+                  color: "#08120a",
+                  border: "none",
+                  borderRadius: 7,
+                  padding: "9px 12px",
+                  fontSize: 12,
+                  fontWeight: 800,
+                  cursor: "pointer",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: 7,
+                  boxShadow: "0 2px 10px rgba(184, 243, 107, 0.3)",
+                }}
+                onClick={handleExportDxf}
+              >
+                <Download size={15} /> Ekspor CAD (DXF)
+              </button>
+
+              <button
+                type="button"
+                style={{
+                  width: "100%",
+                  marginTop: 6,
+                  background: "#121d15",
+                  color: "#edf5ef",
+                  border: "1px solid #233527",
+                  borderRadius: 6,
+                  padding: "7px 10px",
+                  fontSize: 11,
+                  fontWeight: 700,
+                  cursor: "pointer",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: 6,
+                }}
+                onClick={handleExportCsv}
+              >
+                <Download size={13} /> Ekspor CSV (BoQ)
+              </button>
+            </div>
+          </div>
+        </aside>
       </div>
 
-      <div className="pv-disclaimer">
-        MVP geometry only: obstacle movement removes panels that would overlap the moved obstacle. This layout does not account for row-to-row shading, wind/seismic loads, structural checks, electrical string limits, or code compliance. Validate designs with project-specific engineering requirements.
-      </div>
-
+      {/* Google Maps Scanner Modal */}
       <GoogleMapsModal
         isOpen={isMapsModalOpen}
         onClose={() => setIsMapsModalOpen(false)}
@@ -1803,35 +1918,5 @@ export default function PVLayout({
         initialPolygonPoints={site?.polygonPoints}
       />
     </section>
-  );
-}
-
-function NumberField({
-  label,
-  value,
-  min,
-  max,
-  step,
-  onChange
-}: {
-  label: string;
-  value: number;
-  min?: number;
-  max?: number;
-  step?: number;
-  onChange: (value: number) => void;
-}) {
-  return (
-    <label className="pv-field">
-      <span>{label}</span>
-      <input
-        type="number"
-        value={value}
-        min={min}
-        max={max}
-        step={step}
-        onChange={e => onChange(Number(e.target.value))}
-      />
-    </label>
   );
 }
