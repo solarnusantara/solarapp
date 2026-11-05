@@ -209,7 +209,11 @@ export function useEngine(args: {
 
       setStep("Menjalankan simulasi 8760 jam");
       setStatus("running");
-      const sim = await C.simulate(p.input, { condition_set_id: p.link.helio_condition_set_id }, { signal: ac.signal, onStatus: (s) => setStep(`Simulasi: ${s}`) });
+      // helio's simulate only uses the circuit carried in the input; circuit/auto stores it on the
+      // design but does not inject it. Without this the run falls back to the lump plant (one
+      // inverter per plane, AC = inverter_ac_kw per plane) and gives badly wrong clipping/AC.
+      const simInput = circuitRes?.circuit ? { ...p.input, circuit: circuitRes.circuit as typeof p.input.circuit } : p.input;
+      const sim = await C.simulate(simInput, { condition_set_id: p.link.helio_condition_set_id }, { signal: ac.signal, onStatus: (s) => setStep(`Simulasi: ${s}`) });
       for (const w of sim.warnings) all.push(w);
 
       let report: Awaited<ReturnType<typeof C.createReport>> | null = null;
