@@ -279,7 +279,9 @@ function normalizeSegmentCorners(rawSegment: UnknownRecord, warnings: string[], 
   const candidates = [
     boundary?.corners,
     rawSegment.corners,
-    rawSegment.polygonCorners
+    rawSegment.polygonCorners,
+    // Current PVLayout.tsx saves the segment ring as `polygon`.
+    rawSegment.polygon
   ];
   for (const candidate of candidates) {
     if (!Array.isArray(candidate)) continue;
@@ -297,7 +299,7 @@ function segmentSettings(rawSegment: UnknownRecord, fallback: LayoutSettings): P
     ["moduleWidth", ["moduleWidth", "panelWidth"]],
     ["moduleHeight", ["moduleHeight", "panelHeight"]],
     ["gap", ["gap"]],
-    ["watts", ["watts", "panelWatts"]],
+    ["watts", ["watts", "panelWatts", "moduleWatts"]],
     ["tilt", ["tilt"]],
     ["setback", ["setback"]],
     ["rows", ["rows"]],

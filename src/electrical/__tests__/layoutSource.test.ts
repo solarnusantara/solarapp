@@ -248,6 +248,65 @@ describe("layoutSource — segments", () => {
     expect(b.settings.watts).toBe(580);
   });
 
+  it("reads the current PVLayout segment shape (polygon + moduleWatts)", () => {
+    const snapshot = parseLayoutPayload({
+      settings: { watts: 580 },
+      panels: [
+        { ...panel(1), segmentId: "seg-a" },
+        { ...panel(2, 1200), segmentId: "seg-a" },
+        { ...panel(3, 2400), segmentId: "seg-b" }
+      ],
+      segments: [
+        {
+          id: "seg-a",
+          name: "Segment A",
+          color: "#3b82f6",
+          polygon: [
+            { x: 0, y: 0 },
+            { x: 10000, y: 0 },
+            { x: 10000, y: 5000 },
+            { x: 0, y: 5000 }
+          ],
+          orientation: "landscape",
+          tilt: 10,
+          azimuth: 0,
+          gap: 20,
+          setback: 300,
+          moduleWatts: 744,
+          moduleWidth: 2000,
+          moduleHeight: 1000,
+          panels: [],
+          visible: true
+        },
+        {
+          id: "seg-b",
+          name: "Segment B",
+          polygon: [
+            { x: 20000, y: 0 },
+            { x: 30000, y: 0 },
+            { x: 30000, y: 5000 }
+          ],
+          moduleWatts: 580,
+          moduleWidth: 2278,
+          moduleHeight: 1134,
+          panels: [],
+          visible: true
+        }
+      ]
+    });
+
+    expect(snapshot.segments).toHaveLength(2);
+    const [a, b] = snapshot.segments;
+    expect(a.corners).toHaveLength(4);
+    expect(a.warnings).toEqual([]);
+    expect(a.settings.watts).toBe(744);
+    expect(a.settings.moduleWidth).toBe(2000);
+    expect(a.dcKwp).toBeCloseTo(1.488, 6);
+    expect(b.corners).toHaveLength(3);
+    expect(b.settings.watts).toBe(580);
+    expect(b.dcKwp).toBeCloseTo(0.58, 6);
+  });
+
   it("groups unassigned and unknown-segment panels into an implicit fallback segment", () => {
     const snapshot = parseLayoutPayload({
       settings: { watts: 550 },

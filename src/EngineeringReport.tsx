@@ -26,14 +26,18 @@ import {
   Box,
 } from "lucide-react";
 import {
-  fetchSolarClimatology,
   findNearestPlnSubstations,
 } from "./gisSolarService";
+import ReportsHost, { type ReportView } from "./reports/ReportsHost";
+import { useReportData } from "./reports/useReportData";
+import { engineYield, lossLines, out as engineOut } from "./reports/model";
+import { pct as fmtPct, n as fmtNum, DASH } from "./reports/format";
 import type {
   SolarYieldResult,
   PlnSubstation,
 } from "./gisSolarService";
 import { REAL_PROJECTS, getProjectDefaultLayout } from "./defaultProjectsData";
+import * as api from "./api";
 
 type Props = {
   lang?: "en" | "id";
@@ -83,7 +87,7 @@ function computeSolarPosition(hour: number, lat: number, lng: number) {
 // ============================================================================
 // REAL 3D VIEWPORT COMPONENT (THREE.JS / WEBGL)
 // ============================================================================
-function Report3DViewport({
+export function Report3DViewport({
   panels,
   obstacles,
   areaW,
@@ -102,6 +106,8 @@ function Report3DViewport({
   titleBadge,
   cameraTransform,
   onCameraChange,
+  roof3dConfig,
+  projectId,
 }: {
   panels: any[];
   obstacles: any[];
@@ -121,12 +127,34 @@ function Report3DViewport({
   titleBadge?: string;
   cameraTransform?: { position: [number, number, number]; target: [number, number, number] } | null;
   onCameraChange?: (cam: { position: [number, number, number]; target: [number, number, number] }) => void;
+  roof3dConfig?: any;
+  projectId?: string | null;
 }) {
   const mountRef = useRef<HTMLDivElement>(null);
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
   const controlsRef = useRef<OrbitControls | null>(null);
   const [hour, setHour] = useState(defaultHour);
   const [cameraPreset, setCameraPreset] = useState<"iso" | "top">("iso");
+
+  const effectiveRoof3d = useMemo(() => {
+    if (roof3dConfig) return roof3dConfig;
+    if (projectId) {
+      try {
+        const raw = localStorage.getItem(`solar-apps-3d-roof:${projectId}`);
+        if (raw) return JSON.parse(raw);
+      } catch {}
+    }
+    if (projectId?.includes("mas-silueta")) {
+      return {
+        surfaceMode: "roof-multi-3",
+        ridgeAxis: "NS",
+        roofFitMode: "fit-panels",
+        wallHeight: 5.0,
+        roofPitchDeg: 10,
+      };
+    }
+    return null;
+  }, [roof3dConfig, projectId]);
 
   useEffect(() => {
     setHour(defaultHour);
@@ -412,60 +440,7 @@ function Report3DViewport({
       }
     });
 
-    // Building Roof & Walls
-    const wallMat = new THREE.MeshStandardMaterial({
-      color: isNight ? 0x1e293b : 0x475569,
-      roughness: 0.8,
-    });
-    const roofMat = new THREE.MeshStandardMaterial({
-      color: isNight ? 0x0f172a : 0xf1f5f9,
-      roughness: 0.7,
-    });
-
-    if (siteCorners && siteCorners.length >= 3) {
-      const shape = new THREE.Shape();
-      siteCorners.forEach((pt, idx) => {
-        const sx = pt.x / 1000 - centerX;
-        const sz = pt.y / 1000 - centerZ;
-        if (idx === 0) shape.moveTo(sx, -sz);
-        else shape.lineTo(sx, -sz);
-      });
-      shape.closePath();
-
-      const extrudeGeom = new THREE.ExtrudeGeometry(shape, {
-        depth: buildingHeight,
-        bevelEnabled: false,
-      });
-      extrudeGeom.rotateX(-Math.PI / 2);
-      const wallMesh = new THREE.Mesh(extrudeGeom, wallMat);
-      wallMesh.position.y = 0; // Fixed: starts from ground level up to buildingHeight
-      wallMesh.castShadow = true;
-      wallMesh.receiveShadow = true;
-      scene.add(wallMesh);
-
-      const roofGeom = new THREE.ShapeGeometry(shape);
-      roofGeom.rotateX(-Math.PI / 2);
-      const roofMesh = new THREE.Mesh(roofGeom, roofMat);
-      roofMesh.position.y = buildingHeight + 0.02;
-      roofMesh.receiveShadow = true;
-      scene.add(roofMesh);
-    } else {
-      const boxGeom = new THREE.BoxGeometry(areaWM, buildingHeight, areaHM);
-      const boxMesh = new THREE.Mesh(boxGeom, wallMat);
-      boxMesh.position.set(0, buildingHeight / 2, 0);
-      boxMesh.castShadow = true;
-      boxMesh.receiveShadow = true;
-      scene.add(boxMesh);
-
-      const roofTopGeom = new THREE.PlaneGeometry(areaWM, areaHM);
-      roofTopGeom.rotateX(-Math.PI / 2);
-      const roofTopMesh = new THREE.Mesh(roofTopGeom, roofMat);
-      roofTopMesh.position.set(0, buildingHeight + 0.02, 0);
-      roofTopMesh.receiveShadow = true;
-      scene.add(roofTopMesh);
-    }
-
-    // PV Modules Array (InstancedMesh with metallic sheen & elevation offset)
+    // 1. Gather display panels
     let displayPanels = panels;
     if (!displayPanels || displayPanels.length === 0) {
       displayPanels = [];
@@ -485,12 +460,185 @@ function Report3DViewport({
       }
     }
 
+    // 2. Compute panel bounding box in millimeters
+    let pMinX = Infinity, pMaxX = -Infinity, pMinY = Infinity, pMaxY = -Infinity;
+    displayPanels.forEach((p: any) => {
+      const px = Number(p.x) || 0;
+      const py = Number(p.y) || 0;
+      const pw = Number(p.w) || moduleW;
+      const ph = Number(p.h) || moduleH;
+      if (px < pMinX) pMinX = px;
+      if (px + pw > pMaxX) pMaxX = px + pw;
+      if (py < pMinY) pMinY = py;
+      if (py + ph > pMaxY) pMaxY = py + ph;
+    });
+
+    const hasPanels = Number.isFinite(pMinX) && Number.isFinite(pMaxX) && pMaxX > pMinX;
+    const panelSpanW = hasPanels ? (pMaxX - pMinX) / 1000 : areaWM;
+    const panelSpanH = hasPanels ? (pMaxY - pMinY) / 1000 : areaHM;
+    const panelCenterMmX = hasPanels ? (pMinX + pMaxX) / 2 : areaW / 2;
+    const panelCenterMmY = hasPanels ? (pMinY + pMaxY) / 2 : areaH / 2;
+
+    // 3. Configure roof mode, dimensions, orientation synced from PV Layout 3D
+    const r3d = effectiveRoof3d;
+    let mode = r3d?.surfaceMode || (projectId?.includes("mas-silueta") ? "roof-multi-3" : "auto");
+    if (mode === "auto") {
+      mode = isGround ? "flat" : projectId?.includes("mas-silueta") ? "roof-multi-3" : "roof-gable";
+    }
+    const isMultiBay = mode === "roof-multi-2" || mode === "roof-multi-3" || mode === "roof-multi-4";
+    const bayCount = mode === "roof-multi-2" ? 2 : mode === "roof-multi-4" ? 4 : mode === "roof-multi-3" ? 3 : 1;
+    const isGable = mode === "roof-gable" || isMultiBay;
+    const ridgeAxis: "NS" | "WE" = r3d?.ridgeAxis || "NS";
+    const wallH = r3d?.wallHeight ? Number(r3d.wallHeight) : buildingHeight;
+    const pitchDeg = r3d?.roofPitchDeg ? Number(r3d.roofPitchDeg) : (tilt || 10);
+    const roofPitch = Math.max(1, Math.min(45, pitchDeg)) * (Math.PI / 180);
+
+    let buildingW = areaWM;
+    let buildingH = areaHM;
+    if (r3d?.roofFitMode === "custom" && Number(r3d.customRoofW) > 0) {
+      buildingW = Number(r3d.customRoofW);
+      buildingH = Number(r3d.customRoofH) > 0 ? Number(r3d.customRoofH) : Math.max(10, Math.round(panelSpanH + 6));
+    } else if (r3d?.roofFitMode === "fit-panels" || !isGround) {
+      buildingW = Math.max(10, Math.round(panelSpanW + 6));
+      buildingH = Math.max(10, Math.round(panelSpanH + 6));
+    }
+
+    const halfW = buildingW / 2;
+    const halfH = buildingH / 2;
+    const baseRoofY = wallH;
+
+    // 4. Roof height function
+    let roofHeight: (x: number, z: number) => number;
+    if (isGable) {
+      if (ridgeAxis === "NS") {
+        const bayW = buildingW / bayCount;
+        const halfBayW = bayW / 2;
+        const bayRidgeRise = halfBayW * Math.tan(roofPitch);
+        roofHeight = (x: number) => {
+          const xNorm = Math.max(0, Math.min(buildingW - 0.001, x + halfW));
+          const bayIdx = Math.floor(xNorm / bayW);
+          const bayCenterX = (bayIdx + 0.5) * bayW - halfW;
+          const deltaX = x - bayCenterX;
+          return baseRoofY + bayRidgeRise - Math.abs(deltaX) * Math.tan(roofPitch);
+        };
+      } else {
+        const bayH = buildingH / bayCount;
+        const halfBayH = bayH / 2;
+        const bayRidgeRise = halfBayH * Math.tan(roofPitch);
+        roofHeight = (_x: number, z: number) => {
+          const zNorm = Math.max(0, Math.min(buildingH - 0.001, z + halfH));
+          const bayIdx = Math.floor(zNorm / bayH);
+          const bayCenterZ = (bayIdx + 0.5) * bayH - halfH;
+          const deltaZ = z - bayCenterZ;
+          return baseRoofY + bayRidgeRise - Math.abs(deltaZ) * Math.tan(roofPitch);
+        };
+      }
+    } else {
+      roofHeight = () => baseRoofY;
+    }
+
+    // Building Roof & Walls
+    const wallMat = new THREE.MeshStandardMaterial({
+      color: isNight ? 0x1e293b : 0x475569,
+      roughness: 0.8,
+    });
+    const roofMat = new THREE.MeshStandardMaterial({
+      color: isNight ? 0x0f172a : 0x8ba2b8,
+      roughness: 0.88,
+      metalness: 0.18,
+      side: THREE.DoubleSide
+    });
+
+    if (!isGround) {
+      // Main warehouse box walls
+      const wallGeom = new THREE.BoxGeometry(buildingW, baseRoofY, buildingH);
+      const wallMesh = new THREE.Mesh(wallGeom, wallMat);
+      wallMesh.position.set(0, baseRoofY / 2 - 0.08, 0);
+      wallMesh.castShadow = true;
+      wallMesh.receiveShadow = true;
+      scene.add(wallMesh);
+
+      // Pitched triangular gables
+      if (isGable) {
+        const gableMat = new THREE.MeshStandardMaterial({
+          color: isNight ? 0x1e293b : 0x475569,
+          roughness: 0.8,
+          side: THREE.DoubleSide
+        });
+
+        if (ridgeAxis === "NS") {
+          const bayW = buildingW / bayCount;
+          const halfBayW = bayW / 2;
+          const bayRidgeRise = halfBayW * Math.tan(roofPitch);
+          for (let b = 0; b < bayCount; b++) {
+            const xStart = b * bayW - halfW;
+            const xCenter = (b + 0.5) * bayW - halfW;
+            const xEnd = (b + 1) * bayW - halfW;
+            const tri = new THREE.Shape([
+              new THREE.Vector2(xStart, 0),
+              new THREE.Vector2(xEnd, 0),
+              new THREE.Vector2(xCenter, bayRidgeRise),
+            ]);
+            const geom = new THREE.ShapeGeometry(tri);
+            for (const zEnd of [-halfH, halfH]) {
+              const gable = new THREE.Mesh(geom, gableMat);
+              gable.position.set(0, baseRoofY - 0.08, zEnd);
+              gable.castShadow = true;
+              gable.receiveShadow = true;
+              scene.add(gable);
+            }
+          }
+        } else {
+          const bayH = buildingH / bayCount;
+          const halfBayH = bayH / 2;
+          const bayRidgeRise = halfBayH * Math.tan(roofPitch);
+          for (let b = 0; b < bayCount; b++) {
+            const zStart = b * bayH - halfH;
+            const zCenter = (b + 0.5) * bayH - halfH;
+            const zEnd = (b + 1) * bayH - halfH;
+            const tri = new THREE.Shape([
+              new THREE.Vector2(zStart, 0),
+              new THREE.Vector2(zEnd, 0),
+              new THREE.Vector2(zCenter, bayRidgeRise),
+            ]);
+            const geom = new THREE.ShapeGeometry(tri);
+            for (const xEnd of [-halfW, halfW]) {
+              const gable = new THREE.Mesh(geom, gableMat);
+              gable.rotation.y = Math.PI / 2;
+              gable.position.set(xEnd, baseRoofY - 0.08, 0);
+              gable.castShadow = true;
+              gable.receiveShadow = true;
+              scene.add(gable);
+            }
+          }
+        }
+      }
+
+      // Corrugated / Pitched Roof Surface Mesh
+      const segX = Math.max(32, bayCount * 16);
+      const segZ = Math.max(32, bayCount * 16);
+      const surfaceGeom = new THREE.PlaneGeometry(buildingW, buildingH, segX, segZ);
+      surfaceGeom.rotateX(-Math.PI / 2);
+      const pos = surfaceGeom.attributes.position;
+      for (let i = 0; i < pos.count; i++) {
+        const x = pos.getX(i);
+        const z = pos.getZ(i);
+        pos.setY(i, roofHeight(x, z) + 0.025);
+      }
+      pos.needsUpdate = true;
+      surfaceGeom.computeVertexNormals();
+
+      const surfaceMesh = new THREE.Mesh(surfaceGeom, roofMat);
+      surfaceMesh.receiveShadow = true;
+      scene.add(surfaceMesh);
+    }
+
+    // PV Modules Array (InstancedMesh with metallic sheen & elevation offset)
     const n = displayPanels.length;
     if (n > 0) {
       const samplePanel = displayPanels[0];
       const pW = (Number(samplePanel?.w) || moduleW || 1134) / 1000;
       const pH = (Number(samplePanel?.h) || moduleH || 2278) / 1000;
-      const tiltRad = ((tilt || 10) * Math.PI) / 180;
 
       const panelGeom = new THREE.BoxGeometry(pW, 0.05, pH);
       const panelMat = new THREE.MeshStandardMaterial({
@@ -506,13 +654,32 @@ function Report3DViewport({
       displayPanels.forEach((p, idx) => {
         const pw = (Number(p.w) || moduleW) / 1000;
         const ph = (Number(p.h) || moduleH) / 1000;
-        const px = (Number(p.x) || 0) / 1000 - centerX + pw / 2;
-        const pz = (Number(p.y) || 0) / 1000 - centerZ + ph / 2;
-        // Elevated so tilted edge never clips into the roof slab
-        const py = buildingHeight + 0.18 + (ph / 2) * Math.sin(tiltRad);
+        const px = ((Number(p.x) || 0) + pw * 500 - panelCenterMmX) / 1000;
+        const pz = ((Number(p.y) || 0) + ph * 500 - panelCenterMmY) / 1000;
+        const py = roofHeight(px, pz) + 0.12;
 
         dummy.position.set(px, py, pz);
-        dummy.rotation.set(tiltRad, 0, 0);
+
+        if (isGable) {
+          if (ridgeAxis === "NS") {
+            const bayW = buildingW / bayCount;
+            const xNorm = Math.max(0, Math.min(buildingW - 0.001, px + halfW));
+            const bayIdx = Math.floor(xNorm / bayW);
+            const bayCenterX = (bayIdx + 0.5) * bayW - halfW;
+            const deltaX = px - bayCenterX;
+            dummy.rotation.set(0, 0, deltaX < 0 ? roofPitch : -roofPitch);
+          } else {
+            const bayH = buildingH / bayCount;
+            const zNorm = Math.max(0, Math.min(buildingH - 0.001, pz + halfH));
+            const bayIdx = Math.floor(zNorm / bayH);
+            const bayCenterZ = (bayIdx + 0.5) * bayH - halfH;
+            const deltaZ = pz - bayCenterZ;
+            dummy.rotation.set(deltaZ < 0 ? roofPitch : -roofPitch, 0, 0);
+          }
+        } else {
+          dummy.rotation.set(((tilt || 10) * Math.PI) / 180, 0, 0);
+        }
+
         dummy.updateMatrix();
         panelIM.setMatrixAt(idx, dummy.matrix);
       });
@@ -524,10 +691,10 @@ function Report3DViewport({
     obstacles.forEach((obs: any) => {
       const ow = Math.max(1, (Number(obs.w) || 3000) / 1000);
       const oh = Math.max(1, (Number(obs.h) || 3000) / 1000);
-      const ox = (Number(obs.x) || 0) / 1000 - centerX + ow / 2;
-      const oz = (Number(obs.y) || 0) / 1000 - centerZ + oh / 2;
+      const ox = ((Number(obs.x) || 0) + ow * 500 - panelCenterMmX) / 1000;
+      const oz = ((Number(obs.y) || 0) + oh * 500 - panelCenterMmY) / 1000;
       const obsHeight = Number(obs.heightM) || 2.4;
-      const oy = buildingHeight + obsHeight / 2;
+      const oy = roofHeight(ox, oz) + obsHeight / 2;
 
       const obsGeom = new THREE.BoxGeometry(ow, obsHeight, oh);
       const obsMat = new THREE.MeshStandardMaterial({
@@ -596,7 +763,7 @@ function Report3DViewport({
         mount.removeChild(renderer.domElement);
       }
     };
-  }, [panels, obstacles, areaW, areaH, moduleW, moduleH, tilt, siteCorners, theme, interactive, height, sunPos, cameraPreset, hour]);
+  }, [panels, obstacles, areaW, areaH, moduleW, moduleH, tilt, siteCorners, theme, interactive, height, sunPos, cameraPreset, hour, effectiveRoof3d]);
 
   // Synchronize camera smoothly across mounted viewports when shared camera state updates
   useEffect(() => {
@@ -820,24 +987,53 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
     return REAL_PROJECTS[0]; // Default Cikarang 500 kWp
   }, [project, projectId]);
 
+  // Asynchronously fetch latest remote layout from Cloud Server
+  const [remoteLayout, setRemoteLayout] = useState<any>(null);
+
+  useEffect(() => {
+    const targetId = activeProj?.id ?? projectId;
+    if (!targetId) return;
+    let isMounted = true;
+    api.fetchProjectLayout(targetId).then((res: any) => {
+      if (isMounted && res && ((res.panels && res.panels.length > 0) || (res.segments && res.segments.length > 0))) {
+        setRemoteLayout(res);
+      }
+    }).catch(() => {});
+    return () => { isMounted = false; };
+  }, [activeProj?.id, projectId]);
+
   // Load layout data (panels, obstacles, settings, polygon, site)
   const savedLayout = useMemo(() => {
     const targetId = activeProj?.id ?? projectId;
-    if (!targetId) return null;
-    try {
-      for (let i = 0; i < localStorage.length; i++) {
-        const key = localStorage.key(i);
-        if (key && key.startsWith("solar-apps-pv-layout-v1:") && key.endsWith(`:${targetId}`)) {
-          const val = localStorage.getItem(key);
-          if (val) {
-            const parsed = JSON.parse(val);
-            if (parsed?.panels && parsed.panels.length > 0) return parsed;
+    let localCandidate: any = null;
+    if (targetId) {
+      try {
+        for (let i = 0; i < localStorage.length; i++) {
+          const key = localStorage.key(i);
+          if (key && key.startsWith("solar-apps-pv-layout-v1:") && key.endsWith(`:${targetId}`)) {
+            const val = localStorage.getItem(key);
+            if (val) {
+              const parsed = JSON.parse(val);
+              if (parsed?.panels && parsed.panels.length > 0) {
+                localCandidate = parsed;
+                break;
+              }
+            }
           }
         }
-      }
-    } catch { /* ignore */ }
+      } catch { /* ignore */ }
+    }
+
+    if (remoteLayout && localCandidate) {
+      const rPanels = Array.isArray(remoteLayout.panels) ? remoteLayout.panels.length : 0;
+      const lPanels = Array.isArray(localCandidate.panels) ? localCandidate.panels.length : 0;
+      return rPanels >= lPanels ? remoteLayout : localCandidate;
+    }
+    if (localCandidate) return localCandidate;
+    if (remoteLayout) return remoteLayout;
+
     return getProjectDefaultLayout(targetId) || null;
-  }, [activeProj?.id, projectId]);
+  }, [activeProj?.id, projectId, remoteLayout]);
 
   // Project defaults based on selection and saved layout
   const isCikarang = activeProj?.id === "proj-cikarang-500kwp";
@@ -909,6 +1105,8 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
   );
 
   // GIS Solar Irradiance & Yield State
+  const reportData = useReportData(activeProj?.id ?? projectId, { hourly: false });
+  const [reportView, setReportView] = useState<ReportView | null>(null);
   const [yieldData, setYieldData] = useState<SolarYieldResult | null>(null);
   const [loadingGis, setLoadingGis] = useState(false);
   const [gisError, setGisError] = useState<string | null>(null);
@@ -945,8 +1143,7 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
     setLoadingGis(true);
     setGisError(null);
     try {
-      const data = await fetchSolarClimatology(coords.lat, coords.lng, capacityKwp);
-      setYieldData(data);
+      reportData.reload();
       const subs = findNearestPlnSubstations(coords.lat, coords.lng, 3);
       setSubstations(subs);
     } catch (err: any) {
@@ -958,6 +1155,10 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
   }
 
   useEffect(() => {
+    setYieldData(engineYield(reportData.result, coords));
+  }, [reportData.result, coords.lat, coords.lng]);
+
+  useEffect(() => {
     loadGisData();
   }, [coords.lat, coords.lng, capacityKwp]);
 
@@ -967,7 +1168,26 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
   }, [yieldData]);
 
   // CAD 2D rendering variables
+  const targetProjId = activeProj?.id ?? projectId;
   const layoutSettings = savedLayout?.settings ?? {};
+  const roof3dConfig = useMemo(() => {
+    try {
+      const direct = localStorage.getItem(`solar-apps-3d-roof:${targetProjId}`);
+      if (direct) return JSON.parse(direct);
+      if (layoutSettings?.roof3d) return layoutSettings.roof3d;
+    } catch {}
+    if (targetProjId?.includes("mas-silueta")) {
+      return {
+        surfaceMode: "roof-multi-3",
+        ridgeAxis: "NS",
+        roofFitMode: "fit-panels",
+        wallHeight: 5.0,
+        roofPitchDeg: 10,
+      };
+    }
+    return null;
+  }, [targetProjId, layoutSettings?.roof3d]);
+
   const areaW = Number(layoutSettings.areaWidth) || (isCikarang ? 110000 : 220000);
   const areaH = Number(layoutSettings.areaHeight) || (isCikarang ? 32000 : 120000);
   const panels = Array.isArray(savedLayout?.panels) ? savedLayout.panels : [];
@@ -976,7 +1196,27 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
   const moduleW = Number(layoutSettings.moduleWidth) || 2278;
   const moduleH = Number(layoutSettings.moduleHeight) || 1134;
   const tilt = Number(layoutSettings.tilt) || 10;
-  const totalPanels = panels.length || Math.round((capacityKwp * 1000) / 580);
+
+  // Realized Layout DC Capacity (summing segments/panels exactly like PVLayout.tsx)
+  const actualLayoutKwp = useMemo(() => {
+    if (savedLayout?.segments && Array.isArray(savedLayout.segments) && savedLayout.segments.length > 0) {
+      const activeSegs = savedLayout.segments.filter((s: any) => s.visible !== false);
+      const totalW = activeSegs.reduce((acc: number, s: any) => {
+        const pCount = Array.isArray(s.panels) ? s.panels.length : 0;
+        const watts = Number(s.moduleWatts) || 580;
+        return acc + pCount * watts;
+      }, 0);
+      if (totalW > 0) return Number((totalW / 1000).toFixed(2));
+    }
+    if (panels.length > 0) {
+      const rawWatts = Number(layoutSettings.watts) || Number(layoutSettings.panelWatts) || 580;
+      const normalizedWatts = rawWatts > 1000 ? rawWatts / 10 : rawWatts;
+      return Number(((panels.length * normalizedWatts) / 1000).toFixed(2));
+    }
+    return capacityKwp;
+  }, [savedLayout, panels, layoutSettings, capacityKwp]);
+
+  const totalPanels = panels.length || Math.round((actualLayoutKwp * 1000) / 580);
   const totalModuleArea = (totalPanels * (moduleW * moduleH)) / 1_000_000;
 
   // Set document title dynamically to "SolarApp - [Nama Proyek]" for browser print dialog suggested filename
@@ -1051,8 +1291,8 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
 
         <div style={{ padding: "4px 10px", borderRight: "1px solid #cbd5e1", display: "flex", flexDirection: "column", justifyContent: "center" }}>
           <div style={{ fontSize: 7.5, color: "#1e293b", fontWeight: 700, textTransform: "uppercase" }}>NAMA PROYEK / FASILITAS</div>
-          <div style={{ fontWeight: 800, fontSize: 10.5, color: "#0f172a" }}>{activeProj?.name} ({capacityKwp} kWp)</div>
-          <div style={{ fontSize: 8, color: "#0f172a" }}>KLIEN: {client} · {coords.name}</div>
+          <div style={{ fontWeight: 800, fontSize: 10.5, color: "#0f172a" }}>{activeProj?.name} ({actualLayoutKwp} kWp DC)</div>
+          <div style={{ fontSize: 8, color: "#0f172a" }}>KLIEN: {client} · {coords.name}{capacityKwp !== actualLayoutKwp ? ` · Target: ${capacityKwp} kWp` : ""}</div>
         </div>
 
         <div style={{ padding: "4px 8px", display: "flex", flexDirection: "column", justifyContent: "center" }}>
@@ -1116,7 +1356,9 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
           <div>
             <span style={{ color: "#1e293b", fontWeight: 700 }}>Nama Proyek: </span>
             <strong style={{ color: "#0f172a" }}>{activeProj?.name}</strong>
-            <div style={{ color: "#047857", fontWeight: 800, marginTop: 1 }}>Tipe: {activeProj?.system || "Rooftop On-Grid"} ({capacityKwp} kWp)</div>
+            <div style={{ color: "#047857", fontWeight: 800, marginTop: 1 }}>
+              Tipe: {activeProj?.system || "Rooftop On-Grid"} — Desain: {actualLayoutKwp} kWp DC{capacityKwp !== actualLayoutKwp ? ` (Target: ${capacityKwp} kWp)` : ""}
+            </div>
           </div>
           <div>
             <span style={{ color: "#1e293b", fontWeight: 700 }}>Klien / Pemilik: </span>
@@ -1135,8 +1377,8 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
       {yieldData && (
         <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 5, marginBottom: 10, textAlign: "center" }}>
           <div style={{ padding: "5px 6px", background: "#ffffff", border: "1.5px solid #cbd5e1", borderRadius: 4 }}>
-            <div style={{ fontSize: 8, color: "#1e293b", fontWeight: 700 }}>Kapasitas DC</div>
-            <strong style={{ fontSize: 13, color: "#0f172a" }}>{yieldData.capacityKwp}</strong> <small style={{ fontSize: 8, color: "#047857", fontWeight: 800 }}>kWp</small>
+            <div style={{ fontSize: 8, color: "#1e293b", fontWeight: 700 }}>Kapasitas Desain DC</div>
+            <strong style={{ fontSize: 13, color: "#0f172a" }}>{actualLayoutKwp}</strong> <small style={{ fontSize: 8, color: "#047857", fontWeight: 800 }}>kWp</small>
           </div>
           <div style={{ padding: "5px 6px", background: "#ffffff", border: "1.5px solid #cbd5e1", borderRadius: 4 }}>
             <div style={{ fontSize: 8, color: "#1e293b", fontWeight: 700 }}>Total Modul</div>
@@ -1206,7 +1448,7 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
                   <td style={{ padding: "3.5px 6px", fontWeight: 600, color: "#0f172a" }}>{m.temp.toFixed(1)} °C</td>
                   <td style={{ padding: "3.5px 6px", fontWeight: 600, color: "#0f172a" }}>{m.dailyEnergyKwh.toLocaleString()}</td>
                   <td style={{ padding: "3.5px 6px", fontWeight: 800, color: "#047857" }}>{(m.monthlyEnergyKwh / 1000).toFixed(1)}</td>
-                  <td style={{ padding: "3.5px 6px", textAlign: "right", fontWeight: 600, color: "#0f172a" }}>Rp {m.savingsIdr.toLocaleString()}</td>
+                  <td style={{ padding: "3.5px 6px", textAlign: "right", fontWeight: 600, color: "#0f172a" }}>{Number.isFinite(m.savingsIdr) ? `Rp ${m.savingsIdr.toLocaleString()}` : DASH}</td>
                 </tr>
               ))}
             </tbody>
@@ -1231,12 +1473,11 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
             <ShieldCheck size={11} style={{ color: "#047857" }} /> Dekomposisi Rugi Daya Sistem (IEC 61724)
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "2px 6px", color: "#0f172a" }}>
-            <div>Soiling / Debu: <strong style={{ color: "#dc2626" }}>-2.5%</strong></div>
-            <div>Rugi Suhu Ambien: <strong style={{ color: "#dc2626" }}>-9.1%</strong></div>
-            <div>Shading Obstacle: <strong style={{ color: "#047857" }}>-0.8%</strong></div>
-            <div>Efisiensi Inverter: <strong style={{ color: "#dc2626" }}>-1.8%</strong></div>
-            <div>Kabel DC/AC: <strong style={{ color: "#dc2626" }}>-1.2%</strong></div>
-            <div>Net PR: <strong style={{ color: "#047857" }}>81.4%</strong></div>
+            {lossLines(reportData.result).map((l) => (
+              <div key={l.label}>{l.label}: <strong style={{ color: "#dc2626" }}>{fmtNum(l.pct, 1)}%</strong></div>
+            ))}
+            {!reportData.result && <div style={{ gridColumn: "1 / -1" }}>Belum dihitung — buka PV Layout lalu klik Hitung (Helio)</div>}
+            <div>Net PR: <strong style={{ color: "#047857" }}>{fmtPct(engineOut(reportData.result)?.performance_ratio_pct, 1)}</strong></div>
           </div>
         </div>
 
@@ -1537,29 +1778,16 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
             <Activity size={11} style={{ color: "#dc2626" }} /> Analisis Susut Daya Sistem Lengkap (IEC 61724)
           </div>
           <div style={{ display: "grid", gap: 3 }}>
-            <div style={{ display: "flex", justifyContent: "space-between" }}>
-              <span style={{ color: "#0f172a", fontWeight: 600 }}>Rugi Suhu Ambien (Thermal Derating -0.35%/°C):</span>
-              <strong style={{ color: "#dc2626" }}>-9.1%</strong>
-            </div>
-            <div style={{ display: "flex", justifyContent: "space-between" }}>
-              <span style={{ color: "#0f172a", fontWeight: 600 }}>Soiling & Endapan Debu Industri Tropis:</span>
-              <strong style={{ color: "#dc2626" }}>-2.5%</strong>
-            </div>
-            <div style={{ display: "flex", justifyContent: "space-between" }}>
-              <span style={{ color: "#0f172a", fontWeight: 600 }}>Efisiensi Konversi Inverter On-Grid:</span>
-              <strong style={{ color: "#dc2626" }}>-1.8%</strong>
-            </div>
-            <div style={{ display: "flex", justifyContent: "space-between" }}>
-              <span style={{ color: "#0f172a", fontWeight: 600 }}>Hambatan Kabel DC & AC (Ohmic Cable Losses):</span>
-              <strong style={{ color: "#dc2626" }}>-1.2%</strong>
-            </div>
-            <div style={{ display: "flex", justifyContent: "space-between" }}>
-              <span style={{ color: "#0f172a", fontWeight: 600 }}>Near Shading & Obstacle Losses:</span>
-              <strong style={{ color: "#047857" }}>-0.8%</strong>
-            </div>
+            {lossLines(reportData.result).map((l) => (
+              <div key={l.label} style={{ display: "flex", justifyContent: "space-between" }}>
+                <span style={{ color: "#0f172a", fontWeight: 600 }}>{l.label}:</span>
+                <strong style={{ color: "#dc2626" }}>{fmtNum(l.pct, 1)}%</strong>
+              </div>
+            ))}
+            {!reportData.result && <div>Belum dihitung — buka PV Layout lalu klik Hitung (Helio)</div>}
             <div style={{ display: "flex", justifyContent: "space-between", borderTop: "1.5px solid #0f172a", paddingTop: 3, fontWeight: 900 }}>
               <span style={{ color: "#0f172a" }}>Net Performance Ratio (PR):</span>
-              <strong style={{ color: "#047857", fontSize: 9.5 }}>81.4%</strong>
+              <strong style={{ color: "#047857", fontSize: 9.5 }}>{fmtPct(engineOut(reportData.result)?.performance_ratio_pct, 1)}</strong>
             </div>
           </div>
         </div>
@@ -1786,6 +2014,8 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
               titleBadge="☀️ 12:00 WIB - Puncak Surya & Klirens Bayangan"
               cameraTransform={sharedCamera}
               onCameraChange={handleCameraChange}
+              roof3dConfig={roof3dConfig}
+              projectId={targetProjId}
             />
           </div>
         </div>
@@ -1819,6 +2049,8 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
               titleBadge="🌙 24:00 WIB - Standby Isolation Mode (IEC 62109)"
               cameraTransform={sharedCamera}
               onCameraChange={handleCameraChange}
+              roof3dConfig={roof3dConfig}
+              projectId={targetProjId}
             />
           </div>
         </div>
@@ -1867,6 +2099,10 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
       </div>
     </div>
   );
+
+  if (reportView) {
+    return <ReportsHost lang={lang} projectId={activeProj?.id ?? projectId} project={activeProj} initialView={reportView} onClose={() => setReportView(null)} />;
+  }
 
   return (
     <div className="module-page" style={{ color: "#e8eef9", display: "grid", gap: 18 }}>
@@ -1934,6 +2170,10 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
             </button>
           </div>
 
+          {([["production", "Production Report"], ["calc", "Engineering Calculation"], ["meta", "Data dokumen"]] as const).map(([v, label]) => (
+            <button key={v} type="button" className="secondary-button" onClick={() => setReportView(v)} style={{ fontSize: 11, padding: "7px 11px" }}>{label}</button>
+          ))}
+
           <button
             type="button"
             className="secondary-button"
@@ -1973,7 +2213,7 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
       {viewMode === "screen" && (
         <div className="screen-only no-print" style={{ display: "grid", gap: 20 }}>
           {/* Project Profile Summary Card */}
-          <div className="pv-card" style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr", gap: 20, alignItems: "center" }}>
+          <div className="pv-card" style={{ display: "grid", gridTemplateColumns: capacityKwp !== actualLayoutKwp ? "1fr 1.35fr" : "1.4fr 1fr", gap: 20, alignItems: "center" }}>
             <div>
               <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 6 }}>
                 <span className="pv-badge" style={{ background: "#163820", color: "#b8f36b", borderColor: "#285836" }}>
@@ -1996,12 +2236,23 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
               </div>
             </div>
 
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10, background: "#0c1510", padding: 12, borderRadius: 8, border: "1px solid #1a2a20" }}>
+            <div style={{ display: "grid", gridTemplateColumns: capacityKwp !== actualLayoutKwp ? "repeat(4, 1fr)" : "repeat(3, 1fr)", gap: 10, background: "#0c1510", padding: 12, borderRadius: 8, border: "1px solid #1a2a20" }}>
               <div>
-                <div style={{ fontSize: 10, color: "#94a3b8", fontWeight: 700 }}>Target Kapasitas</div>
-                <div style={{ fontSize: 16, fontWeight: 800, color: "var(--green, #b8f36b)" }}>{capacityKwp} kWp</div>
-                <small style={{ fontSize: 10, color: "#cbd5e1", fontWeight: 600 }}>{totalPanels.toLocaleString()} modul 580Wp</small>
+                <div style={{ fontSize: 10, color: "#94a3b8", fontWeight: 700 }}>
+                  {capacityKwp !== actualLayoutKwp ? "Kapasitas Desain (DC)" : "Kapasitas Sistem (DC)"}
+                </div>
+                <div style={{ fontSize: 16, fontWeight: 800, color: "var(--green, #b8f36b)" }}>{actualLayoutKwp} kWp</div>
+                <small style={{ fontSize: 10, color: "#cbd5e1", fontWeight: 600 }}>{totalPanels.toLocaleString()} modul terpasang</small>
               </div>
+              {capacityKwp !== actualLayoutKwp && (
+                <div>
+                  <div style={{ fontSize: 10, color: "#94a3b8", fontWeight: 700 }}>Target Proyek (Kontrak)</div>
+                  <div style={{ fontSize: 16, fontWeight: 800, color: "#f59e0b" }}>{capacityKwp} kWp</div>
+                  <small style={{ fontSize: 10, color: "#cbd5e1", fontWeight: 600 }}>
+                    Realisasi: {((actualLayoutKwp / capacityKwp) * 100).toFixed(1)}%
+                  </small>
+                </div>
+              )}
               <div>
                 <div style={{ fontSize: 10, color: "#94a3b8", fontWeight: 700 }}>Luas Modul Efektif</div>
                 <div style={{ fontSize: 16, fontWeight: 800, color: "#38bdf8" }}>{totalModuleArea.toLocaleString(undefined, { maximumFractionDigits: 0 })} m²</div>
@@ -2024,7 +2275,7 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
                   <Zap size={14} style={{ color: "#b8f36b" }} />
                 </div>
                 <div style={{ fontSize: 22, fontWeight: 800, color: "#edf5ef", margin: "6px 0 2px" }}>
-                  {yieldData.capacityKwp} <small style={{ fontSize: 12 }}>kWp</small>
+                  {actualLayoutKwp} <small style={{ fontSize: 12 }}>kWp</small>
                 </div>
                 <small style={{ color: "#94a3b8", fontSize: 11, fontWeight: 600 }}>{totalPanels.toLocaleString()} Panel Tier-1 (580 Wp)</small>
               </div>
@@ -2070,7 +2321,7 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
                 <div style={{ fontSize: 22, fontWeight: 800, color: "#10b981", margin: "6px 0 2px" }}>
                   {yieldData.carbonOffsetTons.toLocaleString()} <small style={{ fontSize: 12 }}>Ton/thn</small>
                 </div>
-                <small style={{ color: "#94a3b8", fontSize: 11, fontWeight: 600 }}>Faktor Emisi Grid Jamali 0.79 kg/kWh</small>
+                <small style={{ color: "#94a3b8", fontSize: 11, fontWeight: 600 }}>Sumber: Helio engine</small>
               </div>
 
               <div className="pv-card" style={{ padding: 14 }}>
@@ -2079,9 +2330,9 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
                   <Award size={14} style={{ color: "#a855f7" }} />
                 </div>
                 <div style={{ fontSize: 22, fontWeight: 800, color: "#c084fc", margin: "6px 0 2px" }}>
-                  Rp 680 <small style={{ fontSize: 12 }}>/kWh</small>
+                  {Number.isFinite(engineOut(reportData.result)?.lcoe_idr_per_kwh) ? `Rp ${Math.round(engineOut(reportData.result).lcoe_idr_per_kwh).toLocaleString()}` : DASH} <small style={{ fontSize: 12 }}>/kWh</small>
                 </div>
-                <small style={{ color: "#94a3b8", fontSize: 11, fontWeight: 600 }}>Tarif B2/I3 PLN: Rp 1.114/kWh</small>
+                <small style={{ color: "#94a3b8", fontSize: 11, fontWeight: 600 }}>Sumber: Helio engine</small>
               </div>
             </div>
           )}
@@ -2188,6 +2439,8 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
                 onHourChange={setActive3DHour}
                 cameraTransform={sharedCamera}
                 onCameraChange={handleCameraChange}
+                roof3dConfig={roof3dConfig}
+                projectId={targetProjId}
               />
             </div>
           </div>
@@ -2219,7 +2472,7 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
                         <td style={{ fontWeight: 800, color: "var(--green, #b8f36b)", padding: "6px 8px", textAlign: "center" }}>
                           {(m.monthlyEnergyKwh / 1000).toFixed(1)}
                         </td>
-                        <td style={{ textAlign: "right", color: "#f1f5f9", padding: "6px 8px", fontWeight: 600 }}>Rp {m.savingsIdr.toLocaleString()}</td>
+                        <td style={{ textAlign: "right", color: "#f1f5f9", padding: "6px 8px", fontWeight: 600 }}>{Number.isFinite(m.savingsIdr) ? `Rp ${m.savingsIdr.toLocaleString()}` : DASH}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -2246,29 +2499,16 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
                     <Activity size={15} style={{ color: "#f59e0b" }} /> Analisis Susut Daya (Loss Tree)
                   </h3>
                   <div style={{ display: "grid", gap: 6, fontSize: 11 }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", padding: "4px 0", borderBottom: "1px dashed #1f3024" }}>
-                      <span style={{ color: "#cbd5e1", fontWeight: 600 }}>Shading & Obstacle Near-loss</span>
-                      <strong style={{ color: "#38bdf8" }}>-0.8%</strong>
-                    </div>
-                    <div style={{ display: "flex", justifyContent: "space-between", padding: "4px 0", borderBottom: "1px dashed #1f3024" }}>
-                      <span style={{ color: "#cbd5e1", fontWeight: 600 }}>Soiling & Debu Tropis</span>
-                      <strong style={{ color: "#f87171" }}>-2.5%</strong>
-                    </div>
-                    <div style={{ display: "flex", justifyContent: "space-between", padding: "4px 0", borderBottom: "1px dashed #1f3024" }}>
-                      <span style={{ color: "#cbd5e1", fontWeight: 600 }}>Thermal Derating (-0.35%/°C)</span>
-                      <strong style={{ color: "#f87171" }}>-9.1%</strong>
-                    </div>
-                    <div style={{ display: "flex", justifyContent: "space-between", padding: "4px 0", borderBottom: "1px dashed #1f3024" }}>
-                      <span style={{ color: "#cbd5e1", fontWeight: 600 }}>Efisiensi Inverter Euro</span>
-                      <strong style={{ color: "#f87171" }}>-1.8%</strong>
-                    </div>
-                    <div style={{ display: "flex", justifyContent: "space-between", padding: "4px 0", borderBottom: "1px dashed #1f3024" }}>
-                      <span style={{ color: "#cbd5e1", fontWeight: 600 }}>Kabel DC & AC Resistance</span>
-                      <strong style={{ color: "#f87171" }}>-1.2%</strong>
-                    </div>
+                    {lossLines(reportData.result).map((l) => (
+                      <div key={l.label} style={{ display: "flex", justifyContent: "space-between", padding: "4px 0", borderBottom: "1px dashed #1f3024" }}>
+                        <span style={{ color: "#cbd5e1", fontWeight: 600 }}>{l.label}</span>
+                        <strong style={{ color: "#f87171" }}>{fmtNum(l.pct, 1)}%</strong>
+                      </div>
+                    ))}
+                    {!reportData.result && <div style={{ color: "#cbd5e1" }}>Belum dihitung — buka PV Layout lalu klik Hitung (Helio)</div>}
                     <div style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", fontWeight: 700 }}>
                       <span style={{ color: "#edf5ef" }}>Total System PR Net</span>
-                      <strong style={{ color: "var(--green, #b8f36b)" }}>81.4%</strong>
+                      <strong style={{ color: "var(--green, #b8f36b)" }}>{fmtPct(engineOut(reportData.result)?.performance_ratio_pct, 1)}</strong>
                     </div>
                   </div>
                 </div>

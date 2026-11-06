@@ -155,7 +155,8 @@ export default function BOQ({ lang = "en", userId = "anonymous", projectId = nul
   }
   function syncPVLayout() {
     try {
-      const raw = localStorage.getItem(`${PV_LAYOUT_STORAGE_KEY}:${userId}:${projectId ?? "unassigned"}`)
+      const raw = (projectId ? localStorage.getItem(`${PV_LAYOUT_STORAGE_KEY}:project:${projectId}`) : null)
+        || localStorage.getItem(`${PV_LAYOUT_STORAGE_KEY}:${userId}:${projectId ?? "unassigned"}`)
         || localStorage.getItem(`${PV_LAYOUT_STORAGE_KEY}:${userId}`);
       let data: any = null;
       if (raw) {
