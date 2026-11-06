@@ -105,6 +105,8 @@ export function Report3DViewport({
   titleBadge,
   cameraTransform,
   onCameraChange,
+  roof3dConfig,
+  projectId,
 }: {
   panels: any[];
   obstacles: any[];
@@ -124,12 +126,34 @@ export function Report3DViewport({
   titleBadge?: string;
   cameraTransform?: { position: [number, number, number]; target: [number, number, number] } | null;
   onCameraChange?: (cam: { position: [number, number, number]; target: [number, number, number] }) => void;
+  roof3dConfig?: any;
+  projectId?: string | null;
 }) {
   const mountRef = useRef<HTMLDivElement>(null);
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
   const controlsRef = useRef<OrbitControls | null>(null);
   const [hour, setHour] = useState(defaultHour);
   const [cameraPreset, setCameraPreset] = useState<"iso" | "top">("iso");
+
+  const effectiveRoof3d = useMemo(() => {
+    if (roof3dConfig) return roof3dConfig;
+    if (projectId) {
+      try {
+        const raw = localStorage.getItem(`solar-apps-3d-roof:${projectId}`);
+        if (raw) return JSON.parse(raw);
+      } catch {}
+    }
+    if (projectId?.includes("mas-silueta")) {
+      return {
+        surfaceMode: "roof-multi-3",
+        ridgeAxis: "NS",
+        roofFitMode: "fit-panels",
+        wallHeight: 5.0,
+        roofPitchDeg: 10,
+      };
+    }
+    return null;
+  }, [roof3dConfig, projectId]);
 
   useEffect(() => {
     setHour(defaultHour);
@@ -415,60 +439,7 @@ export function Report3DViewport({
       }
     });
 
-    // Building Roof & Walls
-    const wallMat = new THREE.MeshStandardMaterial({
-      color: isNight ? 0x1e293b : 0x475569,
-      roughness: 0.8,
-    });
-    const roofMat = new THREE.MeshStandardMaterial({
-      color: isNight ? 0x0f172a : 0xf1f5f9,
-      roughness: 0.7,
-    });
-
-    if (siteCorners && siteCorners.length >= 3) {
-      const shape = new THREE.Shape();
-      siteCorners.forEach((pt, idx) => {
-        const sx = pt.x / 1000 - centerX;
-        const sz = pt.y / 1000 - centerZ;
-        if (idx === 0) shape.moveTo(sx, -sz);
-        else shape.lineTo(sx, -sz);
-      });
-      shape.closePath();
-
-      const extrudeGeom = new THREE.ExtrudeGeometry(shape, {
-        depth: buildingHeight,
-        bevelEnabled: false,
-      });
-      extrudeGeom.rotateX(-Math.PI / 2);
-      const wallMesh = new THREE.Mesh(extrudeGeom, wallMat);
-      wallMesh.position.y = 0; // Fixed: starts from ground level up to buildingHeight
-      wallMesh.castShadow = true;
-      wallMesh.receiveShadow = true;
-      scene.add(wallMesh);
-
-      const roofGeom = new THREE.ShapeGeometry(shape);
-      roofGeom.rotateX(-Math.PI / 2);
-      const roofMesh = new THREE.Mesh(roofGeom, roofMat);
-      roofMesh.position.y = buildingHeight + 0.02;
-      roofMesh.receiveShadow = true;
-      scene.add(roofMesh);
-    } else {
-      const boxGeom = new THREE.BoxGeometry(areaWM, buildingHeight, areaHM);
-      const boxMesh = new THREE.Mesh(boxGeom, wallMat);
-      boxMesh.position.set(0, buildingHeight / 2, 0);
-      boxMesh.castShadow = true;
-      boxMesh.receiveShadow = true;
-      scene.add(boxMesh);
-
-      const roofTopGeom = new THREE.PlaneGeometry(areaWM, areaHM);
-      roofTopGeom.rotateX(-Math.PI / 2);
-      const roofTopMesh = new THREE.Mesh(roofTopGeom, roofMat);
-      roofTopMesh.position.set(0, buildingHeight + 0.02, 0);
-      roofTopMesh.receiveShadow = true;
-      scene.add(roofTopMesh);
-    }
-
-    // PV Modules Array (InstancedMesh with metallic sheen & elevation offset)
+    // 1. Gather display panels
     let displayPanels = panels;
     if (!displayPanels || displayPanels.length === 0) {
       displayPanels = [];
@@ -488,12 +459,185 @@ export function Report3DViewport({
       }
     }
 
+    // 2. Compute panel bounding box in millimeters
+    let pMinX = Infinity, pMaxX = -Infinity, pMinY = Infinity, pMaxY = -Infinity;
+    displayPanels.forEach((p: any) => {
+      const px = Number(p.x) || 0;
+      const py = Number(p.y) || 0;
+      const pw = Number(p.w) || moduleW;
+      const ph = Number(p.h) || moduleH;
+      if (px < pMinX) pMinX = px;
+      if (px + pw > pMaxX) pMaxX = px + pw;
+      if (py < pMinY) pMinY = py;
+      if (py + ph > pMaxY) pMaxY = py + ph;
+    });
+
+    const hasPanels = Number.isFinite(pMinX) && Number.isFinite(pMaxX) && pMaxX > pMinX;
+    const panelSpanW = hasPanels ? (pMaxX - pMinX) / 1000 : areaWM;
+    const panelSpanH = hasPanels ? (pMaxY - pMinY) / 1000 : areaHM;
+    const panelCenterMmX = hasPanels ? (pMinX + pMaxX) / 2 : areaW / 2;
+    const panelCenterMmY = hasPanels ? (pMinY + pMaxY) / 2 : areaH / 2;
+
+    // 3. Configure roof mode, dimensions, orientation synced from PV Layout 3D
+    const r3d = effectiveRoof3d;
+    let mode = r3d?.surfaceMode || (projectId?.includes("mas-silueta") ? "roof-multi-3" : "auto");
+    if (mode === "auto") {
+      mode = isGround ? "flat" : projectId?.includes("mas-silueta") ? "roof-multi-3" : "roof-gable";
+    }
+    const isMultiBay = mode === "roof-multi-2" || mode === "roof-multi-3" || mode === "roof-multi-4";
+    const bayCount = mode === "roof-multi-2" ? 2 : mode === "roof-multi-4" ? 4 : mode === "roof-multi-3" ? 3 : 1;
+    const isGable = mode === "roof-gable" || isMultiBay;
+    const ridgeAxis: "NS" | "WE" = r3d?.ridgeAxis || "NS";
+    const wallH = r3d?.wallHeight ? Number(r3d.wallHeight) : buildingHeight;
+    const pitchDeg = r3d?.roofPitchDeg ? Number(r3d.roofPitchDeg) : (tilt || 10);
+    const roofPitch = Math.max(1, Math.min(45, pitchDeg)) * (Math.PI / 180);
+
+    let buildingW = areaWM;
+    let buildingH = areaHM;
+    if (r3d?.roofFitMode === "custom" && Number(r3d.customRoofW) > 0) {
+      buildingW = Number(r3d.customRoofW);
+      buildingH = Number(r3d.customRoofH) > 0 ? Number(r3d.customRoofH) : Math.max(10, Math.round(panelSpanH + 6));
+    } else if (r3d?.roofFitMode === "fit-panels" || !isGround) {
+      buildingW = Math.max(10, Math.round(panelSpanW + 6));
+      buildingH = Math.max(10, Math.round(panelSpanH + 6));
+    }
+
+    const halfW = buildingW / 2;
+    const halfH = buildingH / 2;
+    const baseRoofY = wallH;
+
+    // 4. Roof height function
+    let roofHeight: (x: number, z: number) => number;
+    if (isGable) {
+      if (ridgeAxis === "NS") {
+        const bayW = buildingW / bayCount;
+        const halfBayW = bayW / 2;
+        const bayRidgeRise = halfBayW * Math.tan(roofPitch);
+        roofHeight = (x: number) => {
+          const xNorm = Math.max(0, Math.min(buildingW - 0.001, x + halfW));
+          const bayIdx = Math.floor(xNorm / bayW);
+          const bayCenterX = (bayIdx + 0.5) * bayW - halfW;
+          const deltaX = x - bayCenterX;
+          return baseRoofY + bayRidgeRise - Math.abs(deltaX) * Math.tan(roofPitch);
+        };
+      } else {
+        const bayH = buildingH / bayCount;
+        const halfBayH = bayH / 2;
+        const bayRidgeRise = halfBayH * Math.tan(roofPitch);
+        roofHeight = (_x: number, z: number) => {
+          const zNorm = Math.max(0, Math.min(buildingH - 0.001, z + halfH));
+          const bayIdx = Math.floor(zNorm / bayH);
+          const bayCenterZ = (bayIdx + 0.5) * bayH - halfH;
+          const deltaZ = z - bayCenterZ;
+          return baseRoofY + bayRidgeRise - Math.abs(deltaZ) * Math.tan(roofPitch);
+        };
+      }
+    } else {
+      roofHeight = () => baseRoofY;
+    }
+
+    // Building Roof & Walls
+    const wallMat = new THREE.MeshStandardMaterial({
+      color: isNight ? 0x1e293b : 0x475569,
+      roughness: 0.8,
+    });
+    const roofMat = new THREE.MeshStandardMaterial({
+      color: isNight ? 0x0f172a : 0x8ba2b8,
+      roughness: 0.88,
+      metalness: 0.18,
+      side: THREE.DoubleSide
+    });
+
+    if (!isGround) {
+      // Main warehouse box walls
+      const wallGeom = new THREE.BoxGeometry(buildingW, baseRoofY, buildingH);
+      const wallMesh = new THREE.Mesh(wallGeom, wallMat);
+      wallMesh.position.set(0, baseRoofY / 2 - 0.08, 0);
+      wallMesh.castShadow = true;
+      wallMesh.receiveShadow = true;
+      scene.add(wallMesh);
+
+      // Pitched triangular gables
+      if (isGable) {
+        const gableMat = new THREE.MeshStandardMaterial({
+          color: isNight ? 0x1e293b : 0x475569,
+          roughness: 0.8,
+          side: THREE.DoubleSide
+        });
+
+        if (ridgeAxis === "NS") {
+          const bayW = buildingW / bayCount;
+          const halfBayW = bayW / 2;
+          const bayRidgeRise = halfBayW * Math.tan(roofPitch);
+          for (let b = 0; b < bayCount; b++) {
+            const xStart = b * bayW - halfW;
+            const xCenter = (b + 0.5) * bayW - halfW;
+            const xEnd = (b + 1) * bayW - halfW;
+            const tri = new THREE.Shape([
+              new THREE.Vector2(xStart, 0),
+              new THREE.Vector2(xEnd, 0),
+              new THREE.Vector2(xCenter, bayRidgeRise),
+            ]);
+            const geom = new THREE.ShapeGeometry(tri);
+            for (const zEnd of [-halfH, halfH]) {
+              const gable = new THREE.Mesh(geom, gableMat);
+              gable.position.set(0, baseRoofY - 0.08, zEnd);
+              gable.castShadow = true;
+              gable.receiveShadow = true;
+              scene.add(gable);
+            }
+          }
+        } else {
+          const bayH = buildingH / bayCount;
+          const halfBayH = bayH / 2;
+          const bayRidgeRise = halfBayH * Math.tan(roofPitch);
+          for (let b = 0; b < bayCount; b++) {
+            const zStart = b * bayH - halfH;
+            const zCenter = (b + 0.5) * bayH - halfH;
+            const zEnd = (b + 1) * bayH - halfH;
+            const tri = new THREE.Shape([
+              new THREE.Vector2(zStart, 0),
+              new THREE.Vector2(zEnd, 0),
+              new THREE.Vector2(zCenter, bayRidgeRise),
+            ]);
+            const geom = new THREE.ShapeGeometry(tri);
+            for (const xEnd of [-halfW, halfW]) {
+              const gable = new THREE.Mesh(geom, gableMat);
+              gable.rotation.y = Math.PI / 2;
+              gable.position.set(xEnd, baseRoofY - 0.08, 0);
+              gable.castShadow = true;
+              gable.receiveShadow = true;
+              scene.add(gable);
+            }
+          }
+        }
+      }
+
+      // Corrugated / Pitched Roof Surface Mesh
+      const segX = Math.max(32, bayCount * 16);
+      const segZ = Math.max(32, bayCount * 16);
+      const surfaceGeom = new THREE.PlaneGeometry(buildingW, buildingH, segX, segZ);
+      surfaceGeom.rotateX(-Math.PI / 2);
+      const pos = surfaceGeom.attributes.position;
+      for (let i = 0; i < pos.count; i++) {
+        const x = pos.getX(i);
+        const z = pos.getZ(i);
+        pos.setY(i, roofHeight(x, z) + 0.025);
+      }
+      pos.needsUpdate = true;
+      surfaceGeom.computeVertexNormals();
+
+      const surfaceMesh = new THREE.Mesh(surfaceGeom, roofMat);
+      surfaceMesh.receiveShadow = true;
+      scene.add(surfaceMesh);
+    }
+
+    // PV Modules Array (InstancedMesh with metallic sheen & elevation offset)
     const n = displayPanels.length;
     if (n > 0) {
       const samplePanel = displayPanels[0];
       const pW = (Number(samplePanel?.w) || moduleW || 1134) / 1000;
       const pH = (Number(samplePanel?.h) || moduleH || 2278) / 1000;
-      const tiltRad = ((tilt || 10) * Math.PI) / 180;
 
       const panelGeom = new THREE.BoxGeometry(pW, 0.05, pH);
       const panelMat = new THREE.MeshStandardMaterial({
@@ -509,13 +653,32 @@ export function Report3DViewport({
       displayPanels.forEach((p, idx) => {
         const pw = (Number(p.w) || moduleW) / 1000;
         const ph = (Number(p.h) || moduleH) / 1000;
-        const px = (Number(p.x) || 0) / 1000 - centerX + pw / 2;
-        const pz = (Number(p.y) || 0) / 1000 - centerZ + ph / 2;
-        // Elevated so tilted edge never clips into the roof slab
-        const py = buildingHeight + 0.18 + (ph / 2) * Math.sin(tiltRad);
+        const px = ((Number(p.x) || 0) + pw * 500 - panelCenterMmX) / 1000;
+        const pz = ((Number(p.y) || 0) + ph * 500 - panelCenterMmY) / 1000;
+        const py = roofHeight(px, pz) + 0.12;
 
         dummy.position.set(px, py, pz);
-        dummy.rotation.set(tiltRad, 0, 0);
+
+        if (isGable) {
+          if (ridgeAxis === "NS") {
+            const bayW = buildingW / bayCount;
+            const xNorm = Math.max(0, Math.min(buildingW - 0.001, px + halfW));
+            const bayIdx = Math.floor(xNorm / bayW);
+            const bayCenterX = (bayIdx + 0.5) * bayW - halfW;
+            const deltaX = px - bayCenterX;
+            dummy.rotation.set(0, 0, deltaX < 0 ? roofPitch : -roofPitch);
+          } else {
+            const bayH = buildingH / bayCount;
+            const zNorm = Math.max(0, Math.min(buildingH - 0.001, pz + halfH));
+            const bayIdx = Math.floor(zNorm / bayH);
+            const bayCenterZ = (bayIdx + 0.5) * bayH - halfH;
+            const deltaZ = pz - bayCenterZ;
+            dummy.rotation.set(deltaZ < 0 ? roofPitch : -roofPitch, 0, 0);
+          }
+        } else {
+          dummy.rotation.set(((tilt || 10) * Math.PI) / 180, 0, 0);
+        }
+
         dummy.updateMatrix();
         panelIM.setMatrixAt(idx, dummy.matrix);
       });
@@ -527,10 +690,10 @@ export function Report3DViewport({
     obstacles.forEach((obs: any) => {
       const ow = Math.max(1, (Number(obs.w) || 3000) / 1000);
       const oh = Math.max(1, (Number(obs.h) || 3000) / 1000);
-      const ox = (Number(obs.x) || 0) / 1000 - centerX + ow / 2;
-      const oz = (Number(obs.y) || 0) / 1000 - centerZ + oh / 2;
+      const ox = ((Number(obs.x) || 0) + ow * 500 - panelCenterMmX) / 1000;
+      const oz = ((Number(obs.y) || 0) + oh * 500 - panelCenterMmY) / 1000;
       const obsHeight = Number(obs.heightM) || 2.4;
-      const oy = buildingHeight + obsHeight / 2;
+      const oy = roofHeight(ox, oz) + obsHeight / 2;
 
       const obsGeom = new THREE.BoxGeometry(ow, obsHeight, oh);
       const obsMat = new THREE.MeshStandardMaterial({
@@ -599,7 +762,7 @@ export function Report3DViewport({
         mount.removeChild(renderer.domElement);
       }
     };
-  }, [panels, obstacles, areaW, areaH, moduleW, moduleH, tilt, siteCorners, theme, interactive, height, sunPos, cameraPreset, hour]);
+  }, [panels, obstacles, areaW, areaH, moduleW, moduleH, tilt, siteCorners, theme, interactive, height, sunPos, cameraPreset, hour, effectiveRoof3d]);
 
   // Synchronize camera smoothly across mounted viewports when shared camera state updates
   useEffect(() => {
@@ -975,7 +1138,26 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
   }, [yieldData]);
 
   // CAD 2D rendering variables
+  const targetProjId = activeProj?.id ?? projectId;
   const layoutSettings = savedLayout?.settings ?? {};
+  const roof3dConfig = useMemo(() => {
+    try {
+      const direct = localStorage.getItem(`solar-apps-3d-roof:${targetProjId}`);
+      if (direct) return JSON.parse(direct);
+      if (layoutSettings?.roof3d) return layoutSettings.roof3d;
+    } catch {}
+    if (targetProjId?.includes("mas-silueta")) {
+      return {
+        surfaceMode: "roof-multi-3",
+        ridgeAxis: "NS",
+        roofFitMode: "fit-panels",
+        wallHeight: 5.0,
+        roofPitchDeg: 10,
+      };
+    }
+    return null;
+  }, [targetProjId, layoutSettings?.roof3d]);
+
   const areaW = Number(layoutSettings.areaWidth) || (isCikarang ? 110000 : 220000);
   const areaH = Number(layoutSettings.areaHeight) || (isCikarang ? 32000 : 120000);
   const panels = Array.isArray(savedLayout?.panels) ? savedLayout.panels : [];
@@ -1780,6 +1962,8 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
               titleBadge="☀️ 12:00 WIB - Puncak Surya & Klirens Bayangan"
               cameraTransform={sharedCamera}
               onCameraChange={handleCameraChange}
+              roof3dConfig={roof3dConfig}
+              projectId={targetProjId}
             />
           </div>
         </div>
@@ -1813,6 +1997,8 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
               titleBadge="🌙 24:00 WIB - Standby Isolation Mode (IEC 62109)"
               cameraTransform={sharedCamera}
               onCameraChange={handleCameraChange}
+              roof3dConfig={roof3dConfig}
+              projectId={targetProjId}
             />
           </div>
         </div>
@@ -2190,6 +2376,8 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
                 onHourChange={setActive3DHour}
                 cameraTransform={sharedCamera}
                 onCameraChange={handleCameraChange}
+                roof3dConfig={roof3dConfig}
+                projectId={targetProjId}
               />
             </div>
           </div>

@@ -2,6 +2,7 @@ import { getProjectDefaultLayout } from "./defaultProjectsData";
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+import * as api from "./api";
 import {
   RotateCcw,
   RefreshCw,
@@ -14,9 +15,9 @@ import {
   Maximize2,
   ZoomIn,
   ZoomOut,
-  Sliders,
-  Layers,
-  Check
+  Save,
+  Check,
+  Cloud
 } from "lucide-react";
 
 type Panel = { id: number; x: number; y: number; w: number; h: number };
@@ -25,7 +26,7 @@ type Site = { coordinates: { lat: number; lng: number }; address?: string; polyg
 type DemGrid = { rows: number; cols: number; elevations: number[]; min: number; max: number; source: string; fetchedAt: string };
 type SavedLayout = {
   projectId?: string | null;
-  settings?: { system?: string; areaWidth?: number; areaHeight?: number; moduleWidth?: number; moduleHeight?: number; tilt?: number; orientation?: string; watts?: number; panelWatts?: number };
+  settings?: { system?: string; areaWidth?: number; areaHeight?: number; moduleWidth?: number; moduleHeight?: number; tilt?: number; orientation?: string; watts?: number; panelWatts?: number; roof3d?: any };
   panels?: Panel[];
   obstacles?: Obstacle[];
   site?: Site | null;
@@ -97,6 +98,8 @@ export default function PVLayout3D({
 }) {
   const scopedStorageKey = `${STORAGE_KEY}:project:${projectId ?? "unassigned"}`;
   const userScopedStorageKey = `${STORAGE_KEY}:${userId}:${projectId ?? "unassigned"}`;
+  const roofConfigKey = `solar-apps-3d-roof:${projectId ?? "unassigned"}`;
+
   const hostRef = useRef<HTMLDivElement>(null);
   const controlsRef = useRef<OrbitControls | null>(null);
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
@@ -119,6 +122,12 @@ export default function PVLayout3D({
   const [roofPitchDeg, setRoofPitchDeg] = useState<number>(10);
   const [activeBuildingDim, setActiveBuildingDim] = useState<{ w: number; h: number }>({ w: 65, h: 35 });
 
+  // Persistence & Save State
+  const [isSaving, setIsSaving] = useState(false);
+  const [lastSavedTime, setLastSavedTime] = useState<string | null>(null);
+  const [isSaved, setIsSaved] = useState(false);
+  const isInitialMount = useRef(true);
+
   // Time & Sun simulation state
   const [simDate, setSimDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [simHour, setSimHour] = useState(12.0); // 12:00
@@ -128,6 +137,97 @@ export default function PVLayout3D({
   const [demStatus, setDemStatus] = useState("");
   const [sunInfo, setSunInfo] = useState({ azimuth: 0, elevation: 0 });
   const id = lang === "id";
+
+  // Load saved 3D settings on mount
+  useEffect(() => {
+    try {
+      let r3d: any = null;
+      const direct = localStorage.getItem(roofConfigKey);
+      if (direct) {
+        r3d = JSON.parse(direct);
+      } else {
+        const rawSaved = localStorage.getItem(scopedStorageKey) || localStorage.getItem(userScopedStorageKey);
+        if (rawSaved) {
+          const parsed = JSON.parse(rawSaved);
+          if (parsed?.settings?.roof3d) r3d = parsed.settings.roof3d;
+        }
+      }
+      if (r3d) {
+        if (r3d.surfaceMode) setSurfaceMode(r3d.surfaceMode);
+        if (r3d.ridgeAxis) setRidgeAxis(r3d.ridgeAxis);
+        if (r3d.roofFitMode) setRoofFitMode(r3d.roofFitMode);
+        if (r3d.customRoofW) setCustomRoofW(Number(r3d.customRoofW));
+        if (r3d.customRoofH) setCustomRoofH(Number(r3d.customRoofH));
+        if (r3d.wallHeight) setWallHeight(Number(r3d.wallHeight));
+        if (r3d.roofPitchDeg) setRoofPitchDeg(Number(r3d.roofPitchDeg));
+        if (r3d.savedAt) setLastSavedTime(r3d.savedAt);
+      } else if (projectId?.includes("mas-silueta")) {
+        setSurfaceMode("roof-multi-3");
+        setRidgeAxis("NS");
+        setRoofFitMode("fit-panels");
+      }
+    } catch {}
+  }, [projectId, roofConfigKey, scopedStorageKey, userScopedStorageKey]);
+
+  // Save handler: writes to localStorage and syncs with cloud server
+  const handleSaveConfig = async (manualClick = false) => {
+    if (isSaving) return;
+    const nowStr = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+    const roof3d = {
+      surfaceMode,
+      ridgeAxis,
+      roofFitMode,
+      customRoofW: customRoofW > 0 ? customRoofW : activeBuildingDim.w,
+      customRoofH: customRoofH > 0 ? customRoofH : activeBuildingDim.h,
+      wallHeight,
+      roofPitchDeg,
+      savedAt: nowStr,
+    };
+
+    // 1. Direct local storage key for instantaneous cross-tab synchronization
+    try {
+      localStorage.setItem(roofConfigKey, JSON.stringify(roof3d));
+    } catch {}
+
+    // 2. Project layout settings in localStorage
+    let currentLayout: any = {};
+    try {
+      currentLayout = JSON.parse(localStorage.getItem(scopedStorageKey) || localStorage.getItem(userScopedStorageKey) || "{}");
+    } catch {}
+    if (!currentLayout.settings) currentLayout.settings = {};
+    currentLayout.settings.roof3d = roof3d;
+    try {
+      localStorage.setItem(scopedStorageKey, JSON.stringify(currentLayout));
+      localStorage.setItem(userScopedStorageKey, JSON.stringify(currentLayout));
+    } catch {}
+
+    // 3. Remote Cloud Sync via API
+    if (projectId) {
+      if (manualClick) setIsSaving(true);
+      try {
+        await api.saveProjectLayout(projectId, currentLayout);
+      } catch (err) {
+        console.warn("Failed to sync 3D config remotely:", err);
+      }
+      if (manualClick) setIsSaving(false);
+    }
+
+    setLastSavedTime(nowStr);
+    setIsSaved(true);
+    setTimeout(() => setIsSaved(false), 3500);
+  };
+
+  // Debounced auto-save so user never loses their 3D configuration
+  useEffect(() => {
+    if (isInitialMount.current) {
+      isInitialMount.current = false;
+      return;
+    }
+    const timer = setTimeout(() => {
+      handleSaveConfig(false);
+    }, 1200);
+    return () => clearTimeout(timer);
+  }, [surfaceMode, ridgeAxis, roofFitMode, customRoofW, customRoofH, wallHeight, roofPitchDeg]);
 
   const handleZoomIn = () => {
     if (!cameraRef.current || !controlsRef.current) return;
@@ -219,7 +319,7 @@ export default function PVLayout3D({
 
   useEffect(() => {
     const onStorage = (event: StorageEvent) => {
-      if (event.key === scopedStorageKey || event.key === null) setNotice(v => v + 1);
+      if (event.key === scopedStorageKey || event.key === roofConfigKey || event.key === null) setNotice(v => v + 1);
     };
     window.addEventListener("storage", onStorage);
     const timer = window.setInterval(() => setNotice(v => v + 1), 60000);
@@ -227,7 +327,7 @@ export default function PVLayout3D({
       window.removeEventListener("storage", onStorage);
       window.clearInterval(timer);
     };
-  }, [scopedStorageKey]);
+  }, [scopedStorageKey, roofConfigKey]);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -877,7 +977,7 @@ export default function PVLayout3D({
 
   return (
     <section style={{ color: "#e5edf8", display: "grid", gap: 14 }}>
-      {/* Heading */}
+      {/* Heading & Main Actions Bar */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
         <div>
           <div style={{ color: "#38bdf8", fontSize: 11, letterSpacing: 2, fontWeight: 700 }}>ENGINEERING VIEWER</div>
@@ -891,23 +991,66 @@ export default function PVLayout3D({
             Engineering visualization · 3D Sun Path, Multi-Gable Roof Alignments & Real-time Shadow Simulation
           </p>
         </div>
-        <button
-          onClick={() => setNotice(v => v + 1)}
-          style={{
-            display: "inline-flex",
-            alignItems: "center",
-            gap: 8,
-            background: "#123047",
-            color: "#bae6fd",
-            border: "1px solid #25617a",
-            borderRadius: 9,
-            padding: "10px 13px",
-            cursor: "pointer"
-          }}
-        >
-          <RefreshCw size={16} />
-          {id ? "Muat Ulang Layout" : "Reload Layout"}
-        </button>
+
+        {/* Action Buttons: Save & Reload */}
+        <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+          <button
+            type="button"
+            onClick={() => handleSaveConfig(true)}
+            disabled={isSaving}
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 8,
+              background: isSaved ? "#065f46" : "#2563eb",
+              color: "#ffffff",
+              border: `1px solid ${isSaved ? "#10b981" : "#3b82f6"}`,
+              borderRadius: 9,
+              padding: "10px 18px",
+              cursor: "pointer",
+              fontWeight: 700,
+              fontSize: 13,
+              boxShadow: "0 2px 8px rgba(37, 99, 235, 0.4)",
+              transition: "all 0.2s ease"
+            }}
+          >
+            {isSaving ? (
+              <>
+                <Cloud size={16} className="animate-spin" />
+                <span>Menyimpan ke Cloud...</span>
+              </>
+            ) : isSaved ? (
+              <>
+                <Check size={16} />
+                <span>Tersimpan {lastSavedTime ? `(${lastSavedTime})` : ""}</span>
+              </>
+            ) : (
+              <>
+                <Save size={16} />
+                <span>Simpan Konfigurasi 3D</span>
+              </>
+            )}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setNotice(v => v + 1)}
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 8,
+              background: "#123047",
+              color: "#bae6fd",
+              border: "1px solid #25617a",
+              borderRadius: 9,
+              padding: "10px 14px",
+              cursor: "pointer"
+            }}
+          >
+            <RefreshCw size={16} />
+            {id ? "Muat Ulang" : "Reload"}
+          </button>
+        </div>
       </div>
 
       {/* Top Stats & Surface Settings */}
@@ -1160,6 +1303,27 @@ export default function PVLayout3D({
               }}
             />
           </div>
+
+          <button
+            type="button"
+            onClick={() => handleSaveConfig(true)}
+            style={{
+              padding: "5px 12px",
+              background: "#1e3a5f",
+              color: "#93c5fd",
+              border: "1px solid #3b82f6",
+              borderRadius: 6,
+              fontSize: 11,
+              fontWeight: 600,
+              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              gap: 5
+            }}
+          >
+            <Save size={13} />
+            <span>Simpan Ukuran</span>
+          </button>
         </div>
       </div>
 
@@ -1394,6 +1558,15 @@ export default function PVLayout3D({
             <span style={{ color: "#94a3b8" }}>Pitch: </span>
             <strong style={{ color: "#f59e0b" }}>{roofPitchDeg}°</strong>
           </div>
+          {lastSavedTime && (
+            <>
+              <span style={{ color: "#475569" }}>|</span>
+              <div style={{ color: "#10b981", display: "flex", alignItems: "center", gap: 4 }}>
+                <Check size={12} />
+                <span>Saved ({lastSavedTime})</span>
+              </div>
+            </>
+          )}
         </div>
 
         {/* Floating Zoom & Camera Action Buttons (Bottom-Right) */}
@@ -1473,7 +1646,7 @@ export default function PVLayout3D({
       </div>
 
       <div style={{ display: "flex", gap: 8, alignItems: "center", color: "#94a3b8", fontSize: 12 }}>
-        <RotateCcw size={14} /> Orbit kamera · Shift + Scroll untuk zoom 3D · Tombol zoom (+ / -) di kanan bawah · Gunakan tombol "Putar Arah Atap 90°" untuk menyelaraskan arah bubungan atap.
+        <RotateCcw size={14} /> Orbit kamera · Shift + Scroll untuk zoom 3D · Tombol zoom (+ / -) di kanan bawah · Klik "Simpan Konfigurasi 3D" untuk menyimpan pengaturan permanen ke server dan laporan.
       </div>
       <p style={{ color: "#fbbf24", fontSize: 12, margin: 0 }}>
         Batasan engineering: DEM API memberikan grid elevasi resolusi terbatas untuk konteks visual, bukan survey konstruksi. Multi-roof/hip saat ini merupakan geometri konseptual. Shadow adalah simulasi geometris akurat secara astronomis berdasarkan koordinat lokasi dan waktu terpilih.
