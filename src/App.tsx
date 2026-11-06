@@ -14,6 +14,7 @@ import BreakerSizing from "./BreakerSizing";
 import MountingDesign from "./MountingDesign";
 import SurveyReport from "./SurveyReport";
 import EngineeringReport from "./EngineeringReport";
+import ComponentLibrary from "./ComponentLibrary";
 import { EngineBadge, EngineSwitch, StringingPanel, WireSchedulePanel, ProtectionPanel, DrawingsPanel } from "./engine/EngineElectrical";
 import BOQ from "./BOQ";
 import {
@@ -26,7 +27,7 @@ import {
 } from "lucide-react";
 
 type Lang = "id" | "en";
-type ModuleId = "dashboard" | "projects" | "layout" | "layout3d" | "electrical" | "cable" | "protection" | "structure" | "cad" | "boq" | "survey" | "tray" | "breaker" | "mounting" | "report" | "settings";
+type ModuleId = "dashboard" | "projects" | "layout" | "layout3d" | "electrical" | "cable" | "protection" | "structure" | "cad" | "boq" | "survey" | "tray" | "breaker" | "mounting" | "report" | "components" | "settings";
 
 const copy = {
   id: {
@@ -81,6 +82,7 @@ const moduleIcons: Record<ModuleId, any> = {
   breaker: Zap,
   mounting: Layers3,
   report: FileText,
+  components: Database,
   settings: Settings2,
 };
 
@@ -88,7 +90,7 @@ const moduleIcons: Record<ModuleId, any> = {
 const VALID_MODULES: ModuleId[] = [
   "dashboard", "projects", "layout", "layout3d", "electrical", "cable",
   "protection", "structure", "cad", "boq", "survey", "tray", "breaker",
-  "mounting", "report", "settings"
+  "mounting", "report", "components", "settings"
 ];
 
 function parseUrlRoute(projs: Project[]): {
@@ -285,6 +287,7 @@ export default function App() {
       { id: "breaker" as const, label: "Breaker Sizing" },
       { id: "mounting" as const, label: lang === "id" ? "Desain Mounting" : "Mounting Design" },
       { id: "report" as const, label: lang === "id" ? "Laporan Engineering" : "Engineering Report" },
+      { id: "components" as const, label: lang === "id" ? "Katalog Komponen" : "Component Library" },
     ]},
   ];
 
@@ -300,7 +303,9 @@ export default function App() {
     structure: t.structure, cad: t.cad, boq: t.boq,
     survey: "Survey Report", tray: "Tray Sizing", breaker: "Breaker Sizing",
     mounting: lang === "id" ? "Desain Mounting" : "Mounting Design",
-    report: lang === "id" ? "Laporan Engineering" : "Engineering Report", settings: t.settings,
+    report: lang === "id" ? "Laporan Engineering" : "Engineering Report",
+    components: lang === "id" ? "Katalog Komponen" : "Component Library",
+    settings: t.settings,
   };
 
     function openModule(id: ModuleId) {
@@ -708,6 +713,18 @@ export default function App() {
             <SurveyReport lang={lang} />
           ) : active === "report" ? (
             <EngineeringReport lang={lang} projectId={activeProject?.id} project={activeProject} />
+          ) : active === "components" ? (
+            <ComponentLibrary
+              lang={lang}
+              activeProject={activeProject}
+              onNavigateToLayout={() => openModule("layout")}
+              onApplyModuleToLayout={(mod) => {
+                if (activeProject?.id) {
+                  localStorage.setItem(`solar-apps-preferred-module:${activeProject.id}`, JSON.stringify(mod));
+                }
+                openModule("layout");
+              }}
+            />
           ) : active === "settings" ? (
             <section className="panel module-page">
               <h2>{t.settings}</h2>

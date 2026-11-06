@@ -3,10 +3,10 @@ import type { Project } from './api';
 
 export const REAL_PROJECTS: Project[] = [
   {
-    id: "proj-mas-silueta-224kwp",
-    name: "PLTS Rooftop Mas Silueta Indonesia 224 kWp",
+    id: "proj-mas-silueta-744kwp",
+    name: "PLTS Rooftop PT Mas Silueta Indonesia 744 kWp",
     type: "Rooftop",
-    capacity: 224,
+    capacity: 744,
     status: "In Progress",
     updated: "Aktif",
   },
@@ -30,14 +30,14 @@ export const REAL_PROJECTS: Project[] = [
 
 
 export const MAS_SILUETA_LAYOUT = {
-  projectId: "proj-mas-silueta-224kwp",
+  projectId: "proj-mas-silueta-744kwp",
   settings: {
     areaWidth: 65000,
     areaHeight: 34000,
-    panelWidth: 2278,
+    panelWidth: 2382,
     panelHeight: 1134,
-    panelWatts: 744,
-    panelCost: 1650000,
+    panelWatts: 620,
+    panelCost: 1680000,
     tilt: 10,
     azimuth: 0,
     orientation: "landscape",

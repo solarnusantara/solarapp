@@ -1562,21 +1562,24 @@ export default function PVLayout({
           ) : (
             /* Tab 2: PV Module Specifications */
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-              <div style={{ fontSize: 13, fontWeight: 800, color: "#edf5ef" }}>Katalog Modul Surya</div>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <span style={{ fontSize: 13, fontWeight: 800, color: "#edf5ef" }}>Katalog Modul Surya</span>
+                <span className="pv-badge" style={{ background: "#152a1c", color: "#b8f36b", fontSize: 10 }}>.PAN Verified</span>
+              </div>
               <div>
                 <label style={{ fontSize: 10, color: "#8aa092", display: "block", marginBottom: 4 }}>Pilih Model Presets</label>
                 <select
                   style={{ width: "100%", background: "#080d09", border: "1px solid #1f3325", borderRadius: 6, padding: "7px 9px", color: "#edf5ef", fontSize: 11 }}
                   onChange={e => {
                     const val = e.target.value;
-                    if (val === "longi-580") {
+                    if (val === "longi-620") {
+                      handleUpdateActiveSegment("moduleWidth", 2382);
+                      handleUpdateActiveSegment("moduleHeight", 1134);
+                      handleUpdateActiveSegment("moduleWatts", 620);
+                    } else if (val === "longi-580") {
                       handleUpdateActiveSegment("moduleWidth", 2278);
                       handleUpdateActiveSegment("moduleHeight", 1134);
                       handleUpdateActiveSegment("moduleWatts", 580);
-                    } else if (val === "mas-744") {
-                      handleUpdateActiveSegment("moduleWidth", 2278);
-                      handleUpdateActiveSegment("moduleHeight", 1134);
-                      handleUpdateActiveSegment("moduleWatts", 744);
                     } else if (val === "jinko-620") {
                       handleUpdateActiveSegment("moduleWidth", 2382);
                       handleUpdateActiveSegment("moduleHeight", 1134);
@@ -1585,28 +1588,38 @@ export default function PVLayout({
                       handleUpdateActiveSegment("moduleWidth", 2384);
                       handleUpdateActiveSegment("moduleHeight", 1303);
                       handleUpdateActiveSegment("moduleWatts", 660);
+                    } else if (val === "canadian-600") {
+                      handleUpdateActiveSegment("moduleWidth", 2278);
+                      handleUpdateActiveSegment("moduleHeight", 1134);
+                      handleUpdateActiveSegment("moduleWatts", 600);
+                    } else if (val === "ja-585") {
+                      handleUpdateActiveSegment("moduleWidth", 2278);
+                      handleUpdateActiveSegment("moduleHeight", 1134);
+                      handleUpdateActiveSegment("moduleWatts", 585);
                     }
                   }}
                 >
-                  <option value="mas-744">PT Mas Silueta N-Type Bifacial (744 Wp)</option>
-                  <option value="longi-580">LONGi Hi-MO 6 Explorer (580 Wp)</option>
-                  <option value="jinko-620">Jinko Tiger Neo N-Type (620 Wp)</option>
-                  <option value="trina-660">Trina Solar Vertex Ultra (660 Wp)</option>
+                  <option value="longi-620">⭐ Longi LR8-66HGD-620 Wp (620W · 2382×1134 mm) — Standar Mas Silueta 744 kWp</option>
+                  <option value="longi-580">LONGi Hi-MO 6 Explorer (580W · 2278×1134 mm)</option>
+                  <option value="jinko-620">Jinko Tiger Neo N-Type (620W · 2382×1134 mm)</option>
+                  <option value="trina-660">Trina Solar Vertex Ultra (660W · 2384×1303 mm)</option>
+                  <option value="canadian-600">Canadian Solar TOPHiKu6 (600W · 2278×1134 mm)</option>
+                  <option value="ja-585">JA Solar DeepBlue 4.0 Pro (585W · 2278×1134 mm)</option>
                 </select>
               </div>
 
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
                 <div>
-                  <label style={{ fontSize: 10, color: "#8aa092", display: "block", marginBottom: 3 }}>Lebar (mm)</label>
+                  <label style={{ fontSize: 10, color: "#8aa092", display: "block", marginBottom: 3 }}>Panjang (mm)</label>
                   <input
                     type="number"
-                    value={activeSegment?.moduleWidth || 2278}
+                    value={activeSegment?.moduleWidth || 2382}
                     onChange={e => handleUpdateActiveSegment("moduleWidth", Number(e.target.value))}
                     style={{ width: "100%", background: "#080d09", border: "1px solid #1f3325", borderRadius: 6, padding: "5px 8px", color: "#edf5ef", fontSize: 11 }}
                   />
                 </div>
                 <div>
-                  <label style={{ fontSize: 10, color: "#8aa092", display: "block", marginBottom: 3 }}>Tinggi (mm)</label>
+                  <label style={{ fontSize: 10, color: "#8aa092", display: "block", marginBottom: 3 }}>Lebar (mm)</label>
                   <input
                     type="number"
                     value={activeSegment?.moduleHeight || 1134}
@@ -1620,14 +1633,36 @@ export default function PVLayout({
                 <label style={{ fontSize: 10, color: "#8aa092", display: "block", marginBottom: 3 }}>Daya Nominal (Wp)</label>
                 <input
                   type="number"
-                  value={activeSegment?.moduleWatts || 580}
+                  value={activeSegment?.moduleWatts || 620}
                   onChange={e => handleUpdateActiveSegment("moduleWatts", Number(e.target.value))}
                   style={{ width: "100%", background: "#080d09", border: "1px solid #1f3325", borderRadius: 6, padding: "5px 8px", color: "#edf5ef", fontSize: 11 }}
                 />
               </div>
 
+              {/* Apply to All Segments Button */}
+              <button
+                type="button"
+                className="secondary-button"
+                style={{ width: "100%", fontSize: 11, padding: "8px 10px", background: "#132719", border: "1px solid #23472d", color: "#b8f36b", fontWeight: 700, borderRadius: 6 }}
+                onClick={() => {
+                  const targetW = activeSegment?.moduleWidth || 2382;
+                  const targetH = activeSegment?.moduleHeight || 1134;
+                  const targetWatts = activeSegment?.moduleWatts || 620;
+                  setSegments(prev => prev.map(s => ({
+                    ...s,
+                    moduleWidth: targetW,
+                    moduleHeight: targetH,
+                    moduleWatts: targetWatts,
+                  })));
+                  setNotice(isId ? `✅ Modul ${targetWatts} Wp diterapkan ke semua ${segments.length} segmen!` : `✅ Module ${targetWatts} Wp applied to all ${segments.length} segments!`);
+                  setTimeout(() => setNotice(""), 4000);
+                }}
+              >
+                🚀 Terapkan Spesifikasi ke Semua Segmen ({segments.length})
+              </button>
+
               <div style={{ background: "#111a14", border: "1px solid #1f3024", borderRadius: 6, padding: "10px", fontSize: 11, color: "#8ca093", lineHeight: 1.4 }}>
-                💡 Spesifikasi modul berlaku untuk segmen yang aktif dan akan mengkalkulasi output daya serta luas fisik modul secara otomatis.
+                💡 Menggunakan modul <strong>Longi 620 Wp</strong> (2.382 × 1.134 mm) sesuai laporan resmi PVSyst & Helio untuk Mas Silueta (1.200 unit = 744 kWp).
               </div>
             </div>
           )}
