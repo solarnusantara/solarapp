@@ -1107,6 +1107,32 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
 
   // CAD 2D rendering variables
   const targetProjId = activeProj?.id ?? projectId;
+
+  // Document Metadata Modal & Editable Title Block States
+  const [isDocMetaModalOpen, setIsDocMetaModalOpen] = useState(false);
+  const [docNo, setDocNo] = useState("SOLARAPP-DED-2026-001");
+  const [revNo, setRevNo] = useState("REV 0 (IFC)");
+  const [preparedRole, setPreparedRole] = useState("Lead Electrical & Structural PV Engineer");
+  const [clientRole, setClientRole] = useState("Kepala Divisi Energi & Fasilitas");
+
+  // Load saved document metadata from localStorage for this project
+  useEffect(() => {
+    try {
+      const pid = targetProjId || "default";
+      const raw = localStorage.getItem(`solar-apps-report-meta:${pid}`);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed.docNo) setDocNo(parsed.docNo);
+        if (parsed.revNo) setRevNo(parsed.revNo);
+        if (parsed.client) setClient(parsed.client);
+        if (parsed.prepared) setPrepared(parsed.prepared);
+        if (parsed.preparedRole) setPreparedRole(parsed.preparedRole);
+        if (parsed.clientRole) setClientRole(parsed.clientRole);
+        if (parsed.date) setDate(parsed.date);
+        if (parsed.status) setStatus(parsed.status);
+      }
+    } catch {}
+  }, [targetProjId]);
   const layoutSettings = savedLayout?.settings ?? {};
   const roof3dConfig = useMemo(() => {
     try {
@@ -1355,8 +1381,8 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
           </div>
         </div>
         <div style={{ textAlign: "right", fontSize: 8.5, color: "#1e293b", fontWeight: 600 }}>
-          <div>DOKUMEN NO: <strong style={{ color: "#0f172a" }}>SOLARAPP-DED-2026-001</strong></div>
-          <div>REVISI: <strong style={{ color: "#0f172a" }}>REV 0 (IFC)</strong></div>
+          <div>DOKUMEN NO: <strong style={{ color: "#0f172a" }}>{docNo}</strong></div>
+          <div>REVISI: <strong style={{ color: "#0f172a" }}>{revNo}</strong></div>
           <div>TANGGAL LAPORAN: <strong style={{ color: "#0f172a" }}>{date}</strong></div>
         </div>
       </div>
@@ -1528,13 +1554,13 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
         <div>
           <div style={{ color: "#1e293b", fontWeight: 700 }}>DISUSUN & DISETUJUI OLEH:</div>
           <div style={{ fontWeight: 800, color: "#0f172a", marginTop: 2 }}>{prepared}</div>
-          <div style={{ fontSize: 8, color: "#0f172a", fontWeight: 600 }}>Lead Electrical & Structural PV Engineer</div>
+          <div style={{ fontSize: 8, color: "#0f172a", fontWeight: 600 }}>{preparedRole}</div>
           <div style={{ marginTop: 12, borderBottom: "1.5px solid #0f172a", width: "70%" }} />
         </div>
         <div style={{ textAlign: "right" }}>
           <div style={{ color: "#1e293b", fontWeight: 700 }}>DISETUJUI OLEH KLIEN / FASILITAS:</div>
           <div style={{ fontWeight: 800, color: "#0f172a", marginTop: 2 }}>{client}</div>
-          <div style={{ fontSize: 8, color: "#0f172a", fontWeight: 600 }}>Kepala Divisi Energi & Fasilitas</div>
+          <div style={{ fontSize: 8, color: "#0f172a", fontWeight: 600 }}>{clientRole}</div>
           <div style={{ marginTop: 12, borderBottom: "1.5px solid #0f172a", width: "70%", marginLeft: "auto" }} />
         </div>
       </div>
@@ -1974,7 +2000,7 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
       </div>
 
       {/* Official CAD Title Block */}
-      {renderCadTitleBlock(2, "GEOLOKASI TAPAK, STUDI SHADING & LOSS BREAKDOWN", "SOLARAPP-DED-SH-002")}
+      {renderCadTitleBlock(2, "GEOLOKASI TAPAK, STUDI SHADING & LOSS BREAKDOWN", `${docNo}-SH-002`)}
 
       {/* Sheet Footer */}
       <div style={{ display: "flex", justifyContent: "space-between", fontSize: 8, color: "#1e293b", fontWeight: 700, borderTop: "1.5px solid #cbd5e1", paddingTop: 5, marginTop: 8 }}>
@@ -2273,7 +2299,7 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
       </div>
 
       {/* CAD Title Block */}
-      {renderCadTitleBlock(3, "DETAIL TATA LETAK MODUL PV 2D & VISUALISASI 3D DUA LAYER", "SOLARAPP-DED-PV-003")}
+      {renderCadTitleBlock(3, "DETAIL TATA LETAK MODUL PV 2D & VISUALISASI 3D DUA LAYER", `${docNo}-PV-003`)}
 
       {/* Sheet Footer */}
       <div style={{ display: "flex", justifyContent: "space-between", fontSize: 8, color: "#1e293b", fontWeight: 700, borderTop: "1.5px solid #cbd5e1", paddingTop: 5, marginTop: 6 }}>
@@ -2283,9 +2309,7 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
     </div>
   );
 
-  if (reportView) {
-    return <ReportsHost lang={lang} projectId={activeProj?.id ?? projectId} project={activeProj} initialView={reportView} onClose={() => setReportView(null)} />;
-  }
+  // Legacy ReportsHost early return disabled to keep unified 3-Page EPC report
 
   return (
     <div className="module-page" style={{ color: "#e8eef9", display: "grid", gap: 18 }}>
@@ -2353,10 +2377,15 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
             </button>
           </div>
 
-          {/* Legacy Helio buttons removed to prevent confusing layout switch */}
-          {([["meta", "Data Dokumen"]] as const).map(([v, label]) => (
-            <button key={v} type="button" className="secondary-button" onClick={() => setReportView(v)} style={{ fontSize: 11, padding: "7px 11px" }}>{label}</button>
-          ))}
+          <button
+            type="button"
+            className="secondary-button"
+            onClick={() => setIsDocMetaModalOpen(true)}
+            style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, padding: "7px 12px" }}
+          >
+            <FileText size={13} style={{ color: "#38bdf8" }} />
+            Data Dokumen
+          </button>
 
           <button
             type="button"
@@ -2957,6 +2986,167 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
               <div className="a4-page-sheet" style={{ width: "100%", boxSizing: "border-box" }}>
                 {renderPage3()}
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* ═══════════════════════════════════════════════════════════════════════
+          DATA & METADATA DOKUMEN MODAL (IN-PLACE WITHOUT CHANGING UI)
+          ═══════════════════════════════════════════════════════════════════════ */}
+      {isDocMetaModalOpen && (
+        <div
+          className="no-print"
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0, 0, 0, 0.78)",
+            backdropFilter: "blur(4px)",
+            zIndex: 1000,
+            display: "grid",
+            placeItems: "center",
+            padding: 16,
+          }}
+          onClick={() => setIsDocMetaModalOpen(false)}
+        >
+          <div
+            style={{
+              background: "#0c1410",
+              border: "1.5px solid #1f3525",
+              borderRadius: 8,
+              width: "100%",
+              maxWidth: 580,
+              boxShadow: "0 20px 50px rgba(0,0,0,0.85)",
+              overflow: "hidden",
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Modal Header */}
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "14px 18px", borderBottom: "1px solid #1f3525", background: "#0f1a14" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <FileText size={18} style={{ color: "#b8f36b" }} />
+                <strong style={{ fontSize: 13, color: "#edf5ef" }}>Data Dokumen & Pengesahan EPC</strong>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsDocMetaModalOpen(false)}
+                style={{ color: "#8da294", cursor: "pointer", background: "none", border: "none", display: "flex", alignItems: "center", padding: 4 }}
+                aria-label="Tutup"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* Modal Form Body */}
+            <div style={{ padding: "16px 18px", display: "grid", gap: 12, fontSize: 12, color: "#cbd5e1" }}>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                  <span style={{ fontSize: 11, fontWeight: 700, color: "#8da294" }}>Nomor Dokumen</span>
+                  <input
+                    type="text"
+                    value={docNo}
+                    onChange={(e) => setDocNo(e.target.value)}
+                    style={{ background: "#080e0a", border: "1px solid #233c2a", borderRadius: 4, padding: "7px 10px", color: "#edf5ef", fontSize: 12 }}
+                  />
+                </label>
+                <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                  <span style={{ fontSize: 11, fontWeight: 700, color: "#8da294" }}>Revisi Dokumen</span>
+                  <input
+                    type="text"
+                    value={revNo}
+                    onChange={(e) => setRevNo(e.target.value)}
+                    style={{ background: "#080e0a", border: "1px solid #233c2a", borderRadius: 4, padding: "7px 10px", color: "#edf5ef", fontSize: 12 }}
+                  />
+                </label>
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                  <span style={{ fontSize: 11, fontWeight: 700, color: "#8da294" }}>Tanggal Laporan</span>
+                  <input
+                    type="date"
+                    value={date}
+                    onChange={(e) => setDate(e.target.value)}
+                    style={{ background: "#080e0a", border: "1px solid #233c2a", borderRadius: 4, padding: "7px 10px", color: "#edf5ef", fontSize: 12 }}
+                  />
+                </label>
+                <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                  <span style={{ fontSize: 11, fontWeight: 700, color: "#8da294" }}>Status Dokumen</span>
+                  <input
+                    type="text"
+                    value={status}
+                    onChange={(e) => setStatus(e.target.value)}
+                    style={{ background: "#080e0a", border: "1px solid #233c2a", borderRadius: 4, padding: "7px 10px", color: "#edf5ef", fontSize: 12 }}
+                  />
+                </label>
+              </div>
+
+              <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                <span style={{ fontSize: 11, fontWeight: 700, color: "#8da294" }}>Nama Klien / Pemilik Fasilitas</span>
+                <input
+                  type="text"
+                  value={client}
+                  onChange={(e) => setClient(e.target.value)}
+                  style={{ background: "#080e0a", border: "1px solid #233c2a", borderRadius: 4, padding: "7px 10px", color: "#edf5ef", fontSize: 12 }}
+                />
+              </label>
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                  <span style={{ fontSize: 11, fontWeight: 700, color: "#8da294" }}>Disusun Oleh (Engineer)</span>
+                  <input
+                    type="text"
+                    value={prepared}
+                    onChange={(e) => setPrepared(e.target.value)}
+                    style={{ background: "#080e0a", border: "1px solid #233c2a", borderRadius: 4, padding: "7px 10px", color: "#edf5ef", fontSize: 12 }}
+                  />
+                </label>
+                <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                  <span style={{ fontSize: 11, fontWeight: 700, color: "#8da294" }}>Jabatan Penyusun</span>
+                  <input
+                    type="text"
+                    value={preparedRole}
+                    onChange={(e) => setPreparedRole(e.target.value)}
+                    style={{ background: "#080e0a", border: "1px solid #233c2a", borderRadius: 4, padding: "7px 10px", color: "#edf5ef", fontSize: 12 }}
+                  />
+                </label>
+              </div>
+
+              <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                <span style={{ fontSize: 11, fontWeight: 700, color: "#8da294" }}>Jabatan Klien Penyetuju</span>
+                <input
+                  type="text"
+                  value={clientRole}
+                  onChange={(e) => setClientRole(e.target.value)}
+                  style={{ background: "#080e0a", border: "1px solid #233c2a", borderRadius: 4, padding: "7px 10px", color: "#edf5ef", fontSize: 12 }}
+                />
+              </label>
+            </div>
+
+            {/* Modal Footer */}
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, padding: "12px 18px", borderTop: "1px solid #1f3525", background: "#0f1a14" }}>
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={() => setIsDocMetaModalOpen(false)}
+                style={{ fontSize: 11, padding: "6px 14px" }}
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                className="primary-button"
+                onClick={() => {
+                  try {
+                    const pid = targetProjId || "default";
+                    const payload = { docNo, revNo, date, status, client, prepared, preparedRole, clientRole };
+                    localStorage.setItem(`solar-apps-report-meta:${pid}`, JSON.stringify(payload));
+                  } catch {}
+                  setIsDocMetaModalOpen(false);
+                }}
+                style={{ fontSize: 11, padding: "6px 16px", background: "#b8f36b", color: "#0c1410", fontWeight: 700 }}
+              >
+                Simpan & Terapkan
+              </button>
             </div>
           </div>
         </div>
