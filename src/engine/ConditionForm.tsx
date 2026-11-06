@@ -7,7 +7,8 @@ import {
 import {
   applyPvsystPreset, MAX_CUSTOM_LOSSES, PVSYST_PRESET_LABEL, serializeConditionSet, UNCERTAINTY_ROWS, type UnsupportedItem,
 } from "./conditionModel";
-import type { ConditionSet, CustomLoss } from "./types";
+import type { ConditionSet, CustomLoss, OptionalDerate } from "./types";
+import type { WiringBasis } from "./types/OptionalDerate";
 import type { EngineInputs } from "./types/local";
 
 const isNum = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
@@ -43,15 +44,21 @@ function Months12({ label, values, onChange }: { label: string; values: number[]
     </div>
   );
 }
-function Derate({ label, value, onChange }: { label: string; value: { mode: "not_applied" } | { mode: "pct"; pct: number }; onChange: (v: { mode: "not_applied" } | { mode: "pct"; pct: number }) => void }) {
+type DerateValue = OptionalDerate;
+function Derate({ label, value, onChange, withBasis = false }: { label: string; value: DerateValue; onChange: (v: DerateValue) => void; withBasis?: boolean }) {
   return (
     <div style={{ display: "grid", gap: 2, fontSize: 12 }}>{label}
       <div style={{ display: "flex", gap: 4 }}>
         <select style={inp} value={value.mode} onChange={(e) => onChange(e.target.value === "pct" ? { mode: "pct", pct: 0 } : { mode: "not_applied" })}>
           <option value="not_applied">tidak diterapkan</option><option value="pct">persen</option>
         </select>
-        {value.mode === "pct" && <input style={{ ...inp, maxWidth: 90 }} type="number" step="any" value={Number.isFinite(value.pct) ? value.pct : ""} onChange={(e) => onChange({ mode: "pct", pct: e.target.value === "" ? NaN : Number(e.target.value) })} />}
+        {value.mode === "pct" && <input style={{ ...inp, maxWidth: 90 }} type="number" step="any" value={Number.isFinite(value.pct) ? value.pct : ""} onChange={(e) => onChange({ ...value, mode: "pct", pct: e.target.value === "" ? NaN : Number(e.target.value) })} />}
       </div>
+      {withBasis && value.mode === "pct" && (
+        <select style={inp} aria-label={`${label}: basis`} value={value.basis ?? "flat"} onChange={(e) => onChange({ mode: "pct", pct: value.pct, basis: e.target.value as WiringBasis })}>
+          <option value="flat">Rata setahun (HelioScope)</option><option value="stc">Pada STC, ∝ I² (PVsyst)</option>
+        </select>
+      )}
     </div>
   );
 }
@@ -176,8 +183,8 @@ export default function ConditionForm({ projectHelioId, conditionSetId, engineIn
           <Num label="Sebaran suhu sel (°C)" value={cs.mismatch.temp_spread_c} onChange={(v) => set({ mismatch: { ...cs.mismatch, temp_spread_c: v } })} />
           <Num label="Toleransi modul min (%)" value={cs.mismatch.module_tolerance_min_pct} onChange={(v) => set({ mismatch: { ...cs.mismatch, module_tolerance_min_pct: v } })} />
           <Num label="Toleransi modul maks (%)" value={cs.mismatch.module_tolerance_max_pct} onChange={(v) => set({ mismatch: { ...cs.mismatch, module_tolerance_max_pct: v } })} />
-          <Derate label="Kabel DC (% pada STC)" value={cs.dc_wiring} onChange={(v) => set({ dc_wiring: v })} />
-          <Derate label="Kabel AC & trafo (%)" value={cs.ac_loss} onChange={(v) => set({ ac_loss: v })} />
+          <Derate label="Kabel DC (% pada STC)" value={cs.dc_wiring} withBasis onChange={(v) => set({ dc_wiring: v })} />
+          <Derate label="Kabel AC & trafo (%)" value={cs.ac_loss} withBasis onChange={(v) => set({ ac_loss: v })} />
           <Derate label="LID awal (%)" value={cs.lid} onChange={(v) => set({ lid: v })} />
           <Num label="Efisiensi inverter cadangan (%)" value={cs.inverter_efficiency_pct} onChange={(v) => set({ inverter_efficiency_pct: v ?? NaN })} />
           <Num label="Faktor daya" value={cs.power_factor} onChange={(v) => set({ power_factor: v ?? NaN })} />
