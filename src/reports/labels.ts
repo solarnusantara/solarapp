@@ -2,6 +2,7 @@
 // read `helioscope_label` (Production Report) or `pvsyst_label` (Engineering Calculation) and fall back
 // to the fixed English names below only for stages that carry none.
 import type { StageSummary } from "../engine/types";
+import type { OptionalDerate } from "../engine/types/OptionalDerate";
 
 /** Stages that have no helioscope_label / pvsyst_label in helio. Keyed by loss_tree key. */
 const STAGE_EN: Record<string, { hs?: string; pv?: string }> = {
@@ -27,6 +28,13 @@ const SUB_EN: Record<string, string> = {
 type Named = { key: string; pvsyst_label: string | null; helioscope_label?: string | null; label: string };
 
 /** Production Report: HelioScope wording. */
+/** "Loss Fraction" text for DC/AC wiring: `stc` basis reads "X % at STC"; flat/absent reads "X % (rata setahun)" since the number is not an STC fraction there. */
+export function wiringLossLabel(d: OptionalDerate, digits: number): string {
+  if (d.mode !== "pct") return "Tidak diterapkan";
+  const v = Number.isFinite(d.pct) ? d.pct.toFixed(digits) : "—";
+  return d.basis === "stc" ? `${v} % at STC` : `${v} % (rata setahun)`;
+}
+
 export const helioscopeStageLabel = (s: StageSummary): string => s.helioscope_label ?? STAGE_EN[s.key]?.hs ?? s.pvsyst_label ?? STAGE_EN[s.key]?.pv ?? s.label;
 /** Engineering Calculation: PVsyst wording. */
 export const pvsystStageLabel = (s: StageSummary): string => s.pvsyst_label ?? STAGE_EN[s.key]?.pv ?? s.helioscope_label ?? STAGE_EN[s.key]?.hs ?? s.label;

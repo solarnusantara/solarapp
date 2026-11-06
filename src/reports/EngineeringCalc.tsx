@@ -14,7 +14,7 @@ import LossDiagram from "./LossFunnel";
 import { exportModeLabel } from "../engine/exportMode";
 import { sigmaEnergy, Z } from "./probability";
 import { conditionSet, engineering, horizonPoints, inverterRatings, iamTable, lossGroups, lossTree, orientations, out, prod, sourceLabel, stringingReports, uncertaintyRows, weatherVariability } from "./model";
-import { mountingPhrase, thermalRows, usersNeedsLabel } from "./labels";
+import { mountingPhrase, thermalRows, usersNeedsLabel, wiringLossLabel } from "./labels";
 import { LogoImg, Sheet, SOLAR_NUSANTARA_LOGO, SourceNotice, type ReportProps } from "./parts";
 import { SUN_DATES } from "./useReportData";
 
@@ -238,9 +238,9 @@ export default function EngineeringCalc({ data, projectId, project }: ReportProp
       strings: find(/string/i) ? monthlyUniform(find(/string/i)!.monthly_pct, 1, " %") : DASH,
       mismatch: pct(cs.mismatch.pct, 1),
       degr: `${n(cs.degradation.annual_rate_pct, 2, { group: false })} %/year`,
-      dcw: cs.dc_wiring.mode === "pct" ? `${n(cs.dc_wiring.pct, 1, { group: false })} % at STC` : "Tidak diterapkan",
+      dcw: wiringLossLabel(cs.dc_wiring, 1),
       avail: cs.availability.mode === "annual" ? pct(cs.availability.pct, 1) : cs.availability.mode === "monthly" ? monthlyUniform(cs.availability.pct, 1, " %") : "Tidak diterapkan",
-      acl: cs.ac_loss.mode === "pct" ? `${n(cs.ac_loss.pct, 2, { group: false })} % at STC` : "Tidak diterapkan",
+      acl: wiringLossLabel(cs.ac_loss, 2),
       customOthers: custom.filter((c) => !/quality|kualitas|string/i.test(c.name)),
     };
   })();

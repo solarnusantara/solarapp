@@ -4,4 +4,10 @@
  * A derate that is either not applied or a fixed percentage. "Not applied" is a statement, not a
  * missing value: the stage then reports `not_modeled` (ADR-0004).
  */
-export type OptionalDerate = { "mode": "not_applied" } | { "mode": "pct", pct: number, };
+export type OptionalDerate = { "mode": "not_applied" } | { "mode": "pct", pct: number, 
+/**
+ * `flat` (default when absent) or `stc` (PVsyst "Loss Fraction at STC", loss ∝ I²), helio#380.
+ */
+basis?: WiringBasis, };
+
+export type WiringBasis = "flat" | "stc";

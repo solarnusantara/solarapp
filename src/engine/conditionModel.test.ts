@@ -31,8 +31,8 @@ describe("conditionModel", () => {
     const r = applyPvsystPreset(base);
     expect(r.params.soiling_pct).toEqual(m(3));
     expect(r.params.lid).toEqual({ mode: "pct", pct: 2 });
-    expect(r.params.dc_wiring).toEqual({ mode: "pct", pct: 3 });
-    expect(r.params.ac_loss).toEqual({ mode: "pct", pct: 0.36 });
+    expect(r.params.dc_wiring).toEqual({ mode: "pct", pct: 3, basis: "stc" });
+    expect(r.params.ac_loss).toEqual({ mode: "pct", pct: 0.36, basis: "stc" });
     expect(r.params.availability).toEqual({ mode: "annual", pct: 1.9 });
     expect(r.params.mismatch.pct).toBe(3);
     expect(r.params.albedo).toEqual(m(0.2));
@@ -52,5 +52,21 @@ describe("conditionModel", () => {
     expect(r.unsupported.some((u) => u.label.includes("Fresnel"))).toBe(true);
     expect(r.needsInput.length).toBe(2);
     expect(serializeConditionSet(r.params).errors.length).toBeGreaterThan(0);
+  });
+});
+
+describe("wiring basis (helio#380)", () => {
+  it("preset sets stc basis on DC and AC wiring", () => {
+    const r = applyPvsystPreset(base);
+    expect(r.params.dc_wiring).toEqual({ mode: "pct", pct: 3, basis: "stc" });
+    expect(r.params.ac_loss).toEqual({ mode: "pct", pct: 0.36, basis: "stc" });
+  });
+  it("legacy ConditionSet without basis round-trips unchanged; basis round-trips when present", () => {
+    const legacy = { ...base, dc_wiring: { mode: "pct", pct: 1.5 } } as ConditionSet;
+    const back = JSON.parse(JSON.stringify(serializeConditionSet(legacy).params));
+    expect(back.dc_wiring).toEqual({ mode: "pct", pct: 1.5 });
+    expect("basis" in back.dc_wiring).toBe(false);
+    const stc = { ...base, ac_loss: { mode: "pct", pct: 0.36, basis: "stc" } } as ConditionSet;
+    expect(JSON.parse(JSON.stringify(serializeConditionSet(stc).params)).ac_loss).toEqual({ mode: "pct", pct: 0.36, basis: "stc" });
   });
 });
