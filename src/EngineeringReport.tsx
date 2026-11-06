@@ -27,6 +27,7 @@ import {
 } from "lucide-react";
 import {
   findNearestPlnSubstations,
+  fetchSolarClimatology,
 } from "./gisSolarService";
 import ReportsHost, { type ReportView } from "./reports/ReportsHost";
 import { useReportData } from "./reports/useReportData";
@@ -1104,6 +1105,60 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
     [activeProj?.id, projectId]
   );
 
+  // CAD 2D rendering variables
+  const targetProjId = activeProj?.id ?? projectId;
+  const layoutSettings = savedLayout?.settings ?? {};
+  const roof3dConfig = useMemo(() => {
+    try {
+      const direct = localStorage.getItem(`solar-apps-3d-roof:${targetProjId}`);
+      if (direct) return JSON.parse(direct);
+      if (layoutSettings?.roof3d) return layoutSettings.roof3d;
+    } catch {}
+    if (targetProjId?.includes("mas-silueta")) {
+      return {
+        surfaceMode: "roof-multi-3",
+        ridgeAxis: "NS",
+        roofFitMode: "fit-panels",
+        wallHeight: 5.0,
+        roofPitchDeg: 10,
+      };
+    }
+    return null;
+  }, [targetProjId, layoutSettings?.roof3d]);
+
+  const areaW = Number(layoutSettings.areaWidth) || (isCikarang ? 110000 : 220000);
+  const areaH = Number(layoutSettings.areaHeight) || (isCikarang ? 32000 : 120000);
+  const panels = Array.isArray(savedLayout?.panels) ? savedLayout.panels : [];
+  const obstacles = Array.isArray(savedLayout?.obstacles) ? savedLayout.obstacles : [];
+  const siteCorners = savedLayout?.site?.polygonCorners;
+  const segments = Array.isArray(savedLayout?.segments) ? savedLayout.segments : [];
+  const walkways = Array.isArray(savedLayout?.walkways) ? savedLayout.walkways : [];
+  const moduleW = Number(layoutSettings.moduleWidth) || 2278;
+  const moduleH = Number(layoutSettings.moduleHeight) || 1134;
+  const tilt = Number(layoutSettings.tilt) || 10;
+
+  // Realized Layout DC Capacity (summing segments/panels exactly like PVLayout.tsx)
+  const actualLayoutKwp = useMemo(() => {
+    if (savedLayout?.segments && Array.isArray(savedLayout.segments) && savedLayout.segments.length > 0) {
+      const activeSegs = savedLayout.segments.filter((s: any) => s.visible !== false);
+      const totalW = activeSegs.reduce((acc: number, s: any) => {
+        const pCount = Array.isArray(s.panels) ? s.panels.length : 0;
+        const watts = Number(s.moduleWatts) || 580;
+        return acc + pCount * watts;
+      }, 0);
+      if (totalW > 0) return Number((totalW / 1000).toFixed(2));
+    }
+    if (panels.length > 0) {
+      const rawWatts = Number(layoutSettings.watts) || Number(layoutSettings.panelWatts) || 580;
+      const normalizedWatts = rawWatts > 1000 ? rawWatts / 10 : rawWatts;
+      return Number(((panels.length * normalizedWatts) / 1000).toFixed(2));
+    }
+    return capacityKwp;
+  }, [savedLayout, panels, layoutSettings, capacityKwp]);
+
+  const totalPanels = panels.length || Math.round((actualLayoutKwp * 1000) / 580);
+  const totalModuleArea = (totalPanels * (moduleW * moduleH)) / 1_000_000;
+
   // GIS Solar Irradiance & Yield State
   const reportData = useReportData(activeProj?.id ?? projectId, { hourly: false });
   const [reportView, setReportView] = useState<ReportView | null>(null);
@@ -1146,6 +1201,14 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
       reportData.reload();
       const subs = findNearestPlnSubstations(coords.lat, coords.lng, 3);
       setSubstations(subs);
+
+      const helio = engineYield(reportData.result, coords);
+      if (helio) {
+        setYieldData(helio);
+      } else {
+        const clim = await fetchSolarClimatology(coords.lat, coords.lng, actualLayoutKwp);
+        setYieldData(clim);
+      }
     } catch (err: any) {
       console.error("GIS Climatology fetch failed:", err);
       setGisError(err?.message || "Gagal mengambil data GIS");
@@ -1155,8 +1218,15 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
   }
 
   useEffect(() => {
-    setYieldData(engineYield(reportData.result, coords));
-  }, [reportData.result, coords.lat, coords.lng]);
+    const helio = engineYield(reportData.result, coords);
+    if (helio) {
+      setYieldData(helio);
+    } else {
+      fetchSolarClimatology(coords.lat, coords.lng, actualLayoutKwp)
+        .then(res => setYieldData(res))
+        .catch(err => console.warn("NASA POWER fetch fallback failed:", err));
+    }
+  }, [reportData.result, coords.lat, coords.lng, actualLayoutKwp]);
 
   useEffect(() => {
     loadGisData();
@@ -1167,57 +1237,7 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
     return Math.max(...yieldData.monthly.map((m) => m.monthlyEnergyKwh), 1);
   }, [yieldData]);
 
-  // CAD 2D rendering variables
-  const targetProjId = activeProj?.id ?? projectId;
-  const layoutSettings = savedLayout?.settings ?? {};
-  const roof3dConfig = useMemo(() => {
-    try {
-      const direct = localStorage.getItem(`solar-apps-3d-roof:${targetProjId}`);
-      if (direct) return JSON.parse(direct);
-      if (layoutSettings?.roof3d) return layoutSettings.roof3d;
-    } catch {}
-    if (targetProjId?.includes("mas-silueta")) {
-      return {
-        surfaceMode: "roof-multi-3",
-        ridgeAxis: "NS",
-        roofFitMode: "fit-panels",
-        wallHeight: 5.0,
-        roofPitchDeg: 10,
-      };
-    }
-    return null;
-  }, [targetProjId, layoutSettings?.roof3d]);
 
-  const areaW = Number(layoutSettings.areaWidth) || (isCikarang ? 110000 : 220000);
-  const areaH = Number(layoutSettings.areaHeight) || (isCikarang ? 32000 : 120000);
-  const panels = Array.isArray(savedLayout?.panels) ? savedLayout.panels : [];
-  const obstacles = Array.isArray(savedLayout?.obstacles) ? savedLayout.obstacles : [];
-  const siteCorners = savedLayout?.site?.polygonCorners;
-  const moduleW = Number(layoutSettings.moduleWidth) || 2278;
-  const moduleH = Number(layoutSettings.moduleHeight) || 1134;
-  const tilt = Number(layoutSettings.tilt) || 10;
-
-  // Realized Layout DC Capacity (summing segments/panels exactly like PVLayout.tsx)
-  const actualLayoutKwp = useMemo(() => {
-    if (savedLayout?.segments && Array.isArray(savedLayout.segments) && savedLayout.segments.length > 0) {
-      const activeSegs = savedLayout.segments.filter((s: any) => s.visible !== false);
-      const totalW = activeSegs.reduce((acc: number, s: any) => {
-        const pCount = Array.isArray(s.panels) ? s.panels.length : 0;
-        const watts = Number(s.moduleWatts) || 580;
-        return acc + pCount * watts;
-      }, 0);
-      if (totalW > 0) return Number((totalW / 1000).toFixed(2));
-    }
-    if (panels.length > 0) {
-      const rawWatts = Number(layoutSettings.watts) || Number(layoutSettings.panelWatts) || 580;
-      const normalizedWatts = rawWatts > 1000 ? rawWatts / 10 : rawWatts;
-      return Number(((panels.length * normalizedWatts) / 1000).toFixed(2));
-    }
-    return capacityKwp;
-  }, [savedLayout, panels, layoutSettings, capacityKwp]);
-
-  const totalPanels = panels.length || Math.round((actualLayoutKwp * 1000) / 580);
-  const totalModuleArea = (totalPanels * (moduleW * moduleH)) / 1_000_000;
 
   // Set document title dynamically to "SolarApp - [Nama Proyek]" for browser print dialog suggested filename
   const syncDocumentTitle = () => {
@@ -1476,8 +1496,17 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
             {lossLines(reportData.result).map((l) => (
               <div key={l.label}>{l.label}: <strong style={{ color: "#dc2626" }}>{fmtNum(l.pct, 1)}%</strong></div>
             ))}
-            {!reportData.result && <div style={{ gridColumn: "1 / -1" }}>Belum dihitung — buka PV Layout lalu klik Hitung (Helio)</div>}
-            <div>Net PR: <strong style={{ color: "#047857" }}>{fmtPct(engineOut(reportData.result)?.performance_ratio_pct, 1)}</strong></div>
+            {!reportData.result && yieldData?.losses && (
+              <>
+                <div>Suhu Operasi: <strong style={{ color: "#dc2626" }}>-{yieldData.losses.temperature}%</strong></div>
+                <div>Soiling / Debu: <strong style={{ color: "#dc2626" }}>-{yieldData.losses.soiling}%</strong></div>
+                <div>Mismatch Modul: <strong style={{ color: "#dc2626" }}>-{yieldData.losses.mismatch}%</strong></div>
+                <div>Inverter Euro: <strong style={{ color: "#dc2626" }}>-{yieldData.losses.inverter}%</strong></div>
+                <div>Kabel DC & AC: <strong style={{ color: "#dc2626" }}>-{yieldData.losses.cabling}%</strong></div>
+                <div>Shading Horizon: <strong style={{ color: "#dc2626" }}>-{yieldData.losses.shading}%</strong></div>
+              </>
+            )}
+            <div>Net PR: <strong style={{ color: "#047857" }}>{fmtPct(engineOut(reportData.result)?.performance_ratio_pct, 1) || (yieldData?.pr ? `${(yieldData.pr * 100).toFixed(1)}%` : "80.5%")}</strong></div>
           </div>
         </div>
 
@@ -1613,31 +1642,94 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
                   }}
                 />
 
-                {/* Rooftop / Ground Boundary Polygon Overlay on Satellite Map */}
-                <div
+                {/* Rooftop / Ground Multi-Segment Overlay matching GIS layout */}
+                <svg
+                  viewBox={`0 0 ${areaW} ${areaH}`}
                   style={{
                     position: "absolute",
                     top: `${overlayTopPct}%`,
                     left: `${overlayLeftPct}%`,
                     width: `${overlayWidthPct}%`,
                     height: `${overlayHeightPct}%`,
-                    border: "2.5px solid #22c55e",
-                    background: "rgba(34, 197, 94, 0.18)",
-                    borderRadius: 3,
-                    display: "flex",
-                    flexDirection: "column",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    boxShadow: "0 0 14px rgba(34, 197, 94, 0.45)",
                     zIndex: 2,
                     pointerEvents: "none",
                   }}
                 >
-                  <span style={{ fontSize: 9, fontWeight: 800, color: "#22c55e", background: "rgba(15,23,42,0.92)", padding: "2px 7px", borderRadius: 3, border: "1px solid #22c55e", boxShadow: "0 2px 5px rgba(0,0,0,0.6)" }}>
-                    TAPAK PLTS: {(areaW / 1000).toFixed(0)}m × {(areaH / 1000).toFixed(0)}m
-                  </span>
-                  <span style={{ fontSize: 7.5, color: "#ffffff", background: "rgba(0,0,0,0.78)", padding: "1.5px 5px", borderRadius: 2, marginTop: 3 }}>
-                    Luas Tapak: {((areaW * areaH) / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 0 })} m²
+                  {/* Outer Facility Perimeter */}
+                  <rect
+                    x={0}
+                    y={0}
+                    width={areaW}
+                    height={areaH}
+                    fill="rgba(34, 197, 94, 0.05)"
+                    stroke="#22c55e"
+                    strokeWidth={Math.max(areaW, areaH) * 0.003}
+                    strokeDasharray="10 6"
+                    rx={4}
+                  />
+
+                  {/* Walkways */}
+                  {walkways.map((w: any) => (
+                    <rect
+                      key={w.id}
+                      x={w.x}
+                      y={w.y}
+                      width={w.w}
+                      height={w.h}
+                      fill="#ea580c"
+                      fillOpacity={0.5}
+                      stroke="#f97316"
+                      strokeWidth={Math.max(areaW, areaH) * 0.0015}
+                    />
+                  ))}
+
+                  {/* 24 Segments (Roof Boxes matching GIS) */}
+                  {segments.map((seg: any, idx: number) => {
+                    if (!seg.polygon || seg.polygon.length < 3) return null;
+                    const pts = seg.polygon.map((p: any) => `${p.x},${p.y}`).join(" ");
+                    return (
+                      <g key={seg.id || idx}>
+                        <polygon
+                          points={pts}
+                          fill={seg.color || "#3b82f6"}
+                          fillOpacity={0.42}
+                          stroke={seg.color || "#3b82f6"}
+                          strokeWidth={Math.max(areaW, areaH) * 0.0025}
+                        />
+                        {/* PV Panels within segment */}
+                        {seg.panels?.map((p: any) => (
+                          <rect
+                            key={p.id}
+                            x={p.x}
+                            y={p.y}
+                            width={p.w}
+                            height={p.h}
+                            fill="#38bdf8"
+                            stroke="#0284c7"
+                            strokeWidth={Math.max(areaW, areaH) * 0.0005}
+                            rx={1}
+                          />
+                        ))}
+                      </g>
+                    );
+                  })}
+                </svg>
+
+                {/* Floating Badge Tag matching GIS status */}
+                <div
+                  style={{
+                    position: "absolute",
+                    top: `${Math.max(2, Number(overlayTopPct) - 6)}%`,
+                    left: `${overlayLeftPct}%`,
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 6,
+                    zIndex: 4,
+                    pointerEvents: "none",
+                  }}
+                >
+                  <span style={{ fontSize: 8.5, fontWeight: 800, color: "#22c55e", background: "rgba(15,23,42,0.92)", padding: "2px 7px", borderRadius: 3, border: "1px solid #22c55e", boxShadow: "0 2px 5px rgba(0,0,0,0.6)" }}>
+                    TAPAK PLTS: {segments.length > 0 ? `${segments.length} Segmen Atap · ${totalPanels} Modul (${actualLayoutKwp} kWp)` : `${(areaW / 1000).toFixed(0)}m × ${(areaH / 1000).toFixed(0)}m`}
                   </span>
                 </div>
 

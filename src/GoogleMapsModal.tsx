@@ -592,8 +592,8 @@ export default function GoogleMapsModal({
           const dNorth = (e.latLng.lat() - curBox.center.lat) * M_PER_DEG_LAT;
           const rx = dEast * Math.cos(curRad) + dNorth * Math.sin(curRad);
           const ry = -dEast * Math.sin(curRad) + dNorth * Math.cos(curRad);
-          const newW = Math.max(4, Math.round(Math.abs(rx) * 2 * 2) / 2);
-          const newH = Math.max(4, Math.round(Math.abs(ry) * 2 * 2) / 2);
+          const newW = Math.max(0, Math.round(Math.abs(rx) * 2 * 2) / 2);
+          const newH = Math.max(0, Math.round(Math.abs(ry) * 2 * 2) / 2);
           updateBoxProps(targetId, { widthM: newW, heightM: newH });
         });
 
@@ -1360,7 +1360,8 @@ export default function GoogleMapsModal({
                   type="number"
                   step="0.5"
                   value={activeBox.widthM}
-                  onChange={e => updateActiveBoxProps({ widthM: Math.max(3, Number(e.target.value)) })}
+                  min="0"
+                  onChange={e => updateActiveBoxProps({ widthM: Math.max(0, Number(e.target.value)) })}
                   style={{ width: 55, background: "#162319", border: "1px solid #284430", color: "#edf5ef", fontSize: 11, padding: "2px 5px", borderRadius: 4 }}
                 />
               </div>
@@ -1370,7 +1371,8 @@ export default function GoogleMapsModal({
                   type="number"
                   step="0.5"
                   value={activeBox.heightM}
-                  onChange={e => updateActiveBoxProps({ heightM: Math.max(3, Number(e.target.value)) })}
+                  min="0"
+                  onChange={e => updateActiveBoxProps({ heightM: Math.max(0, Number(e.target.value)) })}
                   style={{ width: 55, background: "#162319", border: "1px solid #284430", color: "#edf5ef", fontSize: 11, padding: "2px 5px", borderRadius: 4 }}
                 />
               </div>

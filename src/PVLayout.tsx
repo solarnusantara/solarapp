@@ -799,8 +799,8 @@ export default function PVLayout({
     return {
       x: minX,
       y: minY,
-      w: Math.max(1000, maxX - minX),
-      h: Math.max(1000, maxY - minY),
+      w: Math.max(0, maxX - minX),
+      h: Math.max(0, maxY - minY),
     };
   }, [activeSegment?.polygon]);
 
@@ -808,8 +808,8 @@ export default function PVLayout({
     if (!activeSegment) return;
     const x = Math.round(newXm * 1000);
     const y = Math.round(newYm * 1000);
-    const w = Math.max(1000, Math.round(newWm * 1000));
-    const h = Math.max(1000, Math.round(newHm * 1000));
+    const w = Math.max(0, Math.round(newWm * 1000));
+    const h = Math.max(0, Math.round(newHm * 1000));
     const newPoly = [
       { x, y },
       { x: x + w, y },
@@ -1471,6 +1471,7 @@ export default function PVLayout({
                         <input
                           type="number"
                           step="0.5"
+                          min="0"
                           value={(segBounds.w / 1000).toFixed(1)}
                           onChange={e => handleUpdateSegmentGeometry(segBounds.x / 1000, segBounds.y / 1000, Number(e.target.value), segBounds.h / 1000)}
                           style={{ width: "100%", background: "#080d09", border: "1px solid #1f3325", borderRadius: 6, padding: "4px 7px", color: "#edf5ef", fontSize: 11 }}
@@ -1481,6 +1482,7 @@ export default function PVLayout({
                         <input
                           type="number"
                           step="0.5"
+                          min="0"
                           value={(segBounds.h / 1000).toFixed(1)}
                           onChange={e => handleUpdateSegmentGeometry(segBounds.x / 1000, segBounds.y / 1000, segBounds.w / 1000, Number(e.target.value))}
                           style={{ width: "100%", background: "#080d09", border: "1px solid #1f3325", borderRadius: 6, padding: "4px 7px", color: "#edf5ef", fontSize: 11 }}
