@@ -1605,122 +1605,185 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
 
             <div style={{ display: "grid", gridTemplateColumns: "1.5fr 1fr", gap: 10, alignItems: "stretch" }}>
               {/* Satellite Map with High-Res Satellite Imagery & Boundary Overlay */}
-              <div style={{ position: "relative", height: 265, borderRadius: 4, overflow: "hidden", border: "1px solid #0f172a", background: "#080f1a" }}>
-                {/* Fallback dark raster grid (behind satellite image) */}
-                <div
-                  style={{
-                    position: "absolute",
-                    inset: 0,
-                    backgroundImage: "radial-gradient(#334155 1.5px, transparent 1.5px), radial-gradient(#1e293b 1.5px, #080f1a 1.5px)",
-                    backgroundSize: "16px 16px",
-                    backgroundPosition: "0 0, 8px 8px",
-                    zIndex: 0,
-                    pointerEvents: "none",
-                  }}
-                />
+              <div style={{ position: "relative", height: 265, borderRadius: 4, overflow: "hidden", border: "1.5px solid #0f172a", background: "#080f1a" }}>
+                {(() => {
+                  const viewBoxW = 800;
+                  const viewBoxH = 450;
+                  const siteW = areaW || 141264;
+                  const siteH = areaH || 165887;
 
-                <img
-                  src={satelliteImgSrc}
-                  alt="Citra Satelit Lokasi PLTS"
-                  crossOrigin="anonymous"
-                  style={{
-                    position: "absolute",
-                    inset: 0,
-                    width: "100%",
-                    height: "100%",
-                    objectFit: "cover",
-                    display: "block",
-                    zIndex: 1,
-                  }}
-                  onError={(e) => {
-                    const target = e.currentTarget as HTMLImageElement;
-                    if (target.src !== esriSatelliteUrl) {
-                      target.src = esriSatelliteUrl;
-                    } else {
-                      target.style.display = "none";
-                    }
-                  }}
-                />
+                  // Scale to fit nicely with ~14% balanced margin
+                  const scale = Math.min((viewBoxW * 0.86) / Math.max(siteW, 158000), (viewBoxH * 0.84) / siteH);
+                  const originX = (viewBoxW - siteW * scale) / 2;
+                  const originY = (viewBoxH - siteH * scale) / 2;
 
-                {/* Rooftop / Ground Multi-Segment Overlay matching GIS layout */}
-                <svg
-                  viewBox={`0 0 ${areaW} ${areaH}`}
-                  style={{
-                    position: "absolute",
-                    top: `${overlayTopPct}%`,
-                    left: `${overlayLeftPct}%`,
-                    width: `${overlayWidthPct}%`,
-                    height: `${overlayHeightPct}%`,
-                    zIndex: 2,
-                    pointerEvents: "none",
-                  }}
-                >
-                  {/* Outer Facility Perimeter */}
-                  <rect
-                    x={0}
-                    y={0}
-                    width={areaW}
-                    height={areaH}
-                    fill="rgba(34, 197, 94, 0.05)"
-                    stroke="#22c55e"
-                    strokeWidth={Math.max(areaW, areaH) * 0.003}
-                    strokeDasharray="10 6"
-                    rx={4}
-                  />
+                  const rotDeg = savedLayout?.site?.rotationDeg || 0;
+                  const centerX = savedLayout?.site?.imageCenterMm ? originX + savedLayout.site.imageCenterMm.x * scale : originX + (siteW * scale) / 2;
+                  const centerY = savedLayout?.site?.imageCenterMm ? originY + savedLayout.site.imageCenterMm.y * scale : originY + (siteH * scale) / 2;
+                  const spanM = savedLayout?.site?.imageSpanM || (Math.hypot(siteW, siteH) / 1000);
+                  const imgPixelSize = spanM * 1000 * scale;
 
-                  {/* Walkways */}
-                  {walkways.map((w: any) => (
-                    <rect
-                      key={w.id}
-                      x={w.x}
-                      y={w.y}
-                      width={w.w}
-                      height={w.h}
-                      fill="#ea580c"
-                      fillOpacity={0.5}
-                      stroke="#f97316"
-                      strokeWidth={Math.max(areaW, areaH) * 0.0015}
-                    />
-                  ))}
+                  // Normalize angle to [-180, 180]: e.g. 74° clockwise aligns roof horizontally
+                  const normalizedAngle = ((rotDeg % 360) + 360) % 360;
+                  const svgRotateAngle = normalizedAngle > 180 ? normalizedAngle - 360 : normalizedAngle;
 
-                  {/* 24 Segments (Roof Boxes matching GIS) */}
-                  {segments.map((seg: any, idx: number) => {
-                    if (!seg.polygon || seg.polygon.length < 3) return null;
-                    const pts = seg.polygon.map((p: any) => `${p.x},${p.y}`).join(" ");
-                    return (
-                      <g key={seg.id || idx}>
-                        <polygon
-                          points={pts}
-                          fill={seg.color || "#3b82f6"}
-                          fillOpacity={0.42}
-                          stroke={seg.color || "#3b82f6"}
-                          strokeWidth={Math.max(areaW, areaH) * 0.0025}
-                        />
-                        {/* PV Panels within segment */}
-                        {seg.panels?.map((p: any) => (
+                  return (
+                    <svg
+                      viewBox={`0 0 ${viewBoxW} ${viewBoxH}`}
+                      style={{ width: "100%", height: "100%", display: "block" }}
+                    >
+                      <defs>
+                        <clipPath id="page2-card-clip">
+                          <rect x="0" y="0" width={viewBoxW} height={viewBoxH} rx="4" />
+                        </clipPath>
+                        <pattern id="page2-grid-pattern" width="20" height="20" patternUnits="userSpaceOnUse">
+                          <path d="M 20 0 L 0 0 0 20" fill="none" stroke="#1e293b" strokeWidth="0.8" />
+                        </pattern>
+                      </defs>
+
+                      {/* Dark grid background */}
+                      <rect width={viewBoxW} height={viewBoxH} fill="#080f1a" />
+                      <rect width={viewBoxW} height={viewBoxH} fill="url(#page2-grid-pattern)" opacity="0.6" />
+
+                      {/* 1. Cropped Satellite Map Background (Rotated to align roof horizontally, identical to 2D Studio) */}
+                      {satelliteImgSrc && (
+                        <g clipPath="url(#page2-card-clip)">
+                          <g transform={`rotate(${svgRotateAngle}, ${centerX}, ${centerY})`}>
+                            <image
+                              href={satelliteImgSrc}
+                              x={centerX - imgPixelSize / 2}
+                              y={centerY - imgPixelSize / 2}
+                              width={imgPixelSize}
+                              height={imgPixelSize}
+                              preserveAspectRatio="xMidYMid meet"
+                              opacity={savedLayout?.backgroundOpacity ?? 0.88}
+                            />
+                          </g>
+                        </g>
+                      )}
+
+                      {/* 2. Outer Facility Perimeter (Green Dashed Boundary) */}
+                      <rect
+                        x={originX}
+                        y={originY}
+                        width={siteW * scale}
+                        height={siteH * scale}
+                        fill="rgba(34, 197, 94, 0.05)"
+                        stroke="#22c55e"
+                        strokeWidth="2.5"
+                        strokeDasharray="8 5"
+                        rx="4"
+                      />
+
+                      {/* 3. Walkways (Orange Maintenance Corridors) */}
+                      {walkways.map((w: any) => (
+                        <g key={w.id}>
                           <rect
-                            key={p.id}
-                            x={p.x}
-                            y={p.y}
-                            width={p.w}
-                            height={p.h}
-                            fill="#38bdf8"
-                            stroke="#0284c7"
-                            strokeWidth={Math.max(areaW, areaH) * 0.0005}
-                            rx={1}
+                            x={originX + w.x * scale}
+                            y={originY + w.y * scale}
+                            width={Math.max(1, w.w * scale)}
+                            height={Math.max(1, w.h * scale)}
+                            fill="#ea580c"
+                            fillOpacity="0.55"
+                            stroke="#f97316"
+                            strokeWidth="1.2"
+                            strokeDasharray="4 3"
                           />
-                        ))}
+                          {w.w * scale > 28 && w.h * scale > 10 && (
+                            <text
+                              x={originX + (w.x + w.w / 2) * scale}
+                              y={originY + (w.y + w.h / 2) * scale}
+                              textAnchor="middle"
+                              dominantBaseline="middle"
+                              fill="#ffedd5"
+                              fontSize="7.5"
+                              fontWeight="800"
+                            >
+                              {w.label || "WALKWAY"}
+                            </text>
+                          )}
+                        </g>
+                      ))}
+
+                      {/* 4. Keepouts / Obstacles */}
+                      {obstacles.map((obs: any) => (
+                        <g key={obs.id}>
+                          <rect
+                            x={originX + obs.x * scale}
+                            y={originY + obs.y * scale}
+                            width={Math.max(2, obs.w * scale)}
+                            height={Math.max(2, obs.h * scale)}
+                            fill="#ef4444"
+                            fillOpacity="0.4"
+                            stroke="#f87171"
+                            strokeWidth="1.5"
+                            strokeDasharray="5 3"
+                          />
+                          <text
+                            x={originX + (obs.x + obs.w / 2) * scale}
+                            y={originY + (obs.y + obs.h / 2) * scale}
+                            textAnchor="middle"
+                            dominantBaseline="middle"
+                            fill="#ffffff"
+                            fontSize="8"
+                            fontWeight="800"
+                          >
+                            {obs.label}
+                          </text>
+                        </g>
+                      ))}
+
+                      {/* 5. Field Segments & PV Modules */}
+                      {segments.map((seg: any) => {
+                        if (seg.visible === false || !seg.polygon || seg.polygon.length < 3) return null;
+                        const ptsStr = seg.polygon.map((p: any) => `${originX + p.x * scale},${originY + p.y * scale}`).join(" ");
+                        return (
+                          <g key={seg.id}>
+                            <polygon
+                              points={ptsStr}
+                              fill={seg.color || "#3b82f6"}
+                              fillOpacity="0.22"
+                              stroke={seg.color || "#3b82f6"}
+                              strokeWidth="1.5"
+                              strokeDasharray="6 4"
+                            />
+                            {/* PV Panels within segment */}
+                            {seg.panels?.map((p: any) => (
+                              <rect
+                                key={p.id}
+                                x={originX + p.x * scale}
+                                y={originY + p.y * scale}
+                                width={Math.max(0.8, p.w * scale)}
+                                height={Math.max(0.8, p.h * scale)}
+                                fill="#38bdf8"
+                                stroke="#0284c7"
+                                strokeWidth="0.4"
+                                rx="0.3"
+                              />
+                            ))}
+                          </g>
+                        );
+                      })}
+
+                      {/* 6. True North Compass Rose (Rotated by -svgRotateAngle) */}
+                      <g transform={`translate(${viewBoxW - 48}, 42)`}>
+                        <circle cx="0" cy="0" r="18" fill="rgba(15, 23, 42, 0.92)" stroke="#38bdf8" strokeWidth="1.5" />
+                        <g transform={`rotate(${-svgRotateAngle})`}>
+                          <path d="M 0 -13 L 4 0 L 0 -2 L -4 0 Z" fill="#ef4444" />
+                          <path d="M 0 13 L 4 0 L 0 -2 L -4 0 Z" fill="#94a3b8" />
+                          <text x="0" y="-14" textAnchor="middle" fill="#38bdf8" fontSize="7" fontWeight="900">N</text>
+                        </g>
                       </g>
-                    );
-                  })}
-                </svg>
+                    </svg>
+                  );
+                })()}
 
                 {/* Floating Badge Tag matching GIS status */}
                 <div
                   style={{
                     position: "absolute",
-                    top: `${Math.max(2, Number(overlayTopPct) - 6)}%`,
-                    left: `${overlayLeftPct}%`,
+                    top: 8,
+                    left: 8,
                     display: "flex",
                     alignItems: "center",
                     gap: 6,
@@ -1728,25 +1791,21 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
                     pointerEvents: "none",
                   }}
                 >
-                  <span style={{ fontSize: 8.5, fontWeight: 800, color: "#22c55e", background: "rgba(15,23,42,0.92)", padding: "2px 7px", borderRadius: 3, border: "1px solid #22c55e", boxShadow: "0 2px 5px rgba(0,0,0,0.6)" }}>
-                    TAPAK PLTS: {segments.length > 0 ? `${segments.length} Segmen Atap · ${totalPanels} Modul (${actualLayoutKwp} kWp)` : `${(areaW / 1000).toFixed(0)}m × ${(areaH / 1000).toFixed(0)}m`}
+                  <span style={{ fontSize: 8.5, fontWeight: 800, color: "#22c55e", background: "rgba(15,23,42,0.92)", padding: "3px 8px", borderRadius: 3, border: "1px solid #22c55e", boxShadow: "0 2px 6px rgba(0,0,0,0.6)" }}>
+                    TAPAK PLTS: {segments.length > 0 ? `${segments.length} Segmen Atap · ${totalPanels} Modul (${actualLayoutKwp.toFixed(2)} kWp)` : `${(areaW / 1000).toFixed(0)}m × ${(areaH / 1000).toFixed(0)}m`}
                   </span>
                 </div>
 
-                {/* Red GPS Center Pin */}
-                <div style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%, -100%)", textAlign: "center", zIndex: 3, pointerEvents: "none" }}>
-                  <MapPin size={26} style={{ color: "#ef4444", filter: "drop-shadow(0 2px 6px rgba(0,0,0,0.9))" }} />
-                </div>
-
-                {/* North Indicator Badge */}
-                <div style={{ position: "absolute", top: 8, right: 8, background: "rgba(255,255,255,0.92)", padding: "3px 6px", borderRadius: 3, fontSize: 8, fontWeight: 700, color: "#0f172a", display: "flex", alignItems: "center", gap: 3, zIndex: 3, boxShadow: "0 1px 4px rgba(0,0,0,0.3)" }}>
-                  <Compass size={11} style={{ color: "#0284c7" }} /> UTARA (N)
+                {/* North Indicator Badge in Top Right */}
+                <div style={{ position: "absolute", top: 8, right: 8, background: "rgba(15,23,42,0.92)", padding: "3px 7px", borderRadius: 3, fontSize: 8, fontWeight: 700, color: "#38bdf8", border: "1px solid #0284c7", display: "flex", alignItems: "center", gap: 4, zIndex: 4, boxShadow: "0 2px 6px rgba(0,0,0,0.5)" }}>
+                  <Compass size={11} style={{ transform: `rotate(${-((((savedLayout?.site?.rotationDeg || 0) % 360) + 360) % 360 > 180 ? ((((savedLayout?.site?.rotationDeg || 0) % 360) + 360) % 360) - 360 : (((savedLayout?.site?.rotationDeg || 0) % 360) + 360) % 360)}deg)` }} />
+                  UTARA (N) · {savedLayout?.site?.rotationDeg ? `${savedLayout.site.rotationDeg}°` : "0°"}
                 </div>
 
                 {/* Satellite Metadata Bar at Bottom */}
-                <div style={{ position: "absolute", bottom: 6, left: 6, right: 6, display: "flex", justifyContent: "space-between", alignItems: "center", background: "rgba(15,23,42,0.88)", padding: "3px 8px", borderRadius: 3, fontSize: 7.5, color: "#cbd5e1", zIndex: 3, border: "1px solid #334155" }}>
+                <div style={{ position: "absolute", bottom: 6, left: 6, right: 6, display: "flex", justifyContent: "space-between", alignItems: "center", background: "rgba(15,23,42,0.90)", padding: "3px 8px", borderRadius: 3, fontSize: 7.5, color: "#cbd5e1", zIndex: 4, border: "1px solid #334155" }}>
                   <span>📍 GPS: {coords.lat.toFixed(5)}° S, {coords.lng.toFixed(5)}° E</span>
-                  <span>Skala ~1:2500 · Resolusi 0.5m/px</span>
+                  <span>Orientasi Rotasi: {savedLayout?.site?.rotationDeg || 0}° CW · Resolusi Citra 0.5m/px</span>
                 </div>
               </div>
 
@@ -2017,6 +2076,38 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
                     </text>
                   </g>
                 ))}
+
+                {/* Walkways */}
+                {walkways.map((w: any) => (
+                  <rect
+                    key={w.id}
+                    x={cadOriginX + w.x * cadScale}
+                    y={cadOriginY + w.y * cadScale}
+                    width={Math.max(1, w.w * cadScale)}
+                    height={Math.max(1, w.h * cadScale)}
+                    fill="#ea580c"
+                    fillOpacity={0.45}
+                    stroke="#f97316"
+                    strokeWidth={1}
+                  />
+                ))}
+
+                {/* Segments */}
+                {segments.map((seg: any) => {
+                  if (seg.visible === false || !seg.polygon || seg.polygon.length < 3) return null;
+                  const ptsStr = seg.polygon.map((p: any) => `${cadOriginX + p.x * cadScale},${cadOriginY + p.y * cadScale}`).join(" ");
+                  return (
+                    <polygon
+                      key={seg.id}
+                      points={ptsStr}
+                      fill={seg.color || "#3b82f6"}
+                      fillOpacity={0.14}
+                      stroke={seg.color || "#3b82f6"}
+                      strokeWidth={1}
+                      strokeDasharray="4 2"
+                    />
+                  );
+                })}
 
                 {/* PV Modules */}
                 {panels.map((p: any, idx: number) => (
