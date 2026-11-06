@@ -39,12 +39,21 @@ import {
 import GoogleMapsModal from "./GoogleMapsModal";
 import * as api from "./api";
 import EngineRunPanel from "./engine/EngineRunPanel";
+import AdvancedPanel from "./engine/AdvancedPanel";
+import KeepoutsPanel, { type KeepoutPatch, type KeepoutTool } from "./pv/KeepoutsPanel";
+import { pushSnapshot, redoIndex, undoIndex } from "./pv/history";
+import {
+  deleteObstacle, deleteWalkway, sameKeepout, toKeepoutViews,
+  updateObstacleRect, updateWalkwayRect, isValidRect,
+  type KeepoutRef,
+} from "./pv/keepoutModel";
+import { normalizeOverlay, type Overlay } from "./pv/overlayModel";
 import { EMPTY_ENGINE_INPUTS, type EngineInputs } from "./engine/types/local";
 
 type Lang = "en" | "id";
 export type Panel = { id: number; x: number; y: number; w: number; h: number; segmentId?: string };
 export type SystemType = "Rooftop" | "Ground-mounted";
-export type Obstacle = { id: number; x: number; y: number; w: number; h: number; label: string; heightM?: number };
+export type Obstacle = { id: number; x: number; y: number; w: number; h: number; label: string; heightM?: number; visible?: boolean };
 
 export interface FieldSegment {
   id: string;
@@ -70,6 +79,7 @@ export interface Walkway {
   w: number;
   h: number;
   label?: string;
+  visible?: boolean;
 }
 
 export interface LayerState {
@@ -157,6 +167,10 @@ function isLayoutRicher(candidate: any, baseline: any): boolean {
   const segsC = Array.isArray(candidate.segments) ? candidate.segments.length : 0;
   const segsB = Array.isArray(baseline.segments) ? baseline.segments.length : 0;
   if (segsC > segsB) return true;
+
+  const overlaysC = Array.isArray(candidate.overlays) ? candidate.overlays.length : 0;
+  const overlaysB = Array.isArray(baseline.overlays) ? baseline.overlays.length : 0;
+  if (overlaysC > overlaysB) return true;
 
   return false;
 }
@@ -437,6 +451,9 @@ export default function PVLayout({
     if (data.site) setSite(data.site);
     if (typeof data.backgroundImage === "string") setBackgroundImage(data.backgroundImage);
     if (typeof data.backgroundOpacity === "number") setBackgroundOpacity(data.backgroundOpacity);
+    if (Array.isArray(data.overlays)) {
+      setOverlays(data.overlays.map(normalizeOverlay).filter((o: Overlay | null): o is Overlay => !!o));
+    }
     if (data.layers) setLayers(prev => ({ ...prev, ...data.layers }));
   };
 
@@ -572,6 +589,15 @@ export default function PVLayout({
   const [obstacles, setObstacles] = useState<Obstacle[]>(saved?.obstacles ?? []);
   const [backgroundImage, setBackgroundImage] = useState<string>(saved?.backgroundImage ?? "");
   const [backgroundOpacity, setBackgroundOpacity] = useState<number>(saved?.backgroundOpacity ?? 0.85);
+  const [overlays, setOverlays] = useState<Overlay[]>(() =>
+    Array.isArray(saved?.overlays) ? (saved.overlays as unknown[]).map((raw: unknown) => normalizeOverlay(raw)).filter((o: Overlay | null): o is Overlay => !!o) : []
+  );
+  // Live refs keep pointer-up persistence independent of the last pointer-move render (the segment
+  // drag handler has a known stale-state issue; new keepout drags do not copy that pattern).
+  const walkwaysRef = useRef<Walkway[]>(walkways);
+  walkwaysRef.current = walkways;
+  const obstaclesRef = useRef<Obstacle[]>(obstacles);
+  obstaclesRef.current = obstacles;
   const [site, setSite] = useState<Site | null>(saved?.site ?? {
     coordinates: { lat: -6.9616, lng: 110.3333 },
     address: projectName || "PT Mas Silueta Indonesia, Jawa Tengah",
@@ -604,11 +630,18 @@ export default function PVLayout({
 
   // Selection & drag state
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
-  const [selectedObstacleId, setSelectedObstacleId] = useState<number | null>(null);
-  const [draggingObstacleId, setDraggingObstacleId] = useState<number | null>(null);
+  const [selectedKeepout, setSelectedKeepout] = useState<KeepoutRef | null>(null);
+  const [draggingKeepout, setDraggingKeepout] = useState<KeepoutRef | null>(null);
   const [draggingId, setDraggingId] = useState<number | null>(null);
   const [hasMovedDuringDrag, setHasMovedDuringDrag] = useState(false);
   const [marquee, setMarquee] = useState<{ startX: number; startY: number; currentX: number; currentY: number } | null>(null);
+  const keepoutDragStartRef = useRef<{
+    ref: KeepoutRef;
+    mouseX: number;
+    mouseY: number;
+    initial: { x: number; y: number; w: number; h: number };
+    moved: boolean;
+  } | null>(null);
 
   // Dragging segments & corners state
   const [draggingSegmentId, setDraggingSegmentId] = useState<string | null>(null);
@@ -624,6 +657,7 @@ export default function PVLayout({
     initialPt: { x: 0, y: 0 },
   });
   const [drawingRect, setDrawingRect] = useState<{ startX: number; startY: number; currentX: number; currentY: number } | null>(null);
+  const [drawingKind, setDrawingKind] = useState<"segment" | "keepout" | "walkway" | null>(null);
 
   // Viewport Pan & Zoom
   const [zoom, setZoom] = useState(1);
@@ -680,7 +714,8 @@ export default function PVLayout({
     nextWalkways: Walkway[] = walkways,
     nextSite: Site | null = site,
     nextBg: string = backgroundImage,
-    nextBgOpacity: number = backgroundOpacity
+    nextBgOpacity: number = backgroundOpacity,
+    nextOverlays: Overlay[] = overlays
   ): Promise<boolean> => {
     const flattened = nextSegments.filter(s => s.visible).flatMap(s => s.panels);
     const nowStr = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
@@ -694,6 +729,7 @@ export default function PVLayout({
       site: nextSite,
       backgroundImage: nextBg,
       backgroundOpacity: nextBgOpacity,
+      overlays: nextOverlays,
       layers,
       savedAt: nowStr,
       engine_inputs: engineInputsRef.current,
@@ -717,32 +753,151 @@ export default function PVLayout({
 
   const pushHistory = (nextSegs: FieldSegment[], nextObs: Obstacle[], nextWalks: Walkway[]) => {
     const nextEntry: HistoryEntry = { segments: nextSegs, obstacles: nextObs, walkways: nextWalks };
-    const truncated = history.slice(0, historyIndex + 1);
-    const updated = [...truncated, nextEntry].slice(-30);
-    setHistory(updated);
-    setHistoryIndex(updated.length - 1);
+    const next = pushSnapshot(history, historyIndex, nextEntry);
+    setHistory(next.entries);
+    setHistoryIndex(next.index);
+  };
+
+  const restoreHistoryEntry = (target: HistoryEntry) => {
+    setSegments(target.segments);
+    setObstacles(target.obstacles);
+    setWalkways(target.walkways);
+    setSelectedKeepout((prev) => {
+      if (!prev) return null;
+      const exists = prev.kind === "walkway"
+        ? target.walkways.some((w) => w.id === prev.id)
+        : target.obstacles.some((o) => o.id === prev.id);
+      return exists ? prev : null;
+    });
+    saveDraft(target.segments, target.obstacles, target.walkways);
   };
 
   const handleUndo = () => {
-    if (historyIndex > 0) {
-      const target = history[historyIndex - 1];
-      setSegments(target.segments);
-      setObstacles(target.obstacles);
-      setWalkways(target.walkways);
-      setHistoryIndex(historyIndex - 1);
-      saveDraft(target.segments, target.obstacles, target.walkways);
-    }
+    const targetIndex = undoIndex(history, historyIndex);
+    if (targetIndex === null) return;
+    restoreHistoryEntry(history[targetIndex]);
+    setHistoryIndex(targetIndex);
   };
 
   const handleRedo = () => {
-    if (historyIndex < history.length - 1) {
-      const target = history[historyIndex + 1];
-      setSegments(target.segments);
-      setObstacles(target.obstacles);
-      setWalkways(target.walkways);
-      setHistoryIndex(historyIndex + 1);
-      saveDraft(target.segments, target.obstacles, target.walkways);
+    const targetIndex = redoIndex(history, historyIndex);
+    if (targetIndex === null) return;
+    restoreHistoryEntry(history[targetIndex]);
+    setHistoryIndex(targetIndex);
+  };
+
+  const applyOverlays = (next: Overlay[]) => {
+    setOverlays(next);
+    saveDraft(segments, obstacles, walkways, site, backgroundImage, backgroundOpacity, next);
+  };
+
+  // --- Keepouts / Walkways ---
+  const keepoutViews = useMemo(() => toKeepoutViews(walkways, obstacles), [walkways, obstacles]);
+
+  const focusKeepout = (ref: KeepoutRef) => {
+    setSelectedKeepout(ref);
+    setSelectedIds(new Set());
+    setToolMode("select");
+  };
+
+  const deleteKeepout = (ref: KeepoutRef) => {
+    if (ref.kind === "walkway") {
+      const nextWalkways = deleteWalkway(walkways, String(ref.id));
+      setWalkways(nextWalkways);
+      setSelectedKeepout(null);
+      pushHistory(segments, obstacles, nextWalkways);
+      saveDraft(segments, obstacles, nextWalkways);
+    } else {
+      const nextObstacles = deleteObstacle(obstacles, Number(ref.id));
+      setObstacles(nextObstacles);
+      setSelectedKeepout(null);
+      pushHistory(segments, nextObstacles, walkways);
+      saveDraft(segments, nextObstacles, walkways);
     }
+    setNotice(isId ? "Objek keepout berhasil dihapus." : "Keepout object deleted.");
+  };
+
+  const patchKeepout = (ref: KeepoutRef, patch: KeepoutPatch) => {
+    if (ref.kind === "walkway") {
+      const { heightM: _heightM, ...walkwayPatch } = patch;
+      void _heightM;
+      const next = updateWalkwayRect(walkwaysRef.current, String(ref.id), walkwayPatch);
+      walkwaysRef.current = next;
+      setWalkways(next);
+    } else {
+      const next = updateObstacleRect(obstaclesRef.current, Number(ref.id), patch);
+      obstaclesRef.current = next;
+      setObstacles(next);
+    }
+  };
+
+  const commitKeepoutEdit = () => {
+    const liveWalkways = walkwaysRef.current;
+    const liveObstacles = obstaclesRef.current;
+    pushHistory(segments, liveObstacles, liveWalkways);
+    saveDraft(segments, liveObstacles, liveWalkways);
+  };
+
+  const toggleKeepoutVisibility = (ref: KeepoutRef) => {
+    const current = keepoutViews.find((v) => sameKeepout(v, ref));
+    if (!current) return;
+    const nextVisible = !current.visible;
+    if (ref.kind === "walkway") {
+      const nextWalkways = updateWalkwayRect(walkways, String(ref.id), { visible: nextVisible });
+      setWalkways(nextWalkways);
+      pushHistory(segments, obstacles, nextWalkways);
+      saveDraft(segments, obstacles, nextWalkways);
+    } else {
+      const nextObstacles = updateObstacleRect(obstacles, Number(ref.id), { visible: nextVisible });
+      setObstacles(nextObstacles);
+      pushHistory(segments, nextObstacles, walkways);
+      saveDraft(segments, nextObstacles, walkways);
+    }
+  };
+
+  const createKeepoutFromRect = (kind: "keepout" | "walkway", x: number, y: number, w: number, h: number) => {
+    if (kind === "walkway") {
+      const newWalkway: Walkway = {
+        id: `w-${Date.now()}`,
+        x, y, w, h,
+        label: `Walkway ${walkways.length + 1}`,
+      };
+      const nextWalkways = [...walkways, newWalkway];
+      setWalkways(nextWalkways);
+      setSelectedKeepout({ kind: "walkway", id: newWalkway.id });
+      pushHistory(segments, obstacles, nextWalkways);
+      saveDraft(segments, obstacles, nextWalkways);
+      setNotice(isId ? "Walkway baru berhasil digambar. Geser atau edit di panel Keepouts." : "New walkway drawn.");
+    } else {
+      const newObstacle: Obstacle = {
+        id: Date.now(),
+        x, y, w, h,
+        label: `Keepout ${obstacles.length + 1}`,
+      };
+      const nextObstacles = [...obstacles, newObstacle];
+      setObstacles(nextObstacles);
+      setSelectedKeepout({ kind: "obstacle", id: newObstacle.id });
+      pushHistory(segments, nextObstacles, walkways);
+      saveDraft(segments, nextObstacles, walkways);
+      setNotice(isId ? "Keepout baru berhasil digambar." : "New keepout drawn.");
+    }
+    setSelectedIds(new Set());
+    setToolMode("select");
+  };
+
+  const beginKeepoutDrag = (e: React.PointerEvent, view: { kind: "walkway" | "obstacle"; id: string | number; x: number; y: number; w: number; h: number }) => {
+    const ref: KeepoutRef = { kind: view.kind, id: view.id };
+    setSelectedKeepout(ref);
+    setSelectedIds(new Set());
+    setDraggingKeepout(ref);
+    keepoutDragStartRef.current = {
+      ref,
+      mouseX: e.clientX,
+      mouseY: e.clientY,
+      initial: { x: view.x, y: view.y, w: view.w, h: view.h },
+      moved: false,
+    };
+    (e.currentTarget as any).setPointerCapture?.(e.pointerId);
   };
 
   // --- Segment Management ---
@@ -963,6 +1118,22 @@ export default function PVLayout({
         setSelectedIds(new Set(allPanels.map(p => p.id)));
       }
       if (e.key === "Delete" || e.key === "Backspace") {
+        if (selectedKeepout) {
+          e.preventDefault();
+          if (selectedKeepout.kind === "walkway") {
+            const nextWalkways = deleteWalkway(walkways, String(selectedKeepout.id));
+            setWalkways(nextWalkways);
+            pushHistory(segments, obstacles, nextWalkways);
+            saveDraft(segments, obstacles, nextWalkways);
+          } else {
+            const nextObstacles = deleteObstacle(obstacles, Number(selectedKeepout.id));
+            setObstacles(nextObstacles);
+            pushHistory(segments, nextObstacles, walkways);
+            saveDraft(segments, nextObstacles, walkways);
+          }
+          setSelectedKeepout(null);
+          return;
+        }
         if (selectedIds.size > 0) {
           e.preventDefault();
           const next = segments.map(s => ({
@@ -985,7 +1156,7 @@ export default function PVLayout({
       window.removeEventListener("keydown", handleKeyDown);
       window.removeEventListener("keyup", handleKeyUp);
     };
-  }, [segments, obstacles, walkways, selectedIds, historyIndex, history]);
+  }, [segments, obstacles, walkways, selectedIds, selectedKeepout, historyIndex, history]);
 
   // Export CAD DXF
   const handleExportDxf = () => {
@@ -1247,6 +1418,21 @@ export default function PVLayout({
       <div className="pv-studio-grid">
         {/* ════ LEFT COLUMN: MULTI-SEGMENT & MODULE MANAGER ════ */}
         <aside className="panel" style={{ padding: "14px 16px", display: "flex", flexDirection: "column", gap: 14 }}>
+          {activeStep === 3 ? (
+            <KeepoutsPanel
+              walkways={walkways}
+              obstacles={obstacles}
+              selected={selectedKeepout}
+              toolMode={toolMode}
+              onTool={(tool: KeepoutTool) => setToolMode(tool)}
+              onFocus={focusKeepout}
+              onToggleVisibility={toggleKeepoutVisibility}
+              onDelete={deleteKeepout}
+              onUpdate={patchKeepout}
+              onCommit={commitKeepoutEdit}
+            />
+          ) : (
+          <>
           {/* Top Tab Bar: [ Field Segment ] [ PV Module ] */}
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 4, background: "#0b120d", padding: 3, borderRadius: 8, border: "1px solid #1a2a1f" }}>
             <button
@@ -1631,6 +1817,8 @@ export default function PVLayout({
               </div>
             </div>
           )}
+          </>
+          )}
         </aside>
 
         {/* ════ CENTER COLUMN: CANVAS & TOOLBAR ════ */}
@@ -1716,19 +1904,9 @@ export default function PVLayout({
                   type="button"
                   title="Walkway (Jalur Inspeksi / Damkar)"
                   onClick={() => {
-                    const newWalk: Walkway = {
-                      id: `w-${Date.now()}`,
-                      x: 2000,
-                      y: 11000,
-                      w: settings.areaWidth - 4000,
-                      h: 2000,
-                      label: "Walkway 2m",
-                    };
-                    const next = [...walkways, newWalk];
-                    setWalkways(next);
-                    pushHistory(segments, obstacles, next);
-                    saveDraft(segments, obstacles, next);
-                    setNotice("Jalur walkway pemeliharaan berhasil ditambahkan.");
+                    setToolMode("walkway");
+                    setActiveStep(3);
+                    setNotice(isId ? "Mode Walkway aktif. Seret kotak di kanvas untuk menggambar jalur." : "Walkway mode active. Drag a box on the canvas.");
                   }}
                   style={{
                     background: toolMode === "walkway" ? "#ea580c" : "transparent",
@@ -1863,6 +2041,17 @@ export default function PVLayout({
                 isPanningRef.current = true;
                 panStartRef.current = { x: e.clientX - pan.x, y: e.clientY - pan.y };
                 (e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId);
+              } else if (toolMode === "keepout" || toolMode === "walkway") {
+                const rect = svgRef.current?.getBoundingClientRect();
+                if (rect) {
+                  const mouseSvgX = (e.clientX - rect.left - pan.x) / zoom;
+                  const mouseSvgY = (e.clientY - rect.top - pan.y) / zoom;
+                  const metricX = Math.round((mouseSvgX - originX) / scale);
+                  const metricY = Math.round((mouseSvgY - originY) / scale);
+                  setDrawingRect({ startX: metricX, startY: metricY, currentX: metricX, currentY: metricY });
+                  setDrawingKind(toolMode);
+                  (e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId);
+                }
               } else if (toolMode === "rectangle" || toolMode === "polygon") {
                 const rect = svgRef.current?.getBoundingClientRect();
                 if (rect) {
@@ -1871,8 +2060,11 @@ export default function PVLayout({
                   const metricX = Math.round((mouseSvgX - originX) / scale);
                   const metricY = Math.round((mouseSvgY - originY) / scale);
                   setDrawingRect({ startX: metricX, startY: metricY, currentX: metricX, currentY: metricY });
+                  setDrawingKind("segment");
                   (e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId);
                 }
+              } else if (toolMode === "select") {
+                setSelectedKeepout(null);
               }
             }}
             onPointerMove={e => {
@@ -1886,6 +2078,19 @@ export default function PVLayout({
                   const metricX = Math.round((mouseSvgX - originX) / scale);
                   const metricY = Math.round((mouseSvgY - originY) / scale);
                   setDrawingRect(prev => prev ? { ...prev, currentX: metricX, currentY: metricY } : null);
+                }
+              } else if (draggingKeepout && keepoutDragStartRef.current) {
+                const dx = (e.clientX - keepoutDragStartRef.current.mouseX) / (scale * zoom);
+                const dy = (e.clientY - keepoutDragStartRef.current.mouseY) / (scale * zoom);
+                if (Math.abs(dx) > 0.01 || Math.abs(dy) > 0.01) keepoutDragStartRef.current.moved = true;
+                const nextRect = {
+                  x: Math.round(keepoutDragStartRef.current.initial.x + dx),
+                  y: Math.round(keepoutDragStartRef.current.initial.y + dy),
+                };
+                if (draggingKeepout.kind === "walkway") {
+                  setWalkways(prev => updateWalkwayRect(prev, String(draggingKeepout.id), nextRect));
+                } else {
+                  setObstacles(prev => updateObstacleRect(prev, Number(draggingKeepout.id), nextRect));
                 }
               } else if (draggingSegmentId) {
                 const dx = (e.clientX - dragSegmentStartRef.current.mouseX) / (scale * zoom);
@@ -1915,8 +2120,14 @@ export default function PVLayout({
                 const y1 = Math.min(drawingRect.startY, drawingRect.currentY);
                 const w = Math.abs(drawingRect.currentX - drawingRect.startX);
                 const h = Math.abs(drawingRect.currentY - drawingRect.startY);
+                const kind = drawingKind;
                 setDrawingRect(null);
-                if (w > 2000 && h > 2000) {
+                setDrawingKind(null);
+                if (kind === "keepout" || kind === "walkway") {
+                  if (isValidRect({ x: x1, y: y1, w, h }) && w > 200 && h > 200) {
+                    createKeepoutFromRect(kind, x1, y1, w, h);
+                  }
+                } else if (w > 2000 && h > 2000) {
                   const letter = String.fromCharCode(65 + segments.length);
                   const color = SEGMENT_PALETTE[segments.length % SEGMENT_PALETTE.length];
                   const newId = `seg-${Date.now()}`;
@@ -1949,6 +2160,31 @@ export default function PVLayout({
                   setNotice(isId ? `Segmen baru (${newSeg.name}) berhasil digambar.` : `New segment (${newSeg.name}) created.`);
                   setToolMode("select");
                 }
+              }
+              if (draggingKeepout) {
+                const start = keepoutDragStartRef.current;
+                if (start?.moved) {
+                  // Recompute the final rectangle from the pointer-up coordinates and commit against
+                  // the live refs, so the last pointer-move render cannot leave stale geometry saved.
+                  const dx = (e.clientX - start.mouseX) / (scale * zoom);
+                  const dy = (e.clientY - start.mouseY) / (scale * zoom);
+                  const finalRect = {
+                    x: Math.round(start.initial.x + dx),
+                    y: Math.round(start.initial.y + dy),
+                  };
+                  const liveWalkways = start.ref.kind === "walkway"
+                    ? updateWalkwayRect(walkwaysRef.current, String(start.ref.id), finalRect)
+                    : walkwaysRef.current;
+                  const liveObstacles = start.ref.kind === "obstacle"
+                    ? updateObstacleRect(obstaclesRef.current, Number(start.ref.id), finalRect)
+                    : obstaclesRef.current;
+                  if (start.ref.kind === "walkway") setWalkways(liveWalkways);
+                  else setObstacles(liveObstacles);
+                  pushHistory(segments, liveObstacles, liveWalkways);
+                  saveDraft(segments, liveObstacles, liveWalkways);
+                }
+                setDraggingKeepout(null);
+                keepoutDragStartRef.current = null;
               }
               if (draggingSegmentId || draggingCorner) {
                 setDraggingSegmentId(null);
@@ -2014,6 +2250,21 @@ export default function PVLayout({
                   );
                 })()}
 
+                {/* 1b. Image overlays (manual placement, additive to the satellite background) */}
+                {overlays.filter(o => o.visible).map(o => (
+                  <image
+                    key={o.id}
+                    href={o.dataUrl}
+                    x={originX + o.x * scale}
+                    y={originY + o.y * scale}
+                    width={Math.max(1, o.w * scale)}
+                    height={Math.max(1, o.h * scale)}
+                    opacity={o.opacity}
+                    preserveAspectRatio="none"
+                    pointerEvents="none"
+                  />
+                ))}
+
                 {/* 2. Site Boundary Polygon */}
                 {layers.siteBoundary && (
                   <rect
@@ -2030,7 +2281,9 @@ export default function PVLayout({
                 )}
 
                 {/* 3. Walkways (Orange Corridors) */}
-                {layers.walkway && walkways.map(w => (
+                {layers.walkway && walkways.filter(w => w.visible !== false).map(w => {
+                  const isSel = sameKeepout(selectedKeepout, { kind: "walkway", id: w.id });
+                  return (
                   <g key={w.id}>
                     <rect
                       x={originX + w.x * scale}
@@ -2039,8 +2292,8 @@ export default function PVLayout({
                       height={w.h * scale}
                       fill="#ea580c"
                       fillOpacity="0.45"
-                      stroke="#f97316"
-                      strokeWidth="1.5"
+                      stroke={isSel ? "#b8f36b" : "#f97316"}
+                      strokeWidth={isSel ? 3 : 1.5}
                       strokeDasharray="4 3"
                     />
                     <text
@@ -2055,10 +2308,13 @@ export default function PVLayout({
                       {w.label || "WALKWAY"}
                     </text>
                   </g>
-                ))}
+                  );
+                })}
 
                 {/* 4. Keepouts / Obstacles */}
-                {layers.keepouts && obstacles.map(obs => (
+                {layers.keepouts && obstacles.filter(obs => obs.visible !== false).map(obs => {
+                  const isSel = sameKeepout(selectedKeepout, { kind: "obstacle", id: obs.id });
+                  return (
                   <g key={obs.id}>
                     <rect
                       x={originX + obs.x * scale}
@@ -2067,8 +2323,8 @@ export default function PVLayout({
                       height={obs.h * scale}
                       fill="#ef4444"
                       fillOpacity="0.4"
-                      stroke="#f87171"
-                      strokeWidth="2"
+                      stroke={isSel ? "#b8f36b" : "#f87171"}
+                      strokeWidth={isSel ? 3 : 2}
                       strokeDasharray="5 3"
                     />
                     <text
@@ -2083,7 +2339,8 @@ export default function PVLayout({
                       {obs.label}
                     </text>
                   </g>
-                ))}
+                  );
+                })}
 
                 {/* 5. Field Segments Outlines & Tags */}
                 {layers.fieldSegments && segments.map(seg => {
@@ -2200,18 +2457,22 @@ export default function PVLayout({
                 })}
 
                 {/* 5b. Interactive Drawing Box Preview */}
-                {drawingRect && (
-                  <rect
-                    x={originX + Math.min(drawingRect.startX, drawingRect.currentX) * scale}
-                    y={originY + Math.min(drawingRect.startY, drawingRect.currentY) * scale}
-                    width={Math.abs(drawingRect.currentX - drawingRect.startX) * scale}
-                    height={Math.abs(drawingRect.currentY - drawingRect.startY) * scale}
-                    fill="#b8f36b25"
-                    stroke="#b8f36b"
-                    strokeWidth="2"
-                    strokeDasharray="4 3"
-                  />
-                )}
+                {drawingRect && (() => {
+                  const isWalkway = drawingKind === "walkway";
+                  const isKeepout = drawingKind === "keepout";
+                  return (
+                    <rect
+                      x={originX + Math.min(drawingRect.startX, drawingRect.currentX) * scale}
+                      y={originY + Math.min(drawingRect.startY, drawingRect.currentY) * scale}
+                      width={Math.abs(drawingRect.currentX - drawingRect.startX) * scale}
+                      height={Math.abs(drawingRect.currentY - drawingRect.startY) * scale}
+                      fill={isWalkway ? "#ea580c30" : isKeepout ? "#ef444430" : "#b8f36b25"}
+                      stroke={isWalkway ? "#f97316" : isKeepout ? "#ef4444" : "#b8f36b"}
+                      strokeWidth="2"
+                      strokeDasharray="4 3"
+                    />
+                  );
+                })()}
 
                 {/* 6. PV Modules: Authentic Crystalline Solar Cells */}
                 {layers.pvModules && segments.map(seg => {
@@ -2285,6 +2546,26 @@ export default function PVLayout({
                     );
                   });
                 })}
+
+                {/* 7. Keepout hit layer — above modules so small walkways/obstacles stay selectable */}
+                {toolMode === "select" && keepoutViews
+                  .filter(v => v.visible && ((v.kind === "walkway" && layers.walkway) || (v.kind === "obstacle" && layers.keepouts)))
+                  .map(v => (
+                    <rect
+                      key={`keepout-hit-${v.key}`}
+                      x={originX + v.x * scale}
+                      y={originY + v.y * scale}
+                      width={Math.max(2, v.w * scale)}
+                      height={Math.max(2, v.h * scale)}
+                      fill="transparent"
+                      pointerEvents="all"
+                      style={{ cursor: "move" }}
+                      onPointerDown={e => {
+                        e.stopPropagation();
+                        beginKeepoutDrag(e, v);
+                      }}
+                    />
+                  ))}
               </g>
 
               {/* ── Overlays: Scale Bar & North Compass ── */}
@@ -2322,15 +2603,36 @@ export default function PVLayout({
             </span>
           </div>
           {notice && <div className="pv-notice">{notice}</div>}
-          {(activeStep === 4 || activeStep === 5) && (
+          {activeStep === 4 && (
             <EngineRunPanel
               projectId={projectId}
               projectName={projectName ?? ""}
-              layout={{ settings, segments, walkways, obstacles, site, backgroundImage }}
+              layout={{ settings, segments, walkways, obstacles, site, backgroundImage, overlays }}
               inputs={engineInputs}
               onInputs={setEngineInputs}
-              section={activeStep === 4 ? "electrical" : "assumptions"}
+              section="electrical"
             />
+          )}
+          {activeStep === 5 && (
+            <>
+              <AdvancedPanel
+                projectId={projectId}
+                layout={{ settings, segments, walkways, obstacles, site, backgroundImage, overlays }}
+                inputs={engineInputs}
+                onInputs={setEngineInputs}
+                overlays={overlays}
+                onOverlays={applyOverlays}
+              />
+              <EngineRunPanel
+                projectId={projectId}
+                projectName={projectName ?? ""}
+                layout={{ settings, segments, walkways, obstacles, site, backgroundImage, overlays }}
+                inputs={engineInputs}
+                onInputs={setEngineInputs}
+                section="assumptions"
+                showWeather={false}
+              />
+            </>
           )}
         </div>
 
