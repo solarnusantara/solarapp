@@ -19,7 +19,8 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "sync:helio-types": "node scripts/sync-helio-types.mjs",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "lucide-react": "^0.468.0",
