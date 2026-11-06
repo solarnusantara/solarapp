@@ -83,7 +83,29 @@ export default function PVLayout3D({
   const scopedStorageKey = `${STORAGE_KEY}:project:${projectId ?? "unassigned"}`;
   const userScopedStorageKey = `${STORAGE_KEY}:${userId}:${projectId ?? "unassigned"}`;
   const hostRef = useRef<HTMLDivElement>(null);
-  const [surfaceMode, setSurfaceMode] = useState<"auto" | "flat" | "terrain" | "roof-flat" | "roof-single" | "roof-gable" | "roof-hip">("auto");
+  const controlsRef = useRef<OrbitControls | null>(null);
+  const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
+
+  const handleZoomIn = () => {
+    if (!cameraRef.current || !controlsRef.current) return;
+    cameraRef.current.position.sub(controlsRef.current.target).multiplyScalar(0.82).add(controlsRef.current.target);
+    controlsRef.current.update();
+  };
+
+  const handleZoomOut = () => {
+    if (!cameraRef.current || !controlsRef.current) return;
+    cameraRef.current.position.sub(controlsRef.current.target).multiplyScalar(1.22).add(controlsRef.current.target);
+    controlsRef.current.update();
+  };
+
+  const handleResetCamera = () => {
+    if (!cameraRef.current || !controlsRef.current) return;
+    const dist = 60;
+    cameraRef.current.position.set(0, dist * 0.9, dist * 1.1);
+    controlsRef.current.target.set(0, 3.2, 0);
+    controlsRef.current.update();
+  };
+  const [surfaceMode, setSurfaceMode] = useState<"auto" | "flat" | "terrain" | "roof-flat" | "roof-single" | "roof-gable" | "roof-multi-2" | "roof-multi-3" | "roof-multi-4" | "roof-hip">("auto");
   const [surfaceSlope, setSurfaceSlope] = useState(5);
   const [panelCount, setPanelCount] = useState(0);
   const [capacity, setCapacity] = useState(0);
@@ -192,7 +214,23 @@ export default function PVLayout3D({
     const areaW = Math.max(1000, Number(settings.areaWidth) || 12000) / 1000;
     const areaH = Math.max(1000, Number(settings.areaHeight) || 8000) / 1000;
     const system = settings.system === "Ground-mounted" ? "Ground-mounted" : "Rooftop";
-    const mode = surfaceMode === "auto" ? (system === "Ground-mounted" ? "terrain" : "roof-gable") : surfaceMode;
+    const roofPitch = Math.max(0, Math.min(45, Number(settings.tilt) || 10)) * (Math.PI / 180);
+    let mode = surfaceMode;
+    const savedAny = saved as any;
+    if (mode === "auto") {
+      if (system === "Ground-mounted") {
+        mode = "terrain";
+      } else if (projectId?.includes("mas-silueta") || (savedAny?.segments && savedAny.segments.length >= 6)) {
+        mode = "roof-multi-3"; // Automatic multi-bay warehouse detection
+      } else {
+        mode = "roof-gable";
+      }
+    }
+    const isMultiBay = mode === "roof-multi-2" || mode === "roof-multi-3" || mode === "roof-multi-4";
+    const bayCount = mode === "roof-multi-2" ? 2 : mode === "roof-multi-4" ? 4 : mode === "roof-multi-3" ? 3 : 1;
+    const bayH = areaH / bayCount;
+    const halfBayH = bayH / 2;
+    const bayRidgeRise = halfBayH * Math.tan(roofPitch);
     const site = saved.site;
     const lat = site?.coordinates?.lat ?? -6.36;
     const lng = site?.coordinates?.lng ?? 107.17;
@@ -331,7 +369,6 @@ export default function PVLayout3D({
     }
 
     const centerX = areaW / 2, centerZ = areaH / 2;
-    const roofPitch = Math.max(0, Math.min(45, Number(settings.tilt) || 10)) * (Math.PI / 180);
     const baseRoofY = 3.2;
 
     const dem = saved.dem && saved.dem.elevations?.length === saved.dem.rows * saved.dem.cols ? saved.dem : null;
@@ -354,6 +391,13 @@ export default function PVLayout3D({
 
     const roofHeight = (x: number, z: number) => {
       if (mode === "roof-single") return baseRoofY - z * Math.tan(roofPitch);
+      if (isMultiBay) {
+        const zNorm = Math.max(0, Math.min(areaH - 0.001, z + centerZ));
+        const bayIdx = Math.floor(zNorm / bayH);
+        const bayCenterZ = (bayIdx + 0.5) * bayH - centerZ;
+        const deltaZ = z - bayCenterZ;
+        return baseRoofY + bayRidgeRise - Math.abs(deltaZ) * Math.tan(roofPitch);
+      }
       if (mode === "roof-gable" || mode === "roof-hip") return baseRoofY + centerX * Math.tan(roofPitch) - Math.abs(x) * Math.tan(roofPitch);
       return baseRoofY;
     };
@@ -367,7 +411,27 @@ export default function PVLayout3D({
       wall.receiveShadow = true;
       scene.add(wall);
 
-      if (mode === "roof-gable" || mode === "roof-hip") {
+      if (isMultiBay) {
+        const gableMat = new THREE.MeshStandardMaterial({ color: 0x64748b, roughness: 0.9, side: THREE.DoubleSide });
+        for (let b = 0; b < bayCount; b++) {
+          const zStart = b * bayH - centerZ;
+          const zCenter = (b + 0.5) * bayH - centerZ;
+          const zEnd = (b + 1) * bayH - centerZ;
+          const tri = new THREE.Shape([
+            new THREE.Vector2(zStart, 0),
+            new THREE.Vector2(zEnd, 0),
+            new THREE.Vector2(zCenter, bayRidgeRise),
+          ]);
+          for (const xEnd of [-centerX, centerX]) {
+            const gable = new THREE.Mesh(new THREE.ShapeGeometry(tri), gableMat);
+            gable.rotation.y = Math.PI / 2;
+            gable.position.set(xEnd, baseRoofY - 0.08, 0);
+            gable.castShadow = true;
+            gable.receiveShadow = true;
+            scene.add(gable);
+          }
+        }
+      } else if (mode === "roof-gable" || mode === "roof-hip") {
         const rise = centerX * Math.tan(roofPitch);
         const gableMat = new THREE.MeshStandardMaterial({ color: 0x64748b, roughness: 0.9, side: THREE.DoubleSide });
         const tri = new THREE.Shape([new THREE.Vector2(-centerX, 0), new THREE.Vector2(centerX, 0), new THREE.Vector2(0, rise)]);
@@ -478,6 +542,14 @@ export default function PVLayout3D({
       euler.set(0, 0, 0);
       if (mode === "terrain") euler.z = Math.atan(surfaceSlope / 100);
       else if (mode === "roof-single") euler.x = roofPitch;
+      else if (isMultiBay) {
+        const zNorm = Math.max(0, Math.min(areaH - 0.001, z + centerZ));
+        const bayIdx = Math.floor(zNorm / bayH);
+        const bayCenterZ = (bayIdx + 0.5) * bayH - centerZ;
+        const deltaZ = z - bayCenterZ;
+        euler.x = deltaZ < 0 ? roofPitch : -roofPitch;
+        euler.z = 0;
+      }
       else if (mode === "roof-gable" || mode === "roof-hip") euler.z = x < 0 ? roofPitch : -roofPitch;
       else euler.x = -tilt * (Math.PI / 180);
 
@@ -539,11 +611,26 @@ export default function PVLayout3D({
 
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
+    controls.enableZoom = false; // Disable default wheel capture so outer page scrolls naturally
     controls.target.set(0, mode.startsWith("roof-") ? baseRoofY : 0, 0);
     controls.maxPolarAngle = Math.PI * 0.49;
     controls.minDistance = 2;
     controls.maxDistance = viewDist * 3;
     controls.update();
+
+    controlsRef.current = controls;
+    cameraRef.current = camera;
+
+    // Zoom only when Shift key is pressed on wheel
+    const handle3DWheel = (e: WheelEvent) => {
+      if (e.shiftKey) {
+        e.preventDefault();
+        const factor = e.deltaY < 0 ? 0.88 : 1.14;
+        camera.position.sub(controls.target).multiplyScalar(factor).add(controls.target);
+        controls.update();
+      }
+    };
+    host.addEventListener("wheel", handle3DWheel, { passive: false });
 
     const resize = () => {
       camera.aspect = Math.max(1, host.clientWidth) / Math.max(1, host.clientHeight);
@@ -564,6 +651,7 @@ export default function PVLayout3D({
     return () => {
       cancelAnimationFrame(frame);
       observer.disconnect();
+      host.removeEventListener("wheel", handle3DWheel);
       controls.dispose();
       renderer.dispose();
       scene.traverse(o => {
@@ -648,7 +736,10 @@ export default function PVLayout3D({
             <option value="terrain">DEM Terrain</option>
             <option value="roof-flat">Flat roof</option>
             <option value="roof-single">Single slope</option>
-            <option value="roof-gable">Gable roof</option>
+            <option value="roof-multi-3">Multi-Gable (3 Bay / Pabrik 3 Atap - Mas Silueta)</option>
+            <option value="roof-multi-2">Multi-Gable (2 Bay / Pabrik 2 Atap)</option>
+            <option value="roof-multi-4">Multi-Gable (4 Bay / Pabrik 4 Atap)</option>
+            <option value="roof-gable">Gable roof (1 Atap Pelana Tunggal)</option>
             <option value="roof-hip">Hip / Multi-roof (concept)</option>
           </select>
           <div style={{ color: "#94a3b8", fontSize: 11, marginTop: 8 }}>Manual terrain slope fallback (%)</div>
@@ -879,7 +970,7 @@ export default function PVLayout3D({
       />
 
       <div style={{ display: "flex", gap: 8, alignItems: "center", color: "#94a3b8", fontSize: 12 }}>
-        <RotateCcw size={14} /> Orbit kamera · scroll zoom · lihat posisi bola matahari dan bayangan bergerak dinamis di kanvas 3D.
+        <RotateCcw size={14} /> Orbit kamera · Shift + Scroll untuk zoom 3D · Gunakan tombol Zoom (+ / -) di kanan bawah untuk memperbesar/memperkecil.
       </div>
       <p style={{ color: "#fbbf24", fontSize: 12, margin: 0 }}>
         Batasan engineering: DEM API memberikan grid elevasi resolusi terbatas untuk konteks visual, bukan survey konstruksi. Multi-roof/hip saat ini merupakan geometri konseptual. Shadow adalah simulasi geometris akurat secara astronomis berdasarkan koordinat lokasi dan waktu terpilih.

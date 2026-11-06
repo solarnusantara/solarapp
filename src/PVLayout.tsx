@@ -80,6 +80,7 @@ export interface LayerState {
   walkway: boolean;
   roofBuilding: boolean;
   satellite: boolean;
+  segmentLabels?: boolean;
 }
 
 export type Site = {
@@ -1959,9 +1960,11 @@ export default function PVLayout({
               try { (e.currentTarget as HTMLDivElement).releasePointerCapture(e.pointerId); } catch { /* ignore */ }
             }}
             onWheel={e => {
-              e.preventDefault();
-              const delta = e.deltaY < 0 ? 0.1 : -0.1;
-              setZoom(prev => Math.min(3.5, Math.max(0.4, Number((prev + delta).toFixed(2)))));
+              if (e.shiftKey) {
+                e.preventDefault();
+                const delta = e.deltaY < 0 ? 0.1 : -0.1;
+                setZoom(prev => Math.min(3.5, Math.max(0.4, Number((prev + delta).toFixed(2)))));
+              }
             }}
           >
             <svg
@@ -2090,6 +2093,7 @@ export default function PVLayout({
 
                   // Center position for segment badge
                   const avgX = seg.polygon.reduce((acc, p) => acc + p.x, 0) / seg.polygon.length;
+                  const minX = Math.min(...seg.polygon.map(p => p.x));
                   const minY = Math.min(...seg.polygon.map(p => p.y));
 
                   return (
@@ -2114,31 +2118,59 @@ export default function PVLayout({
                           (e.currentTarget as any).setPointerCapture(e.pointerId);
                         }}
                       />
-                      {/* Floating Segment Badge */}
-                      <g
-                        transform={`translate(${originX + avgX * scale - 45}, ${originY + minY * scale + 10})`}
-                        style={{ cursor: "pointer" }}
-                        onClick={() => setActiveSegmentId(seg.id)}
-                      >
-                        <rect
-                          width="90"
-                          height="22"
-                          rx="4"
-                          fill="#0f172af2"
-                          stroke={seg.color}
-                          strokeWidth="1.5"
-                        />
-                        <text
-                          x="45"
-                          y="15"
-                          textAnchor="middle"
-                          fill="#ffffff"
-                          fontSize="10.5"
-                          fontWeight="800"
-                        >
-                          {seg.name}
-                        </text>
-                      </g>
+                      {/* Clean Non-Intrusive Segment Badge (Doesn't cover PV panels) */}
+                      {layers.segmentLabels !== false && (
+                        isActive ? (
+                          <g
+                            transform={`translate(${originX + avgX * scale - 45}, ${originY + minY * scale - 26})`}
+                            style={{ cursor: "pointer", zIndex: 30 }}
+                            onClick={() => setActiveSegmentId(seg.id)}
+                          >
+                            <rect
+                              width="90"
+                              height="22"
+                              rx="5"
+                              fill="#0b1322f5"
+                              stroke={seg.color}
+                              strokeWidth="2"
+                              filter="drop-shadow(0 3px 6px rgba(0,0,0,0.6))"
+                            />
+                            <text
+                              x="45"
+                              y="15"
+                              textAnchor="middle"
+                              fill="#ffffff"
+                              fontSize="10.5"
+                              fontWeight="800"
+                            >
+                              {seg.name.replace(/Segment\s+/i, "Seg ")}
+                            </text>
+                          </g>
+                        ) : (
+                          <g
+                            transform={`translate(${originX + minX * scale + 10}, ${originY + minY * scale + 10})`}
+                            style={{ cursor: "pointer", opacity: 0.9 }}
+                            onClick={() => setActiveSegmentId(seg.id)}
+                            
+                          >
+                            <circle
+                              r="8.5"
+                              fill="#0f172af5"
+                              stroke={seg.color}
+                              strokeWidth="1.8"
+                            />
+                            <text
+                              y="3"
+                              textAnchor="middle"
+                              fill="#ffffff"
+                              fontSize="9"
+                              fontWeight="800"
+                            >
+                              {seg.name.replace(/[^A-Za-z0-9]/g, "").slice(-1) || "•"}
+                            </text>
+                          </g>
+                        )
+                      )}
 
                       {/* 4 Draggable Corner Handles for Active Segment */}
                       {isActive && seg.polygon.map((pt, idx) => (
@@ -2286,7 +2318,7 @@ export default function PVLayout({
               <i className="pv-legend-dot" /> {totalModul} modules ({totalCapacityKwp.toFixed(2)} kWp) across {segments.length} segments
             </span>
             <span>
-              {isId ? "Klik segmen untuk mengedit · Seret untuk geser kanvas · Scroll untuk zoom" : "Click segment to edit · Drag to pan · Scroll to zoom"}
+              {isId ? "Klik segmen untuk edit · Seret untuk geser kanvas · Shift + Scroll untuk zoom kanvas" : "Click segment to edit · Drag to pan · Scroll to zoom"}
             </span>
           </div>
           {notice && <div className="pv-notice">{notice}</div>}
