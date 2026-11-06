@@ -37,6 +37,7 @@ import type {
   PlnSubstation,
 } from "./gisSolarService";
 import { REAL_PROJECTS, getProjectDefaultLayout } from "./defaultProjectsData";
+import * as api from "./api";
 
 type Props = {
   lang?: "en" | "id";
@@ -986,24 +987,53 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
     return REAL_PROJECTS[0]; // Default Cikarang 500 kWp
   }, [project, projectId]);
 
+  // Asynchronously fetch latest remote layout from Cloud Server
+  const [remoteLayout, setRemoteLayout] = useState<any>(null);
+
+  useEffect(() => {
+    const targetId = activeProj?.id ?? projectId;
+    if (!targetId) return;
+    let isMounted = true;
+    api.fetchProjectLayout(targetId).then((res: any) => {
+      if (isMounted && res && ((res.panels && res.panels.length > 0) || (res.segments && res.segments.length > 0))) {
+        setRemoteLayout(res);
+      }
+    }).catch(() => {});
+    return () => { isMounted = false; };
+  }, [activeProj?.id, projectId]);
+
   // Load layout data (panels, obstacles, settings, polygon, site)
   const savedLayout = useMemo(() => {
     const targetId = activeProj?.id ?? projectId;
-    if (!targetId) return null;
-    try {
-      for (let i = 0; i < localStorage.length; i++) {
-        const key = localStorage.key(i);
-        if (key && key.startsWith("solar-apps-pv-layout-v1:") && key.endsWith(`:${targetId}`)) {
-          const val = localStorage.getItem(key);
-          if (val) {
-            const parsed = JSON.parse(val);
-            if (parsed?.panels && parsed.panels.length > 0) return parsed;
+    let localCandidate: any = null;
+    if (targetId) {
+      try {
+        for (let i = 0; i < localStorage.length; i++) {
+          const key = localStorage.key(i);
+          if (key && key.startsWith("solar-apps-pv-layout-v1:") && key.endsWith(`:${targetId}`)) {
+            const val = localStorage.getItem(key);
+            if (val) {
+              const parsed = JSON.parse(val);
+              if (parsed?.panels && parsed.panels.length > 0) {
+                localCandidate = parsed;
+                break;
+              }
+            }
           }
         }
-      }
-    } catch { /* ignore */ }
+      } catch { /* ignore */ }
+    }
+
+    if (remoteLayout && localCandidate) {
+      const rPanels = Array.isArray(remoteLayout.panels) ? remoteLayout.panels.length : 0;
+      const lPanels = Array.isArray(localCandidate.panels) ? localCandidate.panels.length : 0;
+      return rPanels >= lPanels ? remoteLayout : localCandidate;
+    }
+    if (localCandidate) return localCandidate;
+    if (remoteLayout) return remoteLayout;
+
     return getProjectDefaultLayout(targetId) || null;
-  }, [activeProj?.id, projectId]);
+  }, [activeProj?.id, projectId, remoteLayout]);
 
   // Project defaults based on selection and saved layout
   const isCikarang = activeProj?.id === "proj-cikarang-500kwp";
@@ -1166,7 +1196,27 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
   const moduleW = Number(layoutSettings.moduleWidth) || 2278;
   const moduleH = Number(layoutSettings.moduleHeight) || 1134;
   const tilt = Number(layoutSettings.tilt) || 10;
-  const totalPanels = panels.length || Math.round((capacityKwp * 1000) / 580);
+
+  // Realized Layout DC Capacity (summing segments/panels exactly like PVLayout.tsx)
+  const actualLayoutKwp = useMemo(() => {
+    if (savedLayout?.segments && Array.isArray(savedLayout.segments) && savedLayout.segments.length > 0) {
+      const activeSegs = savedLayout.segments.filter((s: any) => s.visible !== false);
+      const totalW = activeSegs.reduce((acc: number, s: any) => {
+        const pCount = Array.isArray(s.panels) ? s.panels.length : 0;
+        const watts = Number(s.moduleWatts) || 580;
+        return acc + pCount * watts;
+      }, 0);
+      if (totalW > 0) return Number((totalW / 1000).toFixed(2));
+    }
+    if (panels.length > 0) {
+      const rawWatts = Number(layoutSettings.watts) || Number(layoutSettings.panelWatts) || 580;
+      const normalizedWatts = rawWatts > 1000 ? rawWatts / 10 : rawWatts;
+      return Number(((panels.length * normalizedWatts) / 1000).toFixed(2));
+    }
+    return capacityKwp;
+  }, [savedLayout, panels, layoutSettings, capacityKwp]);
+
+  const totalPanels = panels.length || Math.round((actualLayoutKwp * 1000) / 580);
   const totalModuleArea = (totalPanels * (moduleW * moduleH)) / 1_000_000;
 
   // Set document title dynamically to "SolarApp - [Nama Proyek]" for browser print dialog suggested filename
@@ -1241,8 +1291,8 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
 
         <div style={{ padding: "4px 10px", borderRight: "1px solid #cbd5e1", display: "flex", flexDirection: "column", justifyContent: "center" }}>
           <div style={{ fontSize: 7.5, color: "#1e293b", fontWeight: 700, textTransform: "uppercase" }}>NAMA PROYEK / FASILITAS</div>
-          <div style={{ fontWeight: 800, fontSize: 10.5, color: "#0f172a" }}>{activeProj?.name} ({capacityKwp} kWp)</div>
-          <div style={{ fontSize: 8, color: "#0f172a" }}>KLIEN: {client} · {coords.name}</div>
+          <div style={{ fontWeight: 800, fontSize: 10.5, color: "#0f172a" }}>{activeProj?.name} ({actualLayoutKwp} kWp DC)</div>
+          <div style={{ fontSize: 8, color: "#0f172a" }}>KLIEN: {client} · {coords.name}{capacityKwp !== actualLayoutKwp ? ` · Target: ${capacityKwp} kWp` : ""}</div>
         </div>
 
         <div style={{ padding: "4px 8px", display: "flex", flexDirection: "column", justifyContent: "center" }}>
@@ -1306,7 +1356,9 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
           <div>
             <span style={{ color: "#1e293b", fontWeight: 700 }}>Nama Proyek: </span>
             <strong style={{ color: "#0f172a" }}>{activeProj?.name}</strong>
-            <div style={{ color: "#047857", fontWeight: 800, marginTop: 1 }}>Tipe: {activeProj?.system || "Rooftop On-Grid"} ({capacityKwp} kWp)</div>
+            <div style={{ color: "#047857", fontWeight: 800, marginTop: 1 }}>
+              Tipe: {activeProj?.system || "Rooftop On-Grid"} — Desain: {actualLayoutKwp} kWp DC{capacityKwp !== actualLayoutKwp ? ` (Target: ${capacityKwp} kWp)` : ""}
+            </div>
           </div>
           <div>
             <span style={{ color: "#1e293b", fontWeight: 700 }}>Klien / Pemilik: </span>
@@ -1325,8 +1377,8 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
       {yieldData && (
         <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 5, marginBottom: 10, textAlign: "center" }}>
           <div style={{ padding: "5px 6px", background: "#ffffff", border: "1.5px solid #cbd5e1", borderRadius: 4 }}>
-            <div style={{ fontSize: 8, color: "#1e293b", fontWeight: 700 }}>Kapasitas DC</div>
-            <strong style={{ fontSize: 13, color: "#0f172a" }}>{yieldData.capacityKwp}</strong> <small style={{ fontSize: 8, color: "#047857", fontWeight: 800 }}>kWp</small>
+            <div style={{ fontSize: 8, color: "#1e293b", fontWeight: 700 }}>Kapasitas Desain DC</div>
+            <strong style={{ fontSize: 13, color: "#0f172a" }}>{actualLayoutKwp}</strong> <small style={{ fontSize: 8, color: "#047857", fontWeight: 800 }}>kWp</small>
           </div>
           <div style={{ padding: "5px 6px", background: "#ffffff", border: "1.5px solid #cbd5e1", borderRadius: 4 }}>
             <div style={{ fontSize: 8, color: "#1e293b", fontWeight: 700 }}>Total Modul</div>
@@ -2161,7 +2213,7 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
       {viewMode === "screen" && (
         <div className="screen-only no-print" style={{ display: "grid", gap: 20 }}>
           {/* Project Profile Summary Card */}
-          <div className="pv-card" style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr", gap: 20, alignItems: "center" }}>
+          <div className="pv-card" style={{ display: "grid", gridTemplateColumns: capacityKwp !== actualLayoutKwp ? "1fr 1.35fr" : "1.4fr 1fr", gap: 20, alignItems: "center" }}>
             <div>
               <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 6 }}>
                 <span className="pv-badge" style={{ background: "#163820", color: "#b8f36b", borderColor: "#285836" }}>
@@ -2184,12 +2236,23 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
               </div>
             </div>
 
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10, background: "#0c1510", padding: 12, borderRadius: 8, border: "1px solid #1a2a20" }}>
+            <div style={{ display: "grid", gridTemplateColumns: capacityKwp !== actualLayoutKwp ? "repeat(4, 1fr)" : "repeat(3, 1fr)", gap: 10, background: "#0c1510", padding: 12, borderRadius: 8, border: "1px solid #1a2a20" }}>
               <div>
-                <div style={{ fontSize: 10, color: "#94a3b8", fontWeight: 700 }}>Target Kapasitas</div>
-                <div style={{ fontSize: 16, fontWeight: 800, color: "var(--green, #b8f36b)" }}>{capacityKwp} kWp</div>
-                <small style={{ fontSize: 10, color: "#cbd5e1", fontWeight: 600 }}>{totalPanels.toLocaleString()} modul 580Wp</small>
+                <div style={{ fontSize: 10, color: "#94a3b8", fontWeight: 700 }}>
+                  {capacityKwp !== actualLayoutKwp ? "Kapasitas Desain (DC)" : "Kapasitas Sistem (DC)"}
+                </div>
+                <div style={{ fontSize: 16, fontWeight: 800, color: "var(--green, #b8f36b)" }}>{actualLayoutKwp} kWp</div>
+                <small style={{ fontSize: 10, color: "#cbd5e1", fontWeight: 600 }}>{totalPanels.toLocaleString()} modul terpasang</small>
               </div>
+              {capacityKwp !== actualLayoutKwp && (
+                <div>
+                  <div style={{ fontSize: 10, color: "#94a3b8", fontWeight: 700 }}>Target Proyek (Kontrak)</div>
+                  <div style={{ fontSize: 16, fontWeight: 800, color: "#f59e0b" }}>{capacityKwp} kWp</div>
+                  <small style={{ fontSize: 10, color: "#cbd5e1", fontWeight: 600 }}>
+                    Realisasi: {((actualLayoutKwp / capacityKwp) * 100).toFixed(1)}%
+                  </small>
+                </div>
+              )}
               <div>
                 <div style={{ fontSize: 10, color: "#94a3b8", fontWeight: 700 }}>Luas Modul Efektif</div>
                 <div style={{ fontSize: 16, fontWeight: 800, color: "#38bdf8" }}>{totalModuleArea.toLocaleString(undefined, { maximumFractionDigits: 0 })} m²</div>
@@ -2212,7 +2275,7 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
                   <Zap size={14} style={{ color: "#b8f36b" }} />
                 </div>
                 <div style={{ fontSize: 22, fontWeight: 800, color: "#edf5ef", margin: "6px 0 2px" }}>
-                  {yieldData.capacityKwp} <small style={{ fontSize: 12 }}>kWp</small>
+                  {actualLayoutKwp} <small style={{ fontSize: 12 }}>kWp</small>
                 </div>
                 <small style={{ color: "#94a3b8", fontSize: 11, fontWeight: 600 }}>{totalPanels.toLocaleString()} Panel Tier-1 (580 Wp)</small>
               </div>
