@@ -102,6 +102,7 @@ export type Site = {
     rotationAngle: number;
   }>;
   cropPaddingM?: number;
+  imageCenterMm?: { x: number; y: number };
 };
 
 const STORAGE_KEY = "solar-apps-pv-layout-v1";
@@ -899,6 +900,7 @@ export default function PVLayout({
       googleSolarData: data.googleSolarData,
       boxes: (data as any).boxes,
       cropPaddingM: (data as any).cropPaddingM,
+      imageCenterMm: (data as any).imageCenterMm,
     };
     setSettings(nextSettings);
     setSite(nextSite);
@@ -1982,9 +1984,9 @@ export default function PVLayout({
                 {/* 1. Cropped Satellite Map Background (Rotated to align roof horizontally) */}
                 {layers.satellite && backgroundImage && (() => {
                   const rotDeg = site?.rotationDeg || 0;
-                  const centerX = originX + (siteW * scale) / 2;
-                  const centerY = originY + (siteH * scale) / 2;
-                  const spanM = (site?.imageSpanM ? site.imageSpanM * 1.25 : (Math.hypot(siteW, siteH) / 1000) * 1.35);
+                  const centerX = site?.imageCenterMm ? originX + site.imageCenterMm.x * scale : originX + (siteW * scale) / 2;
+                  const centerY = site?.imageCenterMm ? originY + site.imageCenterMm.y * scale : originY + (siteH * scale) / 2;
+                  const spanM = site?.imageSpanM || (Math.hypot(siteW, siteH) / 1000);
                   const imgPixelSize = spanM * 1000 * scale;
 
                   // Normalize angle to [-180, 180]: e.g. 334° becomes -26° (counter-clockwise up to level)

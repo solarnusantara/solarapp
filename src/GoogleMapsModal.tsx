@@ -58,6 +58,7 @@ interface GoogleMapsModalProps {
       rotationAngle: number;
     }>;
     cropPaddingM?: number;
+    imageCenterMm?: { x: number; y: number };
   }) => void;
   initialWidthMm?: number;
   initialHeightMm?: number;
@@ -1120,8 +1121,11 @@ export default function GoogleMapsModal({
       const staticUrl = `https://maps.googleapis.com/maps/api/staticmap?center=${siteCenterLat},${siteCenterLng}&zoom=${targetZoom}&size=640x640&scale=2&maptype=satellite&key=${apiKey}`;
 
       const imageSpanM = (640 * 156543.03392 * cosLat) / Math.pow(2, targetZoom);
+      const imgCenterXMm = Math.round((-minRx + padM) * 1000);
+      const imgCenterYMm = Math.round((maxRy + padM) * 1000);
 
       onApply({
+        imageCenterMm: { x: imgCenterXMm, y: imgCenterYMm },
         widthMm: siteWidthMm,
         heightMm: siteHeightMm,
         imageSrc: staticUrl,
