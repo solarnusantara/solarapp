@@ -25,13 +25,15 @@ function NumIn({ label, value, onChange, hint }: { label: string; value: number 
   );
 }
 
-export default function EngineRunPanel({ projectId, projectName, layout, inputs, onInputs, section = "all" }: {
+export default function EngineRunPanel({ projectId, projectName, layout, inputs, onInputs, section = "all", showWeather = true }: {
   projectId: string | null;
   projectName: string;
   layout: SavedLayout;
   inputs: EngineInputs;
   onInputs: (next: EngineInputs) => void;
   section?: "all" | "electrical" | "assumptions";
+  /** The Advanced workspace renders its own WeatherPanel; hide the duplicate in the assumptions section. */
+  showWeather?: boolean;
 }) {
   const ref = useRef<SavedLayout>(layout);
   ref.current = { ...layout, engine_inputs: inputs };
@@ -133,7 +135,7 @@ export default function EngineRunPanel({ projectId, projectName, layout, inputs,
         </div>
       )}
 
-      {section !== "electrical" && (
+      {section !== "electrical" && showWeather && (
         <WeatherPanel latLon={latLon} choice={inputs.weather_choice} onChoice={(c) => patch({ weather_choice: c })} />
       )}
 

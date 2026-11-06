@@ -200,6 +200,12 @@ export interface EngineInputs {
   client_name?: string;
   /** Weather source chosen in the weather panel; absent = fetch a PVGIS TMY at run time. */
   weather_choice?: WeatherChoice | null;
+  /**
+   * Advanced → Module Shading Optimization option. Persisted with the layout and shown alongside the
+   * iso-shading result. The current Helio iso-shading endpoint derives shading from the saved scene and
+   * does not accept this as a query parameter, so it is an explicit assumption, not an engine input.
+   */
+  shading_ignore_row_to_row?: boolean;
 }
 export const EMPTY_ENGINE_INPUTS: EngineInputs = {
   inverter_ac_kw: "", pln_tariff_code: "", contracted_power_kva: "", monthly_consumption_kwh: "",

@@ -3,6 +3,7 @@
 import * as api from "../api";
 import { getProjectDefaultLayout } from "../defaultProjectsData";
 import type { FieldSegment, Obstacle, Panel, Site, Walkway } from "../PVLayout";
+import type { Overlay } from "../pv/overlayModel";
 import type { EngineInputs } from "./types/local";
 
 export interface SavedLayout {
@@ -15,6 +16,7 @@ export interface SavedLayout {
   site?: Site | null;
   backgroundImage?: string;
   backgroundOpacity?: number;
+  overlays?: Overlay[];
   layers?: Record<string, boolean>;
   engine_inputs?: EngineInputs;
 }
