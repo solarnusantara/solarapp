@@ -30,6 +30,9 @@ import {
   fetchSolarClimatology,
 } from "./gisSolarService";
 import ReportsHost, { type ReportView } from "./reports/ReportsHost";
+import ProductionReport from "./reports/ProductionReport";
+import EngineeringCalc from "./reports/EngineeringCalc";
+import "./reports/reports.css";
 import { useReportData } from "./reports/useReportData";
 import { engineYield, lossLines, out as engineOut } from "./reports/model";
 import { pct as fmtPct, n as fmtNum, DASH } from "./reports/format";
@@ -1067,6 +1070,7 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
   const [previewTab, setPreviewTab] = useState<1 | 2 | 3>(1);
   const [viewMode, setViewMode] = useState<"screen" | "a4-light">("screen");
+  const [activeReportTab, setActiveReportTab] = useState<"epc" | "production" | "calc">("epc");
   const [active3DHour, setActive3DHour] = useState<number>(12.0);
 
   // Synchronized 3D Camera State across all viewports (Screen Dashboard, PDF Page 3 Siang, PDF Page 3 Malam)
@@ -2339,43 +2343,98 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
         </div>
 
         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-          {/* Toggle View Mode */}
+          {/* Report Subsystem Tabs */}
           <div style={{ display: "flex", background: "#0e1511", padding: 2, borderRadius: 6, border: "1px solid #233528" }}>
             <button
               type="button"
-              onClick={() => setViewMode("screen")}
+              onClick={() => setActiveReportTab("epc")}
               style={{
-                background: viewMode === "screen" ? "#1e3525" : "transparent",
-                color: viewMode === "screen" ? "#b8f36b" : "#7a8f81",
+                background: activeReportTab === "epc" ? "#1e3525" : "transparent",
+                color: activeReportTab === "epc" ? "#b8f36b" : "#7a8f81",
                 border: "none",
                 borderRadius: 4,
-                padding: "6px 12px",
+                padding: "6px 11px",
                 fontSize: 11,
                 cursor: "pointer",
-                fontWeight: viewMode === "screen" ? 700 : 500,
+                fontWeight: activeReportTab === "epc" ? 700 : 500,
                 transition: "all 0.15s ease",
               }}
             >
-              Mode Layar (Dark)
+              📄 Laporan EPC (3 Hal A4)
             </button>
             <button
               type="button"
-              onClick={() => setViewMode("a4-light")}
+              onClick={() => setActiveReportTab("production")}
               style={{
-                background: viewMode === "a4-light" ? "#1e3525" : "transparent",
-                color: viewMode === "a4-light" ? "#b8f36b" : "#7a8f81",
+                background: activeReportTab === "production" ? "#1e3525" : "transparent",
+                color: activeReportTab === "production" ? "#b8f36b" : "#7a8f81",
                 border: "none",
                 borderRadius: 4,
-                padding: "6px 12px",
+                padding: "6px 11px",
                 fontSize: 11,
                 cursor: "pointer",
-                fontWeight: viewMode === "a4-light" ? 700 : 500,
+                fontWeight: activeReportTab === "production" ? 700 : 500,
                 transition: "all 0.15s ease",
               }}
             >
-              📄 Format Cetak A4 (Light)
+              📊 Production Report
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveReportTab("calc")}
+              style={{
+                background: activeReportTab === "calc" ? "#1e3525" : "transparent",
+                color: activeReportTab === "calc" ? "#b8f36b" : "#7a8f81",
+                border: "none",
+                borderRadius: 4,
+                padding: "6px 11px",
+                fontSize: 11,
+                cursor: "pointer",
+                fontWeight: activeReportTab === "calc" ? 700 : 500,
+                transition: "all 0.15s ease",
+              }}
+            >
+              📐 Engineering Calculation
             </button>
           </div>
+
+          {/* Toggle View Mode for EPC 3-Page Report */}
+          {activeReportTab === "epc" && (
+            <div style={{ display: "flex", background: "#0e1511", padding: 2, borderRadius: 6, border: "1px solid #233528" }}>
+              <button
+                type="button"
+                onClick={() => setViewMode("screen")}
+                style={{
+                  background: viewMode === "screen" ? "#1e3525" : "transparent",
+                  color: viewMode === "screen" ? "#b8f36b" : "#7a8f81",
+                  border: "none",
+                  borderRadius: 4,
+                  padding: "6px 10px",
+                  fontSize: 11,
+                  cursor: "pointer",
+                  fontWeight: viewMode === "screen" ? 700 : 500,
+                }}
+              >
+                Mode Layar (Dark)
+              </button>
+              <button
+                type="button"
+                onClick={() => setViewMode("a4-light")}
+                style={{
+                  background: viewMode === "a4-light" ? "#1e3525" : "transparent",
+                  color: viewMode === "a4-light" ? "#b8f36b" : "#7a8f81",
+                  border: "none",
+                  borderRadius: 4,
+                  padding: "6px 10px",
+                  fontSize: 11,
+                  cursor: "pointer",
+                  fontWeight: viewMode === "a4-light" ? 700 : 500,
+                }}
+              >
+                Format Cetak A4 (Light)
+              </button>
+            </div>
+          )}
 
           <button
             type="button"
@@ -2420,6 +2479,19 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
         </div>
       </header>
 
+      {/* =======================================================================
+          VIEW SELECTION: PRODUCTION REPORT vs ENGINEERING CALC vs EPC 3-PAGE
+          ======================================================================= */}
+      {activeReportTab === "production" ? (
+        <div className="rpt-root" style={{ background: "#0a110c", borderRadius: 8, padding: 12 }}>
+          <ProductionReport data={reportData} projectId={targetProjId} project={activeProj} />
+        </div>
+      ) : activeReportTab === "calc" ? (
+        <div className="rpt-root" style={{ background: "#0a110c", borderRadius: 8, padding: 12 }}>
+          <EngineeringCalc data={reportData} projectId={targetProjId} project={activeProj} />
+        </div>
+      ) : (
+        <>
       {/* =======================================================================
           VIEW MODE 1: DARK SCREEN INTERACTIVE DASHBOARD
           ======================================================================= */}
@@ -2801,6 +2873,8 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
           {renderPage3()}
         </section>
       </div>
+        </>
+      )}
 
       {/* =========================================================================
           INTERACTIVE FULLSCREEN PDF PREVIEW LIGHTBOX MODAL
