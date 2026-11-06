@@ -2651,25 +2651,14 @@ export default function PVLayout({
             />
           )}
           {activeStep === 5 && (
-            <>
-              <AdvancedPanel
-                projectId={projectId}
-                layout={{ settings, segments, walkways, obstacles, site, backgroundImage, overlays }}
-                inputs={engineInputs}
-                onInputs={setEngineInputs}
-                overlays={overlays}
-                onOverlays={applyOverlays}
-              />
-              <EngineRunPanel
-                projectId={projectId}
-                projectName={projectName ?? ""}
-                layout={{ settings, segments, walkways, obstacles, site, backgroundImage, overlays }}
-                inputs={engineInputs}
-                onInputs={setEngineInputs}
-                section="assumptions"
-                showWeather={false}
-              />
-            </>
+            <AdvancedPanel
+              projectId={projectId}
+              layout={{ settings, segments, walkways, obstacles, site, backgroundImage, overlays }}
+              inputs={engineInputs}
+              onInputs={setEngineInputs}
+              overlays={overlays}
+              onOverlays={applyOverlays}
+            />
           )}
         </div>
 

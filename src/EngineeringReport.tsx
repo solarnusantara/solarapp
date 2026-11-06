@@ -2353,7 +2353,8 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
             </button>
           </div>
 
-          {([["production", "Production Report"], ["calc", "Engineering Calculation"], ["meta", "Data dokumen"]] as const).map(([v, label]) => (
+          {/* Legacy Helio buttons removed to prevent confusing layout switch */}
+          {([["meta", "Data Dokumen"]] as const).map(([v, label]) => (
             <button key={v} type="button" className="secondary-button" onClick={() => setReportView(v)} style={{ fontSize: 11, padding: "7px 11px" }}>{label}</button>
           ))}
 

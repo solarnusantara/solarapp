@@ -115,6 +115,7 @@ function parseUrlRoute(projs: Project[]): {
     if (single === "new") return { module: "projects", project: null, openNewModal: true };
     if (single === "settings") return { module: "settings", project: null, openNewModal: false };
     if (single === "dashboard") return { module: "dashboard", project: null, openNewModal: false };
+    if (single === "electrical") return { module: "layout", project: projs[0] || null, openNewModal: false };
 
     const foundProj = projs.find(p => p.id === single);
     if (foundProj) {
@@ -129,7 +130,7 @@ function parseUrlRoute(projs: Project[]): {
   if (parts.length >= 2) {
     const [projId, modId] = parts;
     const foundProj = projs.find(p => p.id === projId) || (projs.length > 0 ? projs[0] : null);
-    const validMod = VALID_MODULES.includes(modId as ModuleId) ? (modId as ModuleId) : "layout";
+    const validMod = modId === "electrical" ? "layout" : (VALID_MODULES.includes(modId as ModuleId) ? (modId as ModuleId) : "layout");
     return { module: validMod, project: foundProj, openNewModal: false };
   }
 
@@ -597,7 +598,7 @@ export default function App() {
                   <div className="quick-list">
                     <QuickAction icon={<Grid2X2 size={18} />} title="Editor Layout PV 2D" subtitle="Penataan modul, obstacle, dan kalkulasi array" onClick={() => openModule("layout")} />
                     <QuickAction icon={<Box size={18} />} title="Viewer 3D Atap & Lahan" subtitle="Render Three.js interaktif dengan bayangan" onClick={() => openModule("layout3d")} />
-                    <QuickAction icon={<Cable size={18} />} title="Kalkulator String & Inverter" subtitle="Cek Voc, Vmp, dan kesesuaian MPPT inverter" onClick={() => openModule("electrical")} />
+                    <QuickAction icon={<Cable size={18} />} title="Sizing Kabel & Proteksi" subtitle="Kalkulasi drop tegangan dan proteksi sistem" onClick={() => openModule("cable")} />
                     <QuickAction icon={<ClipboardList size={18} />} title="Bill of Quantities (BoQ)" subtitle="Rincian material siap tarik ke SCM Purchase Request" onClick={() => openModule("boq")} />
                   </div>
                 </section>
