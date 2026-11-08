@@ -1190,7 +1190,15 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
   const totalModuleArea = (totalPanels * (moduleW * moduleH)) / 1_000_000;
 
   // GIS Solar Irradiance & Yield State
-  const reportData = useReportData(activeProj?.id ?? projectId, { hourly: false });
+  // Production Report and Engineering Calculation need the per-hour table, sun path and shading data
+  // (ReportsHost loaded them before the tabs moved into this topbar); the EPC 3-page view does not.
+  const reportData = useReportData(activeProj?.id ?? projectId, {
+    hourly: activeReportTab !== "epc",
+    sun: activeReportTab === "calc",
+    shade: activeReportTab === "calc",
+    iso: activeReportTab === "calc",
+  });
+  const reportBusy = [reportData.engine, reportData.hourly, reportData.sun, reportData.shade, reportData.iso].some((x) => x.status === "loading");
   const [reportView, setReportView] = useState<ReportView | null>(null);
   const [yieldData, setYieldData] = useState<SolarYieldResult | null>(null);
   const [loadingGis, setLoadingGis] = useState(false);
@@ -2483,11 +2491,11 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
           VIEW SELECTION: PRODUCTION REPORT vs ENGINEERING CALC vs EPC 3-PAGE
           ======================================================================= */}
       {activeReportTab === "production" ? (
-        <div className="rpt-root" style={{ background: "#0a110c", borderRadius: 8, padding: 12 }}>
+        <div className="rpt-root" data-report-ready={reportBusy ? "false" : "true"} style={{ background: "#0a110c", borderRadius: 8, padding: 12 }}>
           <ProductionReport data={reportData} projectId={targetProjId} project={activeProj} />
         </div>
       ) : activeReportTab === "calc" ? (
-        <div className="rpt-root" style={{ background: "#0a110c", borderRadius: 8, padding: 12 }}>
+        <div className="rpt-root" data-report-ready={reportBusy ? "false" : "true"} style={{ background: "#0a110c", borderRadius: 8, padding: 12 }}>
           <EngineeringCalc data={reportData} projectId={targetProjId} project={activeProj} />
         </div>
       ) : (
