@@ -377,13 +377,15 @@ export default function PVLayout({
   userId,
   projectId = null,
   projectName = null,
-  projectType = null
+  projectType = null,
+  onNavigateToReport,
 }: {
   lang: Lang;
   userId: string;
   projectId?: string | null;
   projectName?: string | null;
   projectType?: SystemType | null;
+  onNavigateToReport?: () => void;
 }) {
   const saved = useMemo(() => loadSaved(userId, projectId), [userId, projectId]);
   const isId = lang === "id";
@@ -513,10 +515,18 @@ export default function PVLayout({
     setLastSavedTime(timeStr);
     if (ok) {
       setCloudSynced(true);
-      setNotice(isId ? `✅ Desain berhasil disimpan ke Cloud Server & Komputer (${timeStr})!` : `Layout saved to Cloud Server & Local Storage (${timeStr})!`);
+      setNotice(isId ? `✅ Desain berhasil disimpan! Membuka Laporan Engineering...` : `Layout saved! Redirecting to Engineering Report...`);
     } else {
-      setNotice(isId ? `💾 Desain tersimpan di komputer (${timeStr}). Sinkronisasi cloud gagal.` : `Saved locally (${timeStr}). Cloud sync failed.`);
+      setNotice(isId ? `💾 Desain tersimpan di komputer (${timeStr}). Membuka Laporan Engineering...` : `Saved locally (${timeStr}). Opening Engineering Report...`);
     }
+    // Redirect into tab Laporan Engineering
+    setTimeout(() => {
+      if (onNavigateToReport) {
+        onNavigateToReport();
+      } else if (projectId) {
+        window.location.href = `/design/${projectId}/report`;
+      }
+    }, 350);
   };
 
   const [settings, setSettings] = useState({
@@ -2831,38 +2841,53 @@ export default function PVLayout({
               <span>Ringkasan Desain</span>
             </div>
 
-            <table className="pv-summary-table">
-              <thead>
-                <tr>
-                  <th>Segment</th>
-                  <th>Modul</th>
-                  <th>Kapasitas (kWp)</th>
-                  <th>Luas (m²)</th>
-                </tr>
-              </thead>
-              <tbody>
-                {segments.map(seg => {
-                  const kwp = ((seg.panels.length * (seg.moduleWatts || 580)) / 1000).toFixed(2);
-                  const areaM2 = (seg.panels.length * ((seg.moduleWidth || 2278) * (seg.moduleHeight || 1134)) / 1e6).toFixed(1);
-                  return (
-                    <tr key={seg.id}>
-                      <td style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                        <span style={{ width: 8, height: 8, borderRadius: "50%", background: seg.color }} />
-                        <span style={{ fontWeight: 700 }}>{seg.name}</span>
-                      </td>
-                      <td>{seg.panels.length}</td>
-                      <td style={{ color: "var(--green, #b8f36b)", fontWeight: 700 }}>{kwp}</td>
-                      <td>{areaM2}</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
+            <div style={{ maxHeight: "280px", overflowY: "auto", overflowX: "hidden", borderBottom: "1px solid #1f3024" }}>
+              <table className="pv-summary-table" style={{ tableLayout: "fixed", width: "100%" }}>
+                <thead>
+                  <tr>
+                    <th style={{ width: "44%", textAlign: "left" }}>Segment</th>
+                    <th style={{ width: "16%", textAlign: "right" }} title="Jumlah Modul">Modul</th>
+                    <th style={{ width: "22%", textAlign: "right" }} title="Kapasitas (kWp)">kWp</th>
+                    <th style={{ width: "18%", textAlign: "right" }} title="Luas Modul (m²)">m²</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {segments.map(seg => {
+                    const kwp = ((seg.panels.length * (seg.moduleWatts || 580)) / 1000).toFixed(2);
+                    const areaM2 = (seg.panels.length * ((seg.moduleWidth || 2278) * (seg.moduleHeight || 1134)) / 1e6).toFixed(1);
+                    const cleanName = seg.name.replace(/Segment\s+/i, "Seg ").split("·")[0].trim();
+                    return (
+                      <tr key={seg.id}>
+                        <td
+                          style={{
+                            maxWidth: 0,
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                            whiteSpace: "nowrap",
+                            textAlign: "left",
+                          }}
+                          title={seg.name}
+                        >
+                          <span style={{ display: "inline-block", width: 7, height: 7, borderRadius: "50%", background: seg.color, marginRight: 5, verticalAlign: "middle", flexShrink: 0 }} />
+                          <span style={{ fontWeight: 700, verticalAlign: "middle" }}>{cleanName}</span>
+                        </td>
+                        <td style={{ textAlign: "right" }}>{seg.panels.length}</td>
+                        <td style={{ textAlign: "right", color: "var(--green, #b8f36b)", fontWeight: 700 }}>{kwp}</td>
+                        <td style={{ textAlign: "right", color: "#94a3b8" }}>{areaM2}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            <table className="pv-summary-table" style={{ tableLayout: "fixed", width: "100%", marginTop: 4 }}>
               <tfoot>
                 <tr>
-                  <td>Total</td>
-                  <td>{totalModul}</td>
-                  <td>{totalCapacityKwp.toFixed(2)}</td>
-                  <td>{totalModuleArea.toFixed(2)}</td>
+                  <td style={{ width: "44%", textAlign: "left" }}>Total</td>
+                  <td style={{ width: "16%", textAlign: "right" }}>{totalModul}</td>
+                  <td style={{ width: "22%", textAlign: "right" }}>{totalCapacityKwp.toFixed(2)}</td>
+                  <td style={{ width: "18%", textAlign: "right" }}>{totalModuleArea.toFixed(1)}</td>
                 </tr>
               </tfoot>
             </table>

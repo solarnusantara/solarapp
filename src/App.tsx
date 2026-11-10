@@ -673,6 +673,7 @@ export default function App() {
               projectId={activeProject?.id ?? null}
               projectName={activeProject?.name ?? null}
               projectType={activeProject?.type ?? null}
+              onNavigateToReport={() => navigateTo("report", activeProject)}
             />
           ) : active === "layout3d" ? (
             <PVLayout3D
