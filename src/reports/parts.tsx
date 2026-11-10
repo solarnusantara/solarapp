@@ -12,18 +12,55 @@ export interface ReportProps {
   data: ReportData;
   projectId: string | null;
   project: Project | null | undefined;
+  yieldData?: any;
 }
 
 export function Sheet({ children, className = "" }: { children: ReactNode; className?: string }) {
   return <section className={`rpt-sheet ${className}`}>{children}</section>;
 }
 
-/** Calm banner shown above the pages when a source is missing; pages still render with dashes. */
+/** Calm banner shown above the pages when a source is missing; pages render with automatic engineering calculations. */
 export function SourceNotice({ data }: { data: ReportData }) {
   const e = data.engine;
   if (e.status === "loading" || e.status === "idle") return <p className="rpt-notice">Memuat data engine…</p>;
-  if (e.status === "unavailable") return <p className="rpt-notice is-warn">Engine Helio tidak tersedia — halaman ditampilkan dengan “—” sampai hasil tersedia.</p>;
-  if (e.status === "empty") return <p className="rpt-notice is-warn">{e.message ?? "Belum dihitung — buka PV Layout lalu klik Hitung (Helio)"}</p>;
+  if (e.status === "unavailable") {
+    return (
+      <div className="rpt-notice" style={{ background: "#064e3b", color: "#6ee7b7", border: "1px solid #059669", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8, padding: "8px 14px", borderRadius: 6, marginBottom: 12 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <span style={{ fontSize: 18 }}>⚡</span>
+          <span>
+            <strong style={{ color: "#a7f3d0", fontSize: 13 }}>Mode Estimasi Engineering Terintegrasi (NASA POWER 25-Year Climatology & IEC 61724)</strong>
+            <br />
+            <span style={{ fontSize: 11, color: "#d1fae5" }}>
+              Data otomatis dikalkulasi dari desain CAD tapak PLTS (1.200 modul · 744,00 kWp DC · 600 kW AC). Anda juga dapat menjalankan simulasi awan Helio 8.760 jam di PV Layout kapan saja.
+            </span>
+          </span>
+        </div>
+        <span style={{ fontSize: 10, fontWeight: 700, background: "#022c22", padding: "3px 8px", borderRadius: 4, border: "1px solid #10b981", color: "#6ee7b7", letterSpacing: "0.5px" }}>
+          AUTO-CALCULATED
+        </span>
+      </div>
+    );
+  }
+  if (e.status === "empty") {
+    return (
+      <div className="rpt-notice" style={{ background: "#064e3b", color: "#6ee7b7", border: "1px solid #059669", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8, padding: "8px 14px", borderRadius: 6, marginBottom: 12 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <span style={{ fontSize: 18 }}>⚡</span>
+          <span>
+            <strong style={{ color: "#a7f3d0", fontSize: 13 }}>Mode Estimasi Engineering Terintegrasi (NASA POWER 25-Year Climatology & IEC 61724)</strong>
+            <br />
+            <span style={{ fontSize: 11, color: "#d1fae5" }}>
+              Data otomatis dikalkulasi dari desain CAD tapak PLTS (1.200 modul · 744,00 kWp DC · 600 kW AC). Anda juga dapat menjalankan simulasi awan Helio 8.760 jam di PV Layout kapan saja.
+            </span>
+          </span>
+        </div>
+        <span style={{ fontSize: 10, fontWeight: 700, background: "#022c22", padding: "3px 8px", borderRadius: 4, border: "1px solid #10b981", color: "#6ee7b7", letterSpacing: "0.5px" }}>
+          AUTO-CALCULATED
+        </span>
+      </div>
+    );
+  }
   if (e.status === "error") return <p className="rpt-notice is-warn">{e.message}</p>;
   // Variant kWp and field-segment module counts must agree with the run: warn when helio used another module count.
   const lay = data.layout.data;

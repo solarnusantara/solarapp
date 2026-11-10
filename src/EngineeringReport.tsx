@@ -2492,11 +2492,11 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
           ======================================================================= */}
       {activeReportTab === "production" ? (
         <div className="rpt-root" data-report-ready={reportBusy ? "false" : "true"} style={{ background: "#0a110c", borderRadius: 8, padding: 12 }}>
-          <ProductionReport data={reportData} projectId={targetProjId} project={activeProj} />
+          <ProductionReport data={reportData} projectId={targetProjId} project={activeProj} yieldData={yieldData} />
         </div>
       ) : activeReportTab === "calc" ? (
         <div className="rpt-root" data-report-ready={reportBusy ? "false" : "true"} style={{ background: "#0a110c", borderRadius: 8, padding: 12 }}>
-          <EngineeringCalc data={reportData} projectId={targetProjId} project={activeProj} />
+          <EngineeringCalc data={reportData} projectId={targetProjId} project={activeProj} yieldData={yieldData} />
         </div>
       ) : (
         <>
