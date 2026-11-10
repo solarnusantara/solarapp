@@ -64,8 +64,24 @@ export type PlnSubstation = {
   lng: number;
 };
 
-// Major Indonesian Grid / PLN Substations (Gardu Induk 150/20kV) benchmarked in industrial centers
+// Major Indonesian Grid / PLN Substations (Gardu Induk 150/20kV & 500kV) based on RUPTL PLN & GIS Transmisi ESDM
 const KNOWN_PLN_SUBSTATIONS: Array<{ name: string; voltage: string; lat: number; lng: number }> = [
+  // --- Semarang & Jawa Tengah (Terdekat dengan Mas Silueta / KIC Semarang) ---
+  { name: "GI 150 kV Krapyak (Semarang Barat)", voltage: "150/20 kV", lat: -6.9850, lng: 110.3620 },
+  { name: "GI 150 kV Kaliwungu (Kawasan Industri Kendal)", voltage: "150/20 kV", lat: -6.9610, lng: 110.2650 },
+  { name: "GI 150 kV Kalisari (Semarang)", voltage: "150/20 kV", lat: -6.9930, lng: 110.4120 },
+  { name: "GI 150 kV Tambak Lorok (Semarang Utara)", voltage: "150/20 kV", lat: -6.9490, lng: 110.4350 },
+  { name: "GI 150 kV Jatingaleh (Semarang Selatan)", voltage: "150/20 kV", lat: -7.0320, lng: 110.4200 },
+  { name: "GI 150 kV Sayung (Demak - Semarang Timur)", voltage: "150/20 kV", lat: -6.9250, lng: 110.5100 },
+  { name: "GITET 500 kV Ungaran (Pusat Transmisi Jateng)", voltage: "500/150 kV", lat: -7.1350, lng: 110.4050 },
+  { name: "GI 150 kV Bawen", voltage: "150/20 kV", lat: -7.2400, lng: 110.4300 },
+  { name: "GI 150 kV KITB Batang (Kawasan Industri Batang)", voltage: "150/20 kV", lat: -6.9200, lng: 109.8500 },
+  { name: "GI 150 kV Kudus", voltage: "150/20 kV", lat: -6.8100, lng: 110.8400 },
+  { name: "GI 150 kV Palur / Solo Timur", voltage: "150/20 kV", lat: -7.5600, lng: 110.8700 },
+  { name: "GI 150 kV Gejayan (DI Yogyakarta)", voltage: "150/20 kV", lat: -7.7650, lng: 110.3950 },
+  { name: "GI 150 kV Cilacap Industri", voltage: "150/20 kV", lat: -7.6950, lng: 109.0300 },
+
+  // --- Jawa Barat, DKI Jakarta & Banten ---
   { name: "GI 150 kV Cikarang Pusat (GIIC)", voltage: "150/20 kV", lat: -6.3650, lng: 107.1720 },
   { name: "GI 150 kV Deltamas", voltage: "150/20 kV", lat: -6.3750, lng: 107.1850 },
   { name: "GI 150 kV Sukamahi / Cikarang Timur", voltage: "150/20 kV", lat: -6.3480, lng: 107.2100 },
@@ -75,7 +91,16 @@ const KNOWN_PLN_SUBSTATIONS: Array<{ name: string; voltage: string; lat: number;
   { name: "GI 150 kV MM2100 Cibitung", voltage: "150/20 kV", lat: -6.2950, lng: 107.1050 },
   { name: "GI 150 kV Jababeka Cikarang", voltage: "150/20 kV", lat: -6.2910, lng: 107.1620 },
   { name: "GI 150 kV Krakatau Steel Cilegon", voltage: "150/20 kV", lat: -6.0150, lng: 106.0180 },
+  { name: "GI 150 kV Kopo / Bandung Industri", voltage: "150/20 kV", lat: -6.9600, lng: 107.5750 },
+  { name: "GI 150 kV Pulogadung (DKI Jakarta)", voltage: "150/20 kV", lat: -6.1950, lng: 106.9100 },
+  { name: "GI 150 kV Gambir Lama", voltage: "150/20 kV", lat: -6.1750, lng: 106.8300 },
+  { name: "GI 150 kV Tangerang / BSD", voltage: "150/20 kV", lat: -6.2950, lng: 106.6600 },
+
+  // --- Jawa Timur ---
   { name: "GI 150 kV Rungkut SIER Surabaya", voltage: "150/20 kV", lat: -7.3290, lng: 112.7610 },
+  { name: "GI 150 kV Gresik Industri", voltage: "150/20 kV", lat: -7.1600, lng: 112.6500 },
+  { name: "GI 150 kV JIIPE Manyar Gresik", voltage: "150/20 kV", lat: -7.0900, lng: 112.6000 },
+  { name: "GI 150 kV Ngoro PIER Pasuruan", voltage: "150/20 kV", lat: -7.5800, lng: 112.6200 },
 ];
 
 const MONTH_NAMES = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];
