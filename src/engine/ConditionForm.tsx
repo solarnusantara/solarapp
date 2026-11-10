@@ -56,7 +56,7 @@ function Derate({ label, value, onChange, withBasis = false }: { label: string; 
       </div>
       {withBasis && value.mode === "pct" && (
         <select style={inp} aria-label={`${label}: basis`} value={value.basis ?? "flat"} onChange={(e) => onChange({ mode: "pct", pct: value.pct, basis: e.target.value as WiringBasis })}>
-          <option value="flat">Rata setahun (HelioScope)</option><option value="stc">Pada STC, ∝ I² (PVsyst)</option>
+          <option value="flat">Rata setahun (Standar Flat)</option><option value="stc">Pada STC, ∝ I² (Standar IEC / I²R)</option>
         </select>
       )}
     </div>
@@ -89,7 +89,7 @@ export default function ConditionForm({ projectHelioId, conditionSetId, engineIn
   useEffect(() => { void load(); }, [load]);
 
   if (!conditionSetId) {
-    return <div style={sec}>Asumsi tersedia setelah proyek terhubung ke Helio (klik <b>Hitung (Helio)</b> sekali, atau lengkapi input ekonomi dulu).</div>;
+    return <div style={sec}>Asumsi tersedia setelah proyek terhubung ke SolarApp Engine (klik <b>Hitung (SolarApp Engine)</b> sekali, atau lengkapi input ekonomi dulu).</div>;
   }
   if (!cs) return <div style={sec}>{msg ?? "Memuat asumsi…"}</div>;
 
@@ -110,7 +110,7 @@ export default function ConditionForm({ projectHelioId, conditionSetId, engineIn
     try {
       const d = await getConditionDefaults(projectHelioId);
       setCs({ ...d.params, weather: cs.weather, module_characterization_id: cs.module_characterization_id, inverter_characterization_id: cs.inverter_characterization_id });
-      setUnsupported([]); setNeedsInput([]); setPresetNote("Preset: HelioScope default (condition-sets/defaults dari engine)");
+      setUnsupported([]); setNeedsInput([]); setPresetNote("Preset: Standar Bawaan (condition-sets/defaults dari engine)");
     } catch (e) { setMsg(verbatimError(e)); }
   };
   const pvsyst = () => {
@@ -129,7 +129,7 @@ export default function ConditionForm({ projectHelioId, conditionSetId, engineIn
   return (
     <div>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-        <button className="secondary-button" onClick={() => void defaults()} disabled={!projectHelioId}>HelioScope default</button>
+        <button className="secondary-button" onClick={() => void defaults()} disabled={!projectHelioId}>Preset Bawaan</button>
         <button className="secondary-button" onClick={pvsyst}>{PVSYST_PRESET_LABEL}</button>
         <button className="primary-button" onClick={() => void save()} disabled={busy}>Simpan asumsi</button>
         {presetNote && <span style={{ fontSize: 12 }}>{presetNote} (belum disimpan)</span>}
@@ -139,7 +139,7 @@ export default function ConditionForm({ projectHelioId, conditionSetId, engineIn
       {needsInput.length > 0 && <ul style={{ color: "#fbbf24", fontSize: 12 }}><li><b>Perlu diisi manual:</b></li>{needsInput.map((e, i) => <li key={i}>{e}</li>)}</ul>}
       {unsupported.length > 0 && (
         <div style={{ ...sec, borderColor: "#7c5a12" }}>
-          <b style={{ fontSize: 12 }}>Nilai PVsyst yang tidak didukung engine</b>
+          <b style={{ fontSize: 12 }}>Parameter tambahan di luar cakupan engine</b>
           <ul style={{ fontSize: 12, margin: "4px 0 0 16px" }}>{unsupported.map((u, i) => <li key={i}>{u.label}: {u.value} — <i>{u.reason}</i></li>)}</ul>
         </div>
       )}
@@ -230,9 +230,9 @@ export default function ConditionForm({ projectHelioId, conditionSetId, engineIn
           <Sel label="Penggabungan" value={unc.combination} options={["rss", "linear"]} onChange={(v) => onEngineInputs({ uncertainty: { ...unc, combination: v } })} />
         </div>
         {p90Status && p90Status !== "ready" && (
-          <div role="alert" style={{ color: "#fbbf24", fontSize: 12, marginTop: 6 }}>Status P90 dari Helio: <b>{p90Status}</b>{p90Status === "needs_uncertainty_inputs" ? " - isi sigma dan sumber untuk ke-10 komponen di bawah." : ""}</div>
+          <div role="alert" style={{ color: "#fbbf24", fontSize: 12, marginTop: 6 }}>Status P90 SolarApp: <b>{p90Status}</b>{p90Status === "needs_uncertainty_inputs" ? " - isi sigma dan sumber untuk ke-10 komponen di bawah." : ""}</div>
         )}
-        <div style={{ fontSize: 11, opacity: 0.8, marginTop: 6 }}>Sepuluh komponen wajib diisi (nilai dan sumber). Helio tidak menghitung P90 bila ada yang kosong; isi 0 beserta alasannya bila memang tidak dipakai.</div>
+        <div style={{ fontSize: 11, opacity: 0.8, marginTop: 6 }}>Sepuluh komponen wajib diisi (nilai dan sumber). SolarApp Engine tidak menghitung P90 bila ada yang kosong; isi 0 beserta alasannya bila memang tidak dipakai.</div>
         <div style={{ display: "grid", gap: 6, marginTop: 6 }}>
           {UNCERTAINTY_ROWS.map(({ key: k, label }) => {
             const row = unc.components.find((c) => c.key === k);

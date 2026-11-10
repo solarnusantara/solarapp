@@ -27,7 +27,7 @@ function Card({ title, icon = "▤", children, style }: { title: string; icon?: 
 const KV = ({ k, v }: { k: string; v: ReactNode }) => (<tr><th className="k">{k}</th><td>{v}</td></tr>);
 
 const RACKING: Record<string, string> = { fixed_tilt: "Fixed Tilt", flush_mount: "Flush Mount", east_west: "East-West", carport: "Carport", ground_mount: "Ground Mount", tracker: "Tracker" };
-const TEMP_MODEL: Record<string, string> = { sapm: "Sandia Model", faiman: "Faiman Model", pvsyst: "PVsyst Model", noct_sam: "NOCT (SAM) Model" };
+const TEMP_MODEL: Record<string, string> = { sapm: "Sandia Model", faiman: "Faiman Model", pvsyst: "Standar Termal IEC (Uc/Uv Model)", noct_sam: "NOCT (SAM) Model" };
 
 export default function ProductionReport({ data, projectId, project, yieldData }: ReportProps) {
   const fb = computeReportFallbacks(data, projectId, project, yieldData);
@@ -457,40 +457,7 @@ export default function ProductionReport({ data, projectId, project, yieldData }
                         );
                       })}
 
-                      {/* 6. Clean Segment Badges (Seg A, Seg B...) */}
-                      {rm.segments.map((seg) => {
-                        if (!seg.polygon || seg.polygon.length === 0) return null;
-                        const minX = Math.min(...seg.polygon.map((p) => p.x));
-                        const minY = Math.min(...seg.polygon.map((p) => p.y));
-                        const badgeW = Math.max(7000, rm.w / 18);
-                        const badgeH = Math.max(2200, rm.h / 45);
-                        const badgeX = minX;
-                        const badgeY = Math.max(0, minY - badgeH - 300);
-                        const cleanName = seg.name.replace(/Segment\s+/i, "Seg ").split("·")[0].trim();
-                        return (
-                          <g key={`badge-${seg.id}`} transform={`translate(${badgeX}, ${badgeY})`}>
-                            <rect
-                              width={badgeW}
-                              height={badgeH}
-                              rx={Math.max(6, badgeH * 0.22)}
-                              fill="#0b1322f5"
-                              stroke={seg.color}
-                              strokeWidth={Math.max(5, rm.w / 2800)}
-                            />
-                            <text
-                              x={badgeW / 2}
-                              y={badgeH / 2}
-                              textAnchor="middle"
-                              dominantBaseline="central"
-                              fill="#ffffff"
-                              fontSize={Math.max(12, badgeH * 0.48)}
-                              fontWeight="800"
-                            >
-                              {cleanName}
-                            </text>
-                          </g>
-                        );
-                      })}
+
 
                       {!rm.bg && <text x={rm.w / 2} y={rm.h - rm.h * 0.03} textAnchor="middle" fontSize={rm.w / 40} fill="#64748b">Citra satelit belum diambil</text>}
                       

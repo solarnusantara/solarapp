@@ -25,7 +25,7 @@ export function moduleCountMismatch(layoutModules: number, r: EngineResultSummar
   const helio = helioModuleCount(r);
   if (helio === null || !(layoutModules > 0) || helio === layoutModules) return null;
   const why = helio < layoutModules
-    ? "hasil dihitung dari layout yang lebih lama atau modul dihapus/dibuang saat regenerasi. Jalankan Hitung (Helio) ulang."
-    : "layout sekarang punya lebih sedikit modul dari saat hasil ini dihitung. Jalankan Hitung (Helio) ulang.";
-  return { layout: layoutModules, helio, message: `Helio memakai ${id(helio)} dari ${id(layoutModules)} modul: ${why}` };
+    ? "hasil dihitung dari layout yang lebih lama atau modul dihapus/dibuang saat regenerasi. Jalankan Hitung (SolarApp Engine) ulang."
+    : "layout sekarang punya lebih sedikit modul dari saat hasil ini dihitung. Jalankan Hitung (SolarApp Engine) ulang.";
+  return { layout: layoutModules, helio, message: `SolarApp Engine memakai ${id(helio)} dari ${id(layoutModules)} modul: ${why}` };
 }

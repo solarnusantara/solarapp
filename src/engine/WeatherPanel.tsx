@@ -178,7 +178,7 @@ export default function WeatherPanel({ latLon, choice, onChoice }: {
       const dsIds = ids.filter((id) => datasets.some((d) => d.id === id));
       const serIds = ids.filter((id) => series.some((s) => s.id === id));
       if (ids.length < 2) throw new Error("Pilih minimal dua sumber (sumber terpilih ikut otomatis).");
-      if (dsIds.length > 8) throw new Error("Perbandingan helio maksimal 8 dataset.");
+      if (dsIds.length > 8) throw new Error("Perbandingan maksimal 8 dataset.");
       let entries = new Map<string, WeatherComparisonEntry>();
       if (dsIds.length >= 2) entries = new Map((await getWeatherComparison(dsIds)).sources.map((e) => [e.dataset_id, e]));
       const details = await Promise.allSettled(dsIds.map((id) => getWeatherDetail(id)));
@@ -193,7 +193,7 @@ export default function WeatherPanel({ latLon, choice, onChoice }: {
         const s = series.find((x) => x.id === id)!;
         items.push({ id, kind: "series", label: s.name, source: s.provider, ghi: seriesMeanGhi(s), dni: null, dhi: null, temp: null });
       }
-      setCmp({ items, note: serIds.length ? "Seri multi-tahun: GHI = rerata tahun anggota; DNI, DHI, dan suhu tidak diringkas helio per seri." : null });
+      setCmp({ items, note: serIds.length ? "Seri multi-tahun: GHI = rerata tahun anggota; DNI, DHI, dan suhu tidak diringkas per seri." : null });
     } catch (e) { setCmpErr(e instanceof Error && !(e as { status?: number }).status ? e.message : verbatimError(e)); }
     setBusy(false);
   };
@@ -224,7 +224,7 @@ export default function WeatherPanel({ latLon, choice, onChoice }: {
             {" "}<button className="secondary-button" onClick={() => onChoice(null)}>Kembali ke PVGIS TMY otomatis</button></>
           : <>Belum dipilih: saat Hitung, engine mengambil PVGIS TMY di titik proyek (bawaan).</>}
       </div>
-      {choice && loaded && !listErr && !known && <div style={{ color: "#fbbf24", fontSize: 12 }}>Sumber terpilih tidak ada di daftar helio (diarsipkan?). Pilih ulang.</div>}
+      {choice && loaded && !listErr && !known && <div style={{ color: "#fbbf24", fontSize: 12 }}>Sumber terpilih tidak ada di daftar server (diarsipkan?). Pilih ulang.</div>}
       {listErr && <div style={{ color: "#f87171", fontSize: 12, marginTop: 4 }}>{listErr}</div>}
 
       <div style={{ ...grid, marginTop: 8 }}>
@@ -243,7 +243,7 @@ export default function WeatherPanel({ latLon, choice, onChoice }: {
         </>}
         {kind === "solcast" && <L label="Elevasi (m, opsional)"><input style={inp} type="number" step="any" value={elev} onChange={(e) => setElev(e.target.value)} /></L>}
       </div>
-      {kind === "pvgis_series" && <div style={small}>Kosongkan tahun untuk memakai rentang TMY PVGIS (bawaan helio). Batas helio: 1900–2100, selisih maksimal 40 tahun. Seri butuh dataset PVGIS TMY di titik ini; dibuat/dipakai ulang otomatis.</div>}
+      {kind === "pvgis_series" && <div style={small}>Kosongkan tahun untuk memakai rentang TMY PVGIS (bawaan sistem). Batas sistem: 1900–2100, selisih maksimal 40 tahun. Seri butuh dataset PVGIS TMY di titik ini; dibuat/dipakai ulang otomatis.</div>}
       {kind === "nasa" && <div style={small}>Tanpa tanggal: satu tahun kalender penuh terakhir. NASA POWER adalah cadangan terakhir (resolusi kasar).</div>}
       {kind === "solcast" && <div style={small}>
         {solcastCfg ? (solcastCfg.configured ? "API key Solcast terpasang di organisasi ini." : "API key Solcast belum diisi di organisasi ini (pengelolaan key tidak tersedia dari /design); permintaan akan ditolak helio.") : "Status API key tidak terbaca."}</div>}
@@ -304,7 +304,7 @@ export default function WeatherPanel({ latLon, choice, onChoice }: {
         {msg && <span style={{ fontSize: 12, wordBreak: "break-word" }}>{msg}</span>}
       </div>
 
-      <div style={{ marginTop: 10, fontSize: 12 }}><b>Sudah ada di helio</b> <span style={small}>(pakai ulang, tanpa ambil ulang)</span></div>
+      <div style={{ marginTop: 10, fontSize: 12 }}><b>Sudah ada di server SolarApp</b> <span style={small}>(pakai ulang, tanpa ambil ulang)</span></div>
       {!loaded && <div style={small}>Memuat…</div>}
       {loaded && !listErr && standalone.length === 0 && series.length === 0 && <div style={small}>Belum ada dataset/seri cuaca.</div>}
       <div style={{ maxHeight: 220, overflow: "auto", marginTop: 4 }}>
@@ -337,7 +337,7 @@ export default function WeatherPanel({ latLon, choice, onChoice }: {
               {" "}· dugaan geser waktu: {qc.report.time_shift.suspected ? "ya" : "tidak"}{qc.report.time_shift.mean_offset_minutes != null ? ` (${f1(qc.report.time_shift.mean_offset_minutes)} menit)` : ""}</div>
             <div>Jam gagal uji: GHI {qc.report.irradiance.ghi_limit_fail_hours}, DNI {qc.report.irradiance.dni_limit_fail_hours}, DHI {qc.report.irradiance.dhi_limit_fail_hours}, konsistensi {qc.report.irradiance.consistency_fail_hours}, negatif {qc.report.irradiance.negative_hours}, macet {qc.report.irradiance.stuck_hours}</div>
             {qc.report.metadata.distance_km != null && <div>Jarak ke titik proyek {f1(qc.report.metadata.distance_km)} km{qc.report.metadata.distance_warning ? " (peringatan)" : ""}</div>}
-            {qc.report.warnings.length === 0 ? <div style={small}>Helio tidak melaporkan peringatan QC.</div>
+            {qc.report.warnings.length === 0 ? <div style={small}>Engine tidak melaporkan peringatan QC.</div>
               : <ul style={{ margin: "4px 0 0 16px", color: "#fbbf24" }}>{qc.report.warnings.map((w, i) => <li key={i}>{w}</li>)}</ul>}
           </>}
         </div>
@@ -367,7 +367,7 @@ export default function WeatherPanel({ latLon, choice, onChoice }: {
             </tbody>
           </table>
           {cmp.note && <div style={small}>{cmp.note}</div>}
-          <div style={small}>DNI/DHI = jumlah 12 bulan, suhu = rata-rata berbobot hari, dari ringkasan bulanan helio; "—" bila berkas tidak memuatnya.</div>
+          <div style={small}>DNI/DHI = jumlah 12 bulan, suhu = rata-rata berbobot hari, dari ringkasan bulanan engine; "—" bila berkas tidak memuatnya.</div>
         </div>
       )}
     </div>

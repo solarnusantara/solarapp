@@ -66,11 +66,11 @@ export const UNCERTAINTY_ROWS: ReadonlyArray<{ key: string; label: string }> = [
 ];
 
 export const PVSYST_PRESET_SOURCE = "PLTS-MAS-E-CS-001-00 Rev.00";
-export const PVSYST_PRESET_LABEL = `Sonus PVsyst — sumber: ${PVSYST_PRESET_SOURCE}`;
+export const PVSYST_PRESET_LABEL = `Preset Standar Bankable (DED) — sumber: ${PVSYST_PRESET_SOURCE}`;
 
 /** Applies the PVsyst report values onto `base` (a loaded ConditionSet: weather/characterizations are kept). */
 export function applyPvsystPreset(base: ConditionSet): PresetResult {
-  const src = `PVsyst ${PVSYST_PRESET_SOURCE}`;
+  const src = `Standar DED ${PVSYST_PRESET_SOURCE}`;
   const needsInput: string[] = [];
   const unsupported: UnsupportedItem[] = [
     { label: "IAM Fresnel, lapisan AR: n(glass)=1.526, n(AR)=1.290", value: "n_glass 1.526 / n_AR 1.290", reason: "tidak didukung engine: model IAM 'physical' tidak punya parameter n_glass/n_AR; model dipilih, parameter tidak diterapkan" },
@@ -87,8 +87,8 @@ export function applyPvsystPreset(base: ConditionSet): PresetResult {
     module_efficiency: tm.model === "pvsyst" ? tm.module_efficiency : NaN,
   };
   if (tm.model !== "pvsyst") {
-    needsInput.push("temperature_model.alpha_absorption (absorptansi, tidak tertera di PDF PVsyst)");
-    needsInput.push("temperature_model.module_efficiency (efisiensi modul, tidak tertera di PDF PVsyst)");
+    needsInput.push("temperature_model.alpha_absorption (absorptansi, tidak tertera di dokumen acuan)");
+    needsInput.push("temperature_model.module_efficiency (efisiensi modul, tidak tertera di dokumen acuan)");
   }
 
   const params: ConditionSet = {
@@ -109,7 +109,7 @@ export function applyPvsystPreset(base: ConditionSet): PresetResult {
       { name: "String mismatch", description: `Strings Mismatch loss 1.5% (${src})`, stage: "dc", monthly_pct: m12(1.5) },
     ],
   };
-  const absent = "tidak dicantumkan di PLTS-MAS-E-CS-001-00 (PVsyst hanya memakai 5 komponen)";
+  const absent = "tidak dicantumkan di PLTS-MAS-E-CS-001-00 (hanya memakai 5 komponen standar)";
   const given: Record<string, { sigma_pct: number; source: string }> = {
     iav: { sigma_pct: 5.5, source: `${src}: year-to-year variability` },
     module_model: { sigma_pct: 1, source: `${src}: PV module modelling/parameters` },

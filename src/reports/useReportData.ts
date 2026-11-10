@@ -92,7 +92,7 @@ export function useReportData(projectId: string | null | undefined, opts: { hour
     setLayout({ status: "loading", data: null });
     setMetaState({ status: "loading", data: null });
     getEngineState(projectId, ac.signal)
-      .then((s) => setEngine(s.helio_last_result ? { status: "ok", data: s } : { status: "empty", data: s, message: "Belum dihitung — buka PV Layout lalu klik Hitung (Helio)" }))
+      .then((s) => setEngine(s.helio_last_result ? { status: "ok", data: s } : { status: "empty", data: s, message: "Belum dihitung — buka PV Layout lalu klik Hitung (SolarApp Engine)" }))
       .catch((e) => !ac.signal.aborted && setEngine(toState(e)));
     loadLayout(projectId)
       .then((l) => !ac.signal.aborted && setLayout(l ? { status: "ok", data: l } : { status: "empty", data: null }))

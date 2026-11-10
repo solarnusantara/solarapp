@@ -46,7 +46,7 @@ describe("conditionModel", () => {
     // every one of the 10 rows has a value AND a source, so helio never answers needs_uncertainty_inputs
     expect(r.uncertainty.components).toHaveLength(10);
     expect(r.uncertainty.components.every((c) => typeof c.sigma_pct === "number" && !!c.source)).toBe(true);
-    expect(r.uncertainty.components.find((c) => c.key === "temperature")?.source).toBe("tidak dicantumkan di PLTS-MAS-E-CS-001-00 (PVsyst hanya memakai 5 komponen)");
+    expect(r.uncertainty.components.find((c) => c.key === "temperature")?.source).toBe("tidak dicantumkan di PLTS-MAS-E-CS-001-00 (hanya memakai 5 komponen standar)");
     // RSS of the ten = 5.79 % (PVsyst 5.8 %)
     expect(Math.sqrt(r.uncertainty.components.reduce((a, c) => a + (c.sigma_pct as number) ** 2, 0))).toBeCloseTo(5.788, 3);
     expect(r.unsupported.some((u) => u.label.includes("Fresnel"))).toBe(true);

@@ -1850,7 +1850,7 @@ export default function PVLayout({
               </button>
 
               <div style={{ background: "#111a14", border: "1px solid #1f3024", borderRadius: 6, padding: "10px", fontSize: 11, color: "#8ca093", lineHeight: 1.4 }}>
-                💡 Menggunakan modul <strong>Longi 620 Wp</strong> (2.382 × 1.134 mm) sesuai laporan resmi PVSyst & SolarApp Engine Studio untuk Mas Silueta (1.200 unit = 744 kWp).
+                💡 Menggunakan modul <strong>Longi 620 Wp</strong> (2.382 × 1.134 mm) sesuai desain resmi SolarApp Engine Studio untuk Mas Silueta (1.200 unit = 744 kWp).
               </div>
             </div>
           )}

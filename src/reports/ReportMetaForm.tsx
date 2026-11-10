@@ -64,7 +64,7 @@ export default function ReportMetaForm({ data, projectId }: { data: ReportData; 
 
   return (
     <div className="rpt-form no-print">
-      {data.meta.status === "unavailable" && <p className="rpt-notice is-warn">Engine Helio tidak tersedia — data dokumen tidak dapat disimpan sekarang.</p>}
+      {data.meta.status === "unavailable" && <p className="rpt-notice is-warn">SolarApp Engine Studio tidak tersedia — data dokumen tidak dapat disimpan sekarang.</p>}
       <h3>Dokumen</h3>
       <div className="grid2">
         {input("Nomor dokumen", "doc_no")}

@@ -189,7 +189,7 @@ export default function ComponentLibrary({
               <ShieldCheck size={12} /> Referensi Resmi Terverifikasi
             </span>
             <span className="pv-badge" style={{ background: "#122538", color: "#38bdf8", borderColor: "#1e3c5a" }}>
-              PVsyst .PAN / .OND Compliant
+              IEC 61724 / Standar Industri (.PAN / .OND) Compliant
             </span>
           </div>
           <h1 style={{ fontSize: 24, fontWeight: 800, margin: "4px 0", letterSpacing: "-0.5px" }}>
@@ -197,8 +197,8 @@ export default function ComponentLibrary({
           </h1>
           <p style={{ margin: 0, color: "#8aa092", fontSize: 13 }}>
             {isId
-              ? "Database parameter teknis resmi untuk Modul Surya (PV), Inverter String/Sentral, dan BESS dari file manufaktur PVsyst (.PAN / .OND) dan sertifikasi TÜV SÜD."
-              : "Official technical parameters for PV modules, inverters, and BESS sourced from authentic manufacturer PVsyst files (.PAN/.OND)."}
+              ? "Database parameter teknis resmi untuk Modul Surya (PV), Inverter String/Sentral, dan BESS dari file manufaktur terakreditasi (.PAN / .OND) dan sertifikasi TÜV SÜD."
+              : "Official technical parameters for PV modules, inverters, and BESS sourced from authentic manufacturer files (.PAN/.OND)."}
           </p>
         </div>
 
@@ -397,7 +397,7 @@ export default function ComponentLibrary({
 
                     {isMasSiluetaStandard && (
                       <div style={{ marginTop: 8, display: "inline-flex", alignItems: "center", gap: 4, background: "#1c3321", border: "1px solid #2e5938", borderRadius: 4, padding: "2px 6px", fontSize: 10, color: "#b8f36b", fontWeight: 700 }}>
-                        ⭐ Standar Proyek PT Mas Silueta 744 kWp (PVSyst .PAN)
+                        ⭐ Standar Proyek PT Mas Silueta 744 kWp (Spesifikasi .PAN Resmi)
                       </div>
                     )}
                   </div>

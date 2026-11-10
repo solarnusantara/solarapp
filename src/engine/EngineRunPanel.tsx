@@ -127,7 +127,7 @@ export default function EngineRunPanel({ projectId, projectName, layout, inputs,
               <NumIn label="Modul per string — minimum" value={inputs.string_len_min} onChange={(v) => patch({ string_len_min: v })} />
               <NumIn label="Modul per string — maksimum" value={inputs.string_len_max} onChange={(v) => patch({ string_len_max: v })} hint="SolarApp Engine tetap memeriksa batas tegangan MPPT/Vdc dan melaporkan pelanggaran" />
               <label style={{ display: "grid", gap: 2, fontSize: 12 }}>Sumber panjang string
-                <input style={inp} value={inputs.string_len_source ?? ""} onChange={(e) => patch({ string_len_source: e.target.value })} placeholder="mis. PVsyst PLTS-MAS-E-CS-001-00: 15 string × 20" /></label>
+                <input style={inp} value={inputs.string_len_source ?? ""} onChange={(e) => patch({ string_len_source: e.target.value })} placeholder="mis. Dokumen DED PLTS-MAS-E-CS-001-00: 15 string × 20" /></label>
             </>)}
             <NumIn label="NOCT modul (°C)" value={inputs.noct_c} onChange={(v) => patch({ noct_c: v })} hint="Wajib bila file PAN tidak memuat NOCT (datasheet)" />
             <NumIn label="Tegangan AC inverter (V)" value={inputs.ac_voltage_v} onChange={(v) => patch({ ac_voltage_v: v })} hint="Hanya bila karakterisasi tidak menyebut satu tegangan" />

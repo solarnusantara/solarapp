@@ -125,7 +125,7 @@ export function useEngine(args: {
     if (!built.input) { setErrors(built.errors); setStatus("error"); setError(null); return null; }
     setErrors([]);
 
-    setStep("Menghubungkan ke Helio");
+    setStep("Menghubungkan ke SolarApp Engine Studio");
     setStatus("linking");
     let link = toLink(state);
     if (!link) {
@@ -148,7 +148,7 @@ export function useEngine(args: {
         setErrors([req ? req.error : "Pilih modul dan inverter (beserta karakterisasinya) dulu."]);
         setStatus("error"); return false;
       }
-      setStep("Membuat sirkuit (Helio)");
+      setStep("Membuat sirkuit (SolarApp Engine)");
       const res = await C.autoCircuit(p.link.helio_design_id, req, ac.signal);
       setCircuit(res);
       setStatus("ready"); setStep("");
@@ -201,7 +201,7 @@ export function useEngine(args: {
         setErrors([req.error]); setStatus("error"); return false;
       }
       if (req) {
-        setStep("Membuat sirkuit (Helio)");
+        setStep("Membuat sirkuit (SolarApp Engine)");
         circuitRes = await C.autoCircuit(p.link.helio_design_id, req, ac.signal);
         setCircuit(circuitRes);
         for (const i of circuitRes.issues ?? []) all.push(`[${i.code}] ${i.message}`);

@@ -11,7 +11,7 @@ describe("module count check", () => {
   });
   it("warns in Indonesian with both numbers, silent when equal", () => {
     const w = moduleCountMismatch(1200, r(1196));
-    expect(w?.message.startsWith("Helio memakai 1.196 dari 1.200 modul")).toBe(true);
+    expect(w?.message.startsWith("SolarApp Engine memakai 1.196 dari 1.200 modul")).toBe(true);
     expect(moduleCountMismatch(1200, r(1200))).toBeNull();
     expect(moduleCountMismatch(1200, null)).toBeNull();
   });

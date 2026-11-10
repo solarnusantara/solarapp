@@ -103,7 +103,7 @@ export const AUTHENTIC_PV_MODULES: PVModuleSpec[] = [
     tempCoeffIsc: 0.045,
     maxSystemVoltage: 1500,
     maxSeriesFuse: 30,
-    sourceRef: "PVsyst 7.4.7 .PAN file (TüV SüD Certified) — Mas Silueta Standard",
+    sourceRef: "Datasheet .PAN file (TüV SüD Certified) — Mas Silueta Standard",
     panFile: "Longi_LR8-66HGD-620 Wp.PAN",
     indicativePriceIdr: 1680000,
   },
@@ -264,7 +264,7 @@ export const AUTHENTIC_INVERTERS: InverterSpec[] = [
     dimensionsMm: [1000, 710, 395],
     weightKg: 99.0,
     ipRating: "IP66",
-    sourceRef: "PVsyst 7.4 .OND file (Huawei Manufacturer 2024) — Mas Silueta Standard",
+    sourceRef: "Datasheet .OND file (Huawei Manufacturer 2024) — Mas Silueta Standard",
     ondFile: "SUN2000-150K-MG0-400Vac(20240724).OND",
   },
   {
@@ -492,7 +492,7 @@ export function parsePanFile(content: string): Partial<PVModuleSpec> | null {
       id: `imported-${Date.now()}-${model.toLowerCase().replace(/[^a-z0-9]/g, "-")}`,
       manufacturer,
       model,
-      series: "Imported PVsyst .PAN",
+      series: "Imported .PAN",
       powerWp: pnom,
       cellType: "N-Type TOPCon",
       bifacial: bifacialFactor > 0.05,
@@ -511,7 +511,7 @@ export function parsePanFile(content: string): Partial<PVModuleSpec> | null {
       tempCoeffIsc: muIsc > 0 && muIsc < 1 ? muIsc : parseFloat((muIsc / (isc * 10)).toFixed(3)),
       maxSystemVoltage: vmax,
       maxSeriesFuse: Math.ceil(isc * 1.5 / 5) * 5,
-      sourceRef: "User Uploaded PVsyst .PAN File",
+      sourceRef: "User Uploaded .PAN File",
     };
   } catch (err) {
     console.error("Failed to parse PAN file:", err);
@@ -575,7 +575,7 @@ export function parseOndFile(content: string): Partial<InverterSpec> | null {
       dimensionsMm: [Math.round(width * 1000), Math.round(height * 1000), Math.round(depth * 1000)],
       weightKg: weight,
       ipRating: "IP66",
-      sourceRef: "User Uploaded PVsyst .OND File",
+      sourceRef: "User Uploaded .OND File",
     };
   } catch (err) {
     console.error("Failed to parse OND file:", err);

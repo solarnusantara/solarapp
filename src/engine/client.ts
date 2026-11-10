@@ -12,7 +12,7 @@ import type {
 } from "./types/local";
 
 export const ENGINE_BASE = "/api/design/engine/";
-export const UNAVAILABLE_MESSAGE = "Engine Helio tidak tersedia";
+export const UNAVAILABLE_MESSAGE = "SolarApp Engine Studio tidak tersedia";
 
 export class EngineError extends Error {
   status: number;
@@ -37,7 +37,7 @@ function engineMessage(status: number, code: string, detail: unknown): string {
       return "Anda tidak punya hak menulis di proyek ini (akun viewer hanya bisa membaca).";
     case "not_linked":
     case "not_allowed":
-      return "Proyek ini belum terhubung ke engine Helio.";
+      return "Proyek ini belum terhubung ke SolarApp Engine Studio.";
     case "circuit_missing":
       return "Sirkuit belum dibuat — pilih modul & inverter lalu Buat sirkuit";
     case "stale_revision":
@@ -49,7 +49,7 @@ function engineMessage(status: number, code: string, detail: unknown): string {
   }
   const d = detail as { error?: string; message?: string } | string | null;
   const text = typeof d === "string" ? d : d?.message ?? d?.error;
-  return text ? String(text) : `Engine Helio mengembalikan HTTP ${status}${code ? ` (${code})` : ""}`;
+  return text ? String(text) : `SolarApp Engine mengembalikan HTTP ${status}${code ? ` (${code})` : ""}`;
 }
 
 export function engineErrorMessage(e: unknown): string {
@@ -237,7 +237,7 @@ export async function saveSceneWithRetry(designId: string, scene: Scene, signal?
         env = await getScene(designId, signal);
         continue;
       }
-      if (e instanceof EngineError && e.status === 423) throw new EngineError(423, "locked", e.detail, "Desain di Helio sedang dikunci.");
+      if (e instanceof EngineError && e.status === 423) throw new EngineError(423, "locked", e.detail, "Desain sedang dikunci oleh sistem.");
       throw e;
     }
   }
@@ -309,7 +309,7 @@ export interface WeatherUploadOptions {
 export function weatherUploadProblems(file: Pick<File, "size"> | null, o: WeatherUploadOptions): string[] {
   const p: string[] = [];
   if (!file) p.push("Pilih berkas dulu.");
-  else if (file.size > WEATHER_UPLOAD_MAX_BYTES) p.push(`Berkas melebihi ${WEATHER_UPLOAD_MAX_BYTES / 1024 / 1024} MiB (batas helio).`);
+  else if (file.size > WEATHER_UPLOAD_MAX_BYTES) p.push(`Berkas melebihi ${WEATHER_UPLOAD_MAX_BYTES / 1024 / 1024} MiB (batas sistem).`);
   const n = o.name.trim().length;
   if (n < 1 || n > 120) p.push("Nama harus 1–120 karakter.");
   if (o.format === "csv") {
@@ -422,7 +422,7 @@ export function verbatimError(e: unknown): string {
 }
 async function fileBody(file: File): Promise<ArrayBuffer> {
   if (file.size > COMPONENT_FILE_MAX_BYTES) {
-    throw new EngineError(0, "file_too_large", null, `File melebihi ${COMPONENT_FILE_MAX_BYTES / 1024} KiB (batas helio).`);
+    throw new EngineError(0, "file_too_large", null, `File melebihi ${COMPONENT_FILE_MAX_BYTES / 1024} KiB (batas sistem).`);
   }
   return file.arrayBuffer();
 }

@@ -14,7 +14,7 @@ describe("export mode input", () => {
     expect(EXPORT_MODE_OPTIONS.map((o) => o.value)).toEqual(["zero_export", "physical_export_zero_credit"]);
     expect(exportModeLabel("zero_export")).toBe("Zero export (Permen ESDM 2/2024)");
     expect(exportModeLabel("physical_export_zero_credit")).toBe("Ekspor fisik tanpa kredit");
-    expect(exportModeLabel(undefined)).toBe("Ikuti aturan golongan (default helio)");
+    expect(exportModeLabel(undefined)).toBe("Ikuti aturan golongan (default engine)");
     expect(isExportMode("zero_export")).toBe(true);
     expect(isExportMode("")).toBe(false);
   });

@@ -13,7 +13,7 @@ const td: React.CSSProperties = { padding: "3px 8px", borderBottom: "1px solid #
 /** Badge for tabs whose numbers are still browser estimates. */
 export function EngineBadge() {
   return (
-    <span title="Hitungan di browser, belum memakai engine Helio" style={{ display: "inline-block", fontSize: 11, fontWeight: 700, padding: "2px 8px", borderRadius: 999, background: "#3b2f0b", color: "#fbbf24", border: "1px solid #7c5a12" }}>
+    <span title="Hitungan di browser, belum memakai SolarApp Engine Studio" style={{ display: "inline-block", fontSize: 11, fontWeight: 700, padding: "2px 8px", borderRadius: 999, background: "#3b2f0b", color: "#fbbf24", border: "1px solid #7c5a12" }}>
       Estimasi lokal — belum dari engine
     </span>
   );
@@ -183,7 +183,7 @@ export function DrawingsPanel({ designId }: { designId: string }) {
       <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
         {links.map(([t, p]) => <a key={p} className="secondary-button" style={{ textDecoration: "none" }} href={designFileUrl(designId, p)} target="_blank" rel="noreferrer" download>{t}</a>)}
       </div>
-      <div style={{ fontSize: 11, opacity: 0.7, marginTop: 6 }}>Bila sirkuit belum dibuat Helio menjawab 409: buat sirkuit dulu di PV Layout (langkah Electrical). DXF peta string butuh geometri.</div>
+      <div style={{ fontSize: 11, opacity: 0.7, marginTop: 6 }}>Bila sirkuit belum dibuat engine menjawab 409: buat sirkuit dulu di PV Layout (langkah Electrical). DXF peta string butuh geometri.</div>
       {svgOk && <img alt="Single line diagram dari SolarApp Engine" src={designFileUrl(designId, "sld/svg")} onError={() => setSvgOk(false)} style={{ maxWidth: "100%", background: "#fff", marginTop: 8, borderRadius: 6 }} />}
     </Section>
   );

@@ -57,7 +57,7 @@ describe("engine client", () => {
 
   it("normalises proxy errors and standalone html", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(json(503, { code: "engine_not_configured" })));
-    await expect(engineJson("sites")).rejects.toMatchObject({ code: "engine_not_configured", message: "Engine Helio tidak tersedia" });
+    await expect(engineJson("sites")).rejects.toMatchObject({ code: "engine_not_configured", message: "SolarApp Engine Studio tidak tersedia" });
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("<html>", { status: 404, headers: { "content-type": "text/html" } })));
     await expect(engineJson("sites")).rejects.toMatchObject({ code: "engine_unavailable" });
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(json(409, { code: "circuit_missing" })));
