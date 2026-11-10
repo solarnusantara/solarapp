@@ -44,7 +44,7 @@ export default function ProductionReport({ data, projectId, project, yieldData }
 
   const name = text(design?.project_name ?? project?.name ?? fb.docMeta.name);
   const client = m?.client || m?.owner_name || fb.docMeta.client;
-  const address = lay?.site?.address || m?.project_address || fb.docMeta.address;
+  const address = (lay?.site?.address && !lay.site.address.startsWith("Kompleks Atap PLTS")) ? lay.site.address : (m?.project_address || fb.docMeta.address);
   const lat = o?.weather?.latitude ?? lay?.site?.coordinates?.lat ?? -6.9614;
   const lon = o?.weather?.longitude ?? lay?.site?.coordinates?.lng ?? 110.3333;
   const utc = o?.weather?.utc_offset_h ?? 7;
@@ -149,7 +149,7 @@ export default function ProductionReport({ data, projectId, project, yieldData }
                 <KV k="kWh/kWp" v={n(summary?.specific_yield_kwh_kwp ?? o?.specific_yield_kwh_kwp ?? fb.effectiveSpecificYield, 1)} />
                 <KV k="Export Mode" v={result ? exportModeLabel((result.input as any)?.export_limitation_mode) : "Bebas Ekspor (Net-Metering / PLN)"} />
                 <KV k="Weather Dataset" v={sourceLabel(result) !== DASH ? sourceLabel(result) : fb.conditionSet.weatherDataset} />
-                <KV k="Simulator Version" v={text(result?.engine_version ? `Helio engine v${result.engine_version}` : "SolarApp Integrated Engine v2.4 (NASA POWER & IEC 61724)")} />
+                <KV k="Simulator Version" v={text(result?.engine_version ? `SolarApp Engine Studio v${result.engine_version}` : "SolarApp Integrated Engine v2.4 (NASA POWER & IEC 61724)")} />
               </tbody></table>
             </Card>
             <Card title="Project Location" icon="⌖">
@@ -201,7 +201,7 @@ export default function ProductionReport({ data, projectId, project, yieldData }
             </Card>
             <Card title="Condition Set">
               <table className="prd-table"><tbody>
-                <KV k="Description" v={text(result?.condition_set_id ? "Condition Set (Helio)" : fb.conditionSet.description)} />
+                <KV k="Description" v={text(result?.condition_set_id ? "Condition Set (SolarApp Engine Studio)" : fb.conditionSet.description)} />
                 <KV k="Weather Dataset" v={sourceLabel(result) !== DASH ? sourceLabel(result) : fb.conditionSet.weatherDataset} />
                 <KV k="Solar Angle Location" v={cs ? (cs.solar_angle_location === "weather" ? "Weather file Lat/Lng" : "Project Lat/Lng") : fb.conditionSet.solarAngleLocation} />
                 <KV k="Transposition Model" v={cs ? ({ perez: "Perez Model", hay_davies: "Hay-Davies Model", isotropic: "Isotropic Model" } as any)[cs.transposition] ?? cs.transposition : fb.conditionSet.transposition} />
@@ -301,23 +301,203 @@ export default function ProductionReport({ data, projectId, project, yieldData }
               <Card title="Design Render" icon="◈">
                 <div className="prd-render">
                   {rm ? (
-                    <svg viewBox={`0 0 ${rm.w} ${rm.h}`} style={{ background: "#d7dbe0" }}>
-                      <defs><clipPath id="rpt-site-clip"><rect x="0" y="0" width={rm.w} height={rm.h} /></clipPath></defs>
+                    <svg viewBox={`0 0 ${rm.w} ${rm.h}`} style={{ background: "#0b120e" }}>
+                      <defs>
+                        <clipPath id="rpt-site-clip"><rect x="0" y="0" width={rm.w} height={rm.h} rx={Math.max(8, rm.w / 500)} /></clipPath>
+                      </defs>
                       {rm.bg && (
                         <g clipPath="url(#rpt-site-clip)">
                           <g transform={`rotate(${rm.bg.rotate}, ${rm.bg.cx}, ${rm.bg.cy})`}>
-                            <image href={rm.bg.href} x={rm.bg.cx - rm.bg.size / 2} y={rm.bg.cy - rm.bg.size / 2} width={rm.bg.size} height={rm.bg.size} preserveAspectRatio="xMidYMid meet" />
+                            <image href={rm.bg.href} x={rm.bg.cx - rm.bg.size / 2} y={rm.bg.cy - rm.bg.size / 2} width={rm.bg.size} height={rm.bg.size} preserveAspectRatio="xMidYMid meet" opacity="0.92" />
                           </g>
                         </g>
                       )}
-                      {!rm.bg && <g stroke="#e5e7eb" strokeWidth={rm.w / 400}>{Array.from({ length: 20 }, (_, i) => <line key={i} x1={(rm.w / 20) * i} x2={(rm.w / 20) * i} y1="0" y2={rm.h} />)}</g>}
-                      {rm.walkways.map((w, i) => <rect key={`w${i}`} x={w.x} y={w.y} width={w.w} height={w.h} fill="#ea580c" fillOpacity="0.4" />)}
-                      {rm.obstacles.map((w, i) => <rect key={`o${i}`} x={w.x} y={w.y} width={w.w} height={w.h} fill="#ef4444" fillOpacity="0.55" />)}
-                      {rm.rects.map((r, i) => <rect key={i} x={r.x} y={r.y} width={r.w} height={r.h} fill="#3b3bdc" stroke="#1e1b9c" strokeWidth={Math.max(8, rm.w / 2500)} />)}
+                      {!rm.bg && (
+                        <g stroke="#1a2e22" strokeWidth={rm.w / 400}>
+                          {Array.from({ length: 20 }, (_, i) => <line key={i} x1={(rm.w / 20) * i} x2={(rm.w / 20) * i} y1="0" y2={rm.h} />)}
+                        </g>
+                      )}
+
+                      {/* 1. Site Boundary Polygon (Dashed Green) */}
+                      {rm.siteBoundary && (
+                        <rect
+                          x={rm.w * 0.015}
+                          y={rm.h * 0.015}
+                          width={rm.w * 0.97}
+                          height={rm.h * 0.97}
+                          fill={rm.bg ? "none" : "#0d1a12"}
+                          stroke="#22c55e"
+                          strokeWidth={Math.max(12, rm.w / 400)}
+                          strokeDasharray={`${Math.max(24, rm.w / 200)} ${Math.max(16, rm.w / 350)}`}
+                          rx={Math.max(10, rm.w / 600)}
+                        />
+                      )}
+
+                      {/* 2. Walkways (Orange Corridors) */}
+                      {rm.walkways.map((w, i) => (
+                        <g key={`w${i}`}>
+                          <rect
+                            x={w.x}
+                            y={w.y}
+                            width={w.w}
+                            height={w.h}
+                            fill="#ea580c"
+                            fillOpacity="0.55"
+                            stroke="#f97316"
+                            strokeWidth={Math.max(8, rm.w / 700)}
+                            strokeDasharray={`${Math.max(16, rm.w / 300)} ${Math.max(12, rm.w / 500)}`}
+                          />
+                          <text
+                            x={w.x + w.w / 2}
+                            y={w.y + w.h / 2}
+                            textAnchor="middle"
+                            dominantBaseline="central"
+                            fill="#fed7aa"
+                            fontSize={Math.max(16, rm.w / 65)}
+                            fontWeight="800"
+                            letterSpacing="1"
+                          >
+                            {w.label || "Walkway 2m"}
+                          </text>
+                        </g>
+                      ))}
+
+                      {/* 3. Obstacles (Red Keepouts) */}
+                      {rm.obstacles.map((o, i) => (
+                        <g key={`o${i}`}>
+                          <rect
+                            x={o.x}
+                            y={o.y}
+                            width={o.w}
+                            height={o.h}
+                            fill="#ef4444"
+                            fillOpacity="0.5"
+                            stroke="#f87171"
+                            strokeWidth={Math.max(8, rm.w / 700)}
+                            strokeDasharray={`${Math.max(16, rm.w / 300)} ${Math.max(12, rm.w / 500)}`}
+                          />
+                          {o.label && (
+                            <text
+                              x={o.x + o.w / 2}
+                              y={o.y + o.h / 2}
+                              textAnchor="middle"
+                              dominantBaseline="central"
+                              fill="#fecaca"
+                              fontSize={Math.max(12, rm.w / 80)}
+                              fontWeight="700"
+                            >
+                              {o.label}
+                            </text>
+                          )}
+                        </g>
+                      ))}
+
+                      {/* 4. Field Segment Outlines */}
+                      {rm.segments.map((seg) => {
+                        if (!seg.polygon || seg.polygon.length < 3) return null;
+                        const ptsStr = seg.polygon.map((p) => `${p.x},${p.y}`).join(" ");
+                        return (
+                          <polygon
+                            key={seg.id}
+                            points={ptsStr}
+                            fill={seg.color}
+                            fillOpacity="0.14"
+                            stroke={seg.color}
+                            strokeWidth={Math.max(8, rm.w / 1000)}
+                            strokeDasharray={`${Math.max(20, rm.w / 250)} ${Math.max(14, rm.w / 400)}`}
+                          />
+                        );
+                      })}
+
+                      {/* 5. Authentic PV Modules (Aluminum Frame + Silicon Cell + Silver Busbars) */}
+                      {rm.rects.map((r, i) => {
+                        const framePad = Math.max(60, r.w * 0.04);
+                        return (
+                          <g key={i}>
+                            {/* Outer Aluminum Frame with Segment Color Accent */}
+                            <rect
+                              x={r.x}
+                              y={r.y}
+                              width={r.w}
+                              height={r.h}
+                              rx={Math.max(2, r.w * 0.02)}
+                              fill="#0f172a"
+                              stroke={r.color}
+                              strokeWidth={Math.max(6, rm.w / 2200)}
+                            />
+                            {/* Photovoltaic Deep Blue Silicon Cell */}
+                            <rect
+                              x={r.x + framePad}
+                              y={r.y + framePad}
+                              width={Math.max(1, r.w - framePad * 2)}
+                              height={Math.max(1, r.h - framePad * 2)}
+                              fill="#1e3a8a"
+                              opacity="0.94"
+                            />
+                            {/* Silver Central Busbars */}
+                            <line
+                              x1={r.x + r.w / 2}
+                              y1={r.y + framePad}
+                              x2={r.x + r.w / 2}
+                              y2={r.y + r.h - framePad}
+                              stroke="#93c5fd"
+                              strokeWidth={Math.max(2, rm.w / 7000)}
+                              strokeOpacity="0.75"
+                            />
+                            <line
+                              x1={r.x + framePad}
+                              y1={r.y + r.h / 2}
+                              x2={r.x + r.w - framePad}
+                              y2={r.y + r.h / 2}
+                              stroke="#93c5fd"
+                              strokeWidth={Math.max(2, rm.w / 7000)}
+                              strokeOpacity="0.6"
+                            />
+                          </g>
+                        );
+                      })}
+
+                      {/* 6. Clean Segment Badges (Seg A, Seg B...) */}
+                      {rm.segments.map((seg) => {
+                        if (!seg.polygon || seg.polygon.length === 0) return null;
+                        const minX = Math.min(...seg.polygon.map((p) => p.x));
+                        const minY = Math.min(...seg.polygon.map((p) => p.y));
+                        const badgeW = Math.max(7000, rm.w / 18);
+                        const badgeH = Math.max(2200, rm.h / 45);
+                        const badgeX = minX;
+                        const badgeY = Math.max(0, minY - badgeH - 300);
+                        const cleanName = seg.name.replace(/Segment\s+/i, "Seg ").split("·")[0].trim();
+                        return (
+                          <g key={`badge-${seg.id}`} transform={`translate(${badgeX}, ${badgeY})`}>
+                            <rect
+                              width={badgeW}
+                              height={badgeH}
+                              rx={Math.max(6, badgeH * 0.22)}
+                              fill="#0b1322f5"
+                              stroke={seg.color}
+                              strokeWidth={Math.max(5, rm.w / 2800)}
+                            />
+                            <text
+                              x={badgeW / 2}
+                              y={badgeH / 2}
+                              textAnchor="middle"
+                              dominantBaseline="central"
+                              fill="#ffffff"
+                              fontSize={Math.max(12, badgeH * 0.48)}
+                              fontWeight="800"
+                            >
+                              {cleanName}
+                            </text>
+                          </g>
+                        );
+                      })}
+
                       {!rm.bg && <text x={rm.w / 2} y={rm.h - rm.h * 0.03} textAnchor="middle" fontSize={rm.w / 40} fill="#64748b">Citra satelit belum diambil</text>}
-                      <g transform={`translate(${rm.w * 0.95} ${rm.h * 0.93})`} fill="none" stroke="#16a34a" strokeWidth={rm.w / 400}>
+                      
+                      {/* North Arrow and Scale */}
+                      <g transform={`translate(${rm.w * 0.94} ${rm.h * 0.92})`} fill="none" stroke="#22c55e" strokeWidth={Math.max(8, rm.w / 400)}>
                         <path d={`M0 ${rm.w / 30} L0 ${-rm.w / 30} M${-rm.w / 70} ${-rm.w / 60} L0 ${-rm.w / 30} L${rm.w / 70} ${-rm.w / 60}`} />
-                        <text x={rm.w / 60} y={-rm.w / 36} fontSize={rm.w / 50} fill="#16a34a" stroke="none">N</text>
+                        <text x={rm.w / 60} y={-rm.w / 36} fontSize={Math.max(16, rm.w / 50)} fill="#22c55e" stroke="none" fontWeight="800">N</text>
                       </g>
                     </svg>
                   ) : <div style={{ padding: 40, textAlign: "center", color: "#64748b" }}>{DASH} layout belum dimuat</div>}

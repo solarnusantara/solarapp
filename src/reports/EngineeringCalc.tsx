@@ -36,7 +36,7 @@ export default function EngineeringCalc({ data, projectId, project, yieldData }:
   const dc = p?.summary?.nameplate_dc_kwp ?? o?.dc_capacity_kwp ?? fb.effectiveDc;
   const ac = p?.summary?.nameplate_ac_kw ?? o?.ac_capacity_kw ?? fb.effectiveAc;
   const variant = `${n(dc, 0, { group: false })} kWp`;
-  const ver = result?.engine_version ? `Helio engine v${result.engine_version}` : "SolarApp Integrated Engine v2.4 (NASA POWER & IEC 61724)";
+  const ver = result?.engine_version ? `SolarApp Engine Studio v${result.engine_version}` : "SolarApp Integrated Engine v2.4 (NASA POWER & IEC 61724)";
   const simDate = dateTime(result?.ran_at) !== DASH ? dateTime(result?.ran_at) : `${fb.docMeta.date} 10:15 WIB`;
   const ords = orientations(result, lay).length ? orientations(result, lay) : [{ id: "1", tilt: 10, azimuth: 0, modules: fb.moduleSummary.count, dcKwp: fb.effectiveDc }];
 
@@ -133,7 +133,7 @@ export default function EngineeringCalc({ data, projectId, project, yieldData }:
             <Row k="Planes" v={`${ords.length} orientation${ords.length > 1 ? "s" : ""}`} />
             <Row k="Tilts/azimuths" v={<>{ords.map((x, i) => <div key={i}>{n(x.tilt, 0, { group: false })} / {isNum(x.azimuth) ? n(azP(x.azimuth), 0, { group: false }) : 0} °</div>)}</>} />
           </div>
-          <div><h5>Near Shadings</h5><div>{text(cs ? "3D scene (Helio engine)" : "3D scene (CAD Rooftop Layout & Obstacles)")}</div></div>
+          <div><h5>Near Shadings</h5><div>{text(cs ? "3D scene (SolarApp Engine Studio)" : "3D scene (CAD Rooftop Layout & Obstacles)")}</div></div>
           <div><h5>User's needs</h5><div>{needsTxt}</div><div>Export mode: {exportTxt}</div></div>
         </div>
         <div className="sim-cols" style={{ gridTemplateColumns: "1fr 1fr", marginTop: 8 }}>
@@ -230,7 +230,7 @@ export default function EngineeringCalc({ data, projectId, project, yieldData }:
               <Row k="IAM" v={cs ? cs.iam : "Ashrae (b0=0.05)"} />
             </div>
             <div><h5>Horizon</h5><Row k="Average Height" v={isNum(horizonAverage(horizon)) ? `${n(horizonAverage(horizon), 1)} °` : "0.0 °"} /></div>
-            <div><h5>Near Shadings</h5><div>{text(cs ? "3D scene (Helio engine)" : "3D scene (CAD Rooftop Layout & Obstacles)")}</div></div>
+            <div><h5>Near Shadings</h5><div>{text(cs ? "3D scene (SolarApp Engine Studio)" : "3D scene (CAD Rooftop Layout & Obstacles)")}</div></div>
             <div><h5>User's needs</h5><div>{needsTxt}</div><div>Export mode: {exportTxt}</div></div>
           </div>
         </Box>

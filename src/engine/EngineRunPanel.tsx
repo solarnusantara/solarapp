@@ -1,5 +1,5 @@
 // Panel rendered in PVLayout steps 4/5: economic inputs, equipment picker, Asumsi form and the
-// "Hitung (Helio)" button with status/warnings. State lives in the parent (PVLayout owns persistence).
+// "Hitung (SolarApp Engine)" button with status/warnings. State lives in the parent (PVLayout owns persistence).
 import { useCallback, useEffect, useRef, useState } from "react";
 import ComponentPicker, { type PickerValue } from "./ComponentPicker";
 import ConditionForm from "./ConditionForm";
@@ -61,9 +61,9 @@ export default function EngineRunPanel({ projectId, projectName, layout, inputs,
   return (
     <div style={{ padding: 4 }}>
       <div style={{ ...card, marginTop: 0 }}>
-        <b>Engine Helio</b>
+        <b>SolarApp Engine Studio</b>
         {unavailable && <div style={{ color: "#fbbf24", marginTop: 4 }}>{UNAVAILABLE_MESSAGE}. Mode lokal tetap bisa dipakai (kalkulator cepat).</div>}
-        {eng.status === "unlinked" && <div style={{ fontSize: 12, marginTop: 4 }}>Proyek ini belum terhubung. Tautan dibuat otomatis saat Hitung pertama.</div>}
+        {eng.status === "unlinked" && <div style={{ fontSize: 12, marginTop: 4 }}>Proyek siap terhubung ke SolarApp Engine Studio. Perhitungan otomatis aktif.</div>}
         <div style={{ fontSize: 12, marginTop: 4 }}>
           Layout: {ad.moduleCount} modul{ad.moduleWp ? ` × ${ad.moduleWp} Wp = ${((ad.moduleCount * ad.moduleWp) / 1000).toFixed(2)} kWp` : ""} · {ad.scene.field_segments.length} segmen · {ad.scene.keepouts.length} keepout
         </div>
@@ -104,7 +104,7 @@ export default function EngineRunPanel({ projectId, projectName, layout, inputs,
       )}
 
       {section !== "assumptions" && (
-        <div style={card}><b>Peralatan (library Helio)</b>
+        <div style={card}><b>Peralatan (Library SolarApp)</b>
           <div style={{ display: "grid", gap: 12, gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", marginTop: 6 }}>
             <div><div style={{ fontSize: 12, marginBottom: 4 }}>Modul PV</div><ComponentPicker kind="module" value={modPick} onChange={setModPick} /></div>
             <div><div style={{ fontSize: 12, marginBottom: 4 }}>Inverter</div><ComponentPicker kind="inverter" value={invPick} onChange={setInvPick} /></div>
@@ -125,7 +125,7 @@ export default function EngineRunPanel({ projectId, projectName, layout, inputs,
               </select></label>
             {inputs.string_length_method === "manual" && (<>
               <NumIn label="Modul per string — minimum" value={inputs.string_len_min} onChange={(v) => patch({ string_len_min: v })} />
-              <NumIn label="Modul per string — maksimum" value={inputs.string_len_max} onChange={(v) => patch({ string_len_max: v })} hint="Helio tetap memeriksa batas tegangan MPPT/Vdc dan melaporkan pelanggaran" />
+              <NumIn label="Modul per string — maksimum" value={inputs.string_len_max} onChange={(v) => patch({ string_len_max: v })} hint="SolarApp Engine tetap memeriksa batas tegangan MPPT/Vdc dan melaporkan pelanggaran" />
               <label style={{ display: "grid", gap: 2, fontSize: 12 }}>Sumber panjang string
                 <input style={inp} value={inputs.string_len_source ?? ""} onChange={(e) => patch({ string_len_source: e.target.value })} placeholder="mis. PVsyst PLTS-MAS-E-CS-001-00: 15 string × 20" /></label>
             </>)}
@@ -147,8 +147,8 @@ export default function EngineRunPanel({ projectId, projectName, layout, inputs,
       )}
 
       <div style={{ ...card, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-        <button className="primary-button" disabled={busy || !projectId} onClick={() => void eng.run()}>{busy ? "Menghitung…" : "Hitung (Helio)"}</button>
-        {section !== "assumptions" && <button className="secondary-button" disabled={busy || !projectId} onClick={() => void eng.buildCircuit()}>Buat sirkuit (Helio)</button>}
+        <button className="primary-button" disabled={busy || !projectId} onClick={() => void eng.run()}>{busy ? "Menghitung…" : "Hitung (SolarApp Engine)"}</button>
+        {section !== "assumptions" && <button className="secondary-button" disabled={busy || !projectId} onClick={() => void eng.buildCircuit()}>Buat sirkuit (SolarApp)</button>}
         {busy && <button className="secondary-button" onClick={eng.cancel}>Batal</button>}
         {eng.step && <span style={{ fontSize: 12 }}>{eng.step}</span>}
         {!projectId && <span style={{ fontSize: 12, color: "#fbbf24" }}>Simpan proyek di server dulu untuk memakai engine.</span>}

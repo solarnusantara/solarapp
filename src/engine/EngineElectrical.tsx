@@ -42,7 +42,7 @@ export function EngineSwitch({ projectId, quick, engine }: { projectId?: string 
     <>
       <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
         <button className={mode === "quick" ? "primary-button" : "secondary-button"} onClick={() => setMode("quick")}>Kalkulator cepat</button>
-        <button className={mode === "engine" ? "primary-button" : "secondary-button"} onClick={() => setMode("engine")}>Engine Helio</button>
+        <button className={mode === "engine" ? "primary-button" : "secondary-button"} onClick={() => setMode("engine")}>SolarApp Engine</button>
       </div>
       {mode === "quick" ? quick : engine(designId, state)}
     </>
@@ -69,7 +69,7 @@ export function useDesignReport<T>(designId: string, name: string, query: Record
 }
 
 function Status({ loading, err }: { loading: boolean; err: string | null }) {
-  if (loading) return <div style={{ fontSize: 12 }}>Memuat dari Helio…</div>;
+  if (loading) return <div style={{ fontSize: 12 }}>Memuat dari SolarApp Engine…</div>;
   if (err) return <div style={{ fontSize: 12, color: err.startsWith("Sirkuit belum") ? "#fbbf24" : "#f87171" }}>{err}</div>;
   return null;
 }
@@ -118,7 +118,7 @@ export function StringingPanel({ designId }: { designId: string }) {
   const { data, err, loading } = useDesignReport<{ reports?: StringingReport[]; stringing?: StringingReport[] }>(designId, "stringing");
   const reports = data?.reports ?? data?.stringing ?? [];
   return (
-    <Section title="Stringing (Helio)">
+    <Section title="Stringing (SolarApp Engine)">
       <Status loading={loading} err={err} />
       {reports.map((r, i) => (
         <div key={i} style={{ marginBottom: 12 }}>
@@ -140,7 +140,7 @@ export function StringingPanel({ designId }: { designId: string }) {
 export function WireSchedulePanel({ designId }: { designId: string }) {
   const { data, err, loading } = useDesignReport<WireSchedule>(designId, "wire-schedule");
   return (
-    <Section title="Jadwal kabel (Helio)">
+    <Section title="Jadwal Kabel (SolarApp Engine)">
       <Status loading={loading} err={err} />
       {data && (
         <>
@@ -164,7 +164,7 @@ export function ProtectionPanel({ designId }: { designId: string }) {
     ["Arus hubung singkat", "short-circuit"], ["Pembumian", "earthing"], ["Proteksi petir", "lightning"],
     ["Koordinasi proteksi", "protection-coordination"], ["Kepatuhan", "compliance"],
   ];
-  return <>{parts.map(([t, n]) => <ReportBlock key={n} title={`${t} (Helio)`} designId={designId} name={n} />)}</>;
+  return <>{parts.map(([t, n]) => <ReportBlock key={n} title={`${t} (SolarApp Engine)`} designId={designId} name={n} />)}</>;
 }
 function ReportBlock({ title, designId, name }: { title: string; designId: string; name: string }) {
   const { data, err, loading } = useDesignReport<unknown>(designId, name);
@@ -179,12 +179,12 @@ export function DrawingsPanel({ designId }: { designId: string }) {
   ];
   const [svgOk, setSvgOk] = useState(true);
   return (
-    <Section title="Gambar dari Helio">
+    <Section title="Diagram Sirkuit (SolarApp Engine)">
       <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
         {links.map(([t, p]) => <a key={p} className="secondary-button" style={{ textDecoration: "none" }} href={designFileUrl(designId, p)} target="_blank" rel="noreferrer" download>{t}</a>)}
       </div>
       <div style={{ fontSize: 11, opacity: 0.7, marginTop: 6 }}>Bila sirkuit belum dibuat Helio menjawab 409: buat sirkuit dulu di PV Layout (langkah Electrical). DXF peta string butuh geometri.</div>
-      {svgOk && <img alt="Single line diagram dari Helio" src={designFileUrl(designId, "sld/svg")} onError={() => setSvgOk(false)} style={{ maxWidth: "100%", background: "#fff", marginTop: 8, borderRadius: 6 }} />}
+      {svgOk && <img alt="Single line diagram dari SolarApp Engine" src={designFileUrl(designId, "sld/svg")} onError={() => setSvgOk(false)} style={{ maxWidth: "100%", background: "#fff", marginTop: 8, borderRadius: 6 }} />}
     </Section>
   );
 }

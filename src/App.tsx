@@ -277,7 +277,6 @@ export default function App() {
     { label: t.tools, items: [
       { id: "layout" as const, label: t.layout },
       { id: "layout3d" as const, label: "PV Layout 3D" },
-      { id: "electrical" as const, label: t.electrical },
       { id: "cable" as const, label: "Cable Sizing" },
       { id: "protection" as const, label: lang === "id" ? "Proteksi & Grounding" : "Protection & Grounding" },
       { id: "structure" as const, label: t.structure },

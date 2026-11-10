@@ -32,7 +32,7 @@ export function SourceNotice({ data }: { data: ReportData }) {
             <strong style={{ color: "#a7f3d0", fontSize: 13 }}>Mode Estimasi Engineering Terintegrasi (NASA POWER 25-Year Climatology & IEC 61724)</strong>
             <br />
             <span style={{ fontSize: 11, color: "#d1fae5" }}>
-              Data otomatis dikalkulasi dari desain CAD tapak PLTS (1.200 modul · 744,00 kWp DC · 600 kW AC). Anda juga dapat menjalankan simulasi awan Helio 8.760 jam di PV Layout kapan saja.
+              Data otomatis dikalkulasi dari desain CAD tapak PLTS (1.200 modul · 744,00 kWp DC · 600 kW AC). Anda juga dapat menjalankan simulasi awan SolarApp Engine Studio 8.760 jam di PV Layout kapan saja.
             </span>
           </span>
         </div>
@@ -51,7 +51,7 @@ export function SourceNotice({ data }: { data: ReportData }) {
             <strong style={{ color: "#a7f3d0", fontSize: 13 }}>Mode Estimasi Engineering Terintegrasi (NASA POWER 25-Year Climatology & IEC 61724)</strong>
             <br />
             <span style={{ fontSize: 11, color: "#d1fae5" }}>
-              Data otomatis dikalkulasi dari desain CAD tapak PLTS (1.200 modul · 744,00 kWp DC · 600 kW AC). Anda juga dapat menjalankan simulasi awan Helio 8.760 jam di PV Layout kapan saja.
+              Data otomatis dikalkulasi dari desain CAD tapak PLTS (1.200 modul · 744,00 kWp DC · 600 kW AC). Anda juga dapat menjalankan simulasi awan SolarApp Engine Studio 8.760 jam di PV Layout kapan saja.
             </span>
           </span>
         </div>

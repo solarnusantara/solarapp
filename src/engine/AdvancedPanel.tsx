@@ -95,7 +95,7 @@ export default function AdvancedPanel({
       const designId = state.helio_design_id;
       if (!designId) {
         setShadeStatus("error");
-        setShadeError("Proyek belum terhubung ke Helio. Jalankan Hitung (Helio) di bagian simulasi di bawah, lalu coba lagi.");
+        setShadeError("Proyek belum terhubung ke SolarApp Engine Studio. Jalankan Hitung di bagian simulasi, lalu coba lagi.");
         return;
       }
       const iso = await getIsoShading(designId, { azStep: 5, elStep: 2 });
@@ -166,7 +166,7 @@ export default function AdvancedPanel({
               <Layers size={15} style={{ color: "#b8f36b" }} /> Module Shading Optimization
             </div>
             <div style={small}>
-              Menghitung iso-shading geometris Helio dari scene tersimpan. Ini bukan simulasi energi tahunan.
+              Menghitung iso-shading geometris SolarApp Engine Studio dari scene tersimpan. Ini bukan simulasi energi tahunan.
             </div>
           </div>
           <span style={{ fontSize: 10.5, fontWeight: 800, color: statusColor, border: `1px solid ${statusColor}55`, background: `${statusColor}16`, borderRadius: 5, padding: "3px 8px" }}>
@@ -254,7 +254,7 @@ export default function AdvancedPanel({
               </div>
               {run.summary.levels.length > 0 && (
                 <div style={{ ...small, marginTop: 6 }}>
-                  Level kontur (fraksi Helio): {run.summary.levels.map((l) => l.toFixed(3)).join(", ")}
+                  Level kontur: {run.summary.levels.map((l) => l.toFixed(3)).join(", ")}
                 </div>
               )}
               {run.summary.warnings.length > 0 && (

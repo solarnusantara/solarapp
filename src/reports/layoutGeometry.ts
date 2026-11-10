@@ -4,12 +4,21 @@ import type { SavedLayout } from "../engine/layoutStore";
 import { isNum } from "./format";
 
 export interface RenderRect { x: number; y: number; w: number; h: number; color: string }
+export interface RenderSegment {
+  id: string;
+  name: string;
+  color: string;
+  polygon?: Array<{ x: number; y: number }>;
+  panels: Array<{ x: number; y: number; w: number; h: number; color: string }>;
+}
 export interface RenderModel {
   w: number; h: number;
   bg: { href: string; cx: number; cy: number; size: number; rotate: number } | null;
   rects: RenderRect[];
-  obstacles: Array<{ x: number; y: number; w: number; h: number }>;
-  walkways: Array<{ x: number; y: number; w: number; h: number }>;
+  segments: RenderSegment[];
+  obstacles: Array<{ id?: string; x: number; y: number; w: number; h: number; label?: string }>;
+  walkways: Array<{ id?: string; x: number; y: number; w: number; h: number; label?: string }>;
+  siteBoundary: { x: number; y: number; w: number; h: number } | null;
   moduleCount: number;
 }
 
@@ -39,7 +48,26 @@ export function renderModel(l: SavedLayout | null | undefined): RenderModel | nu
   if (!l) return null;
   const size = canvasSize(l);
   if (!size) return null;
-  const rects = allPanels(l).map((p) => ({ x: p.x, y: p.y, w: p.w, h: p.h, color: p.color }));
+
+  const rawSegs = ((l.segments ?? []) as any[]).filter((s) => s.visible !== false);
+  const segments: RenderSegment[] = rawSegs.map((s) => ({
+    id: s.id,
+    name: s.name || "Segment",
+    color: s.color || "#38bdf8",
+    polygon: s.polygon,
+    panels: (s.panels ?? []).map((p: any) => ({
+      x: p.x,
+      y: p.y,
+      w: p.w,
+      h: p.h,
+      color: s.color || "#38bdf8",
+    })),
+  }));
+
+  const rects: RenderRect[] = segments.length > 0
+    ? segments.flatMap((s) => s.panels)
+    : allPanels(l).map((p) => ({ x: p.x, y: p.y, w: p.w, h: p.h, color: p.color }));
+
   let bg: RenderModel["bg"] = null;
   if (l.backgroundImage) {
     const rot = l.site?.rotationDeg || 0;
@@ -47,12 +75,15 @@ export function renderModel(l: SavedLayout | null | undefined): RenderModel | nu
     const spanM = l.site?.imageSpanM ? l.site.imageSpanM * 1.25 : (Math.hypot(size.w, size.h) / 1000) * 1.35;
     bg = { href: l.backgroundImage, cx: size.w / 2, cy: size.h / 2, size: spanM * 1000, rotate: norm > 180 ? norm - 360 : norm };
   }
+
   return {
     ...size,
     bg,
     rects,
-    obstacles: (l.obstacles ?? []).map((o) => ({ x: o.x, y: o.y, w: o.w, h: o.h })),
-    walkways: (l.walkways ?? []).map((o) => ({ x: o.x, y: o.y, w: o.w, h: o.h })),
+    segments,
+    obstacles: (l.obstacles ?? []).map((o: any) => ({ id: o.id, x: o.x, y: o.y, w: o.w, h: o.h, label: o.label })),
+    walkways: (l.walkways ?? []).map((w: any) => ({ id: w.id, x: w.x, y: w.y, w: w.w, h: w.h, label: w.label || "Walkway 2m" })),
+    siteBoundary: { x: 0, y: 0, w: size.w, h: size.h },
     moduleCount: rects.length,
   };
 }

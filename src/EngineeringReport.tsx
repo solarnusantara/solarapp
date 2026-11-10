@@ -1040,12 +1040,17 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
   }, [activeProj?.id, projectId, remoteLayout]);
 
   // Project defaults based on selection and saved layout
-  const isCikarang = activeProj?.id === "proj-cikarang-500kwp";
+  const isMas = (projectId?.includes("mas-silueta") || activeProj?.id?.includes("mas-silueta") || activeProj?.name?.includes("Mas Silueta")) ?? false;
+  const isCikarang = activeProj?.id === "proj-cikarang-500kwp" || (activeProj?.name?.includes("Cikarang") ?? false);
+  const isKarawang = activeProj?.id === "proj-karawang-2mwp" || (activeProj?.name?.includes("Karawang") ?? false);
+
   const siteCoords = savedLayout?.site?.coordinates;
   const siteAddress = savedLayout?.site?.address;
-  const defaultCoords = isCikarang
-    ? { lat: -6.3625, lng: 107.1689, name: "GIIC Cikarang, Jawa Barat" }
-    : { lat: -6.36838, lng: 107.19759, name: "Kawasan Industri KIIC Karawang (Lahan Ground-Mounted), Jawa Barat" };
+  const defaultCoords = isMas
+    ? { lat: -6.961426, lng: 110.333304, name: "Kawasan Industri Candi Blok 10A No. 1, Ngaliyan, Semarang, Jawa Tengah" }
+    : isCikarang
+      ? { lat: -6.3625, lng: 107.1689, name: "GIIC Cikarang, Jawa Barat" }
+      : { lat: -6.36838, lng: 107.19759, name: "Kawasan Industri KIIC Karawang (Lahan Ground-Mounted), Jawa Barat" };
 
   const initialCoords = (siteCoords?.lat && siteCoords?.lng)
     ? {
@@ -1055,9 +1060,13 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
       }
     : defaultCoords;
 
-  const defaultClient = isCikarang
-    ? "PT Cikarang Multi Industri Tbk (GIIC Cikarang)"
-    : "PT Kawasan Industri Karawang (KIIC)";
+  const defaultClient = isMas
+    ? "PT Mas Silueta Indonesia"
+    : isCikarang
+      ? "PT Cikarang Multi Industri Tbk (GIIC Cikarang)"
+      : isKarawang
+        ? "PT Kawasan Industri Karawang (KIIC)"
+        : (activeProj?.name ? `PT ${activeProj.name}` : "PT Mas Silueta Indonesia");
 
   const [client, setClient] = useState(defaultClient);
   const [prepared, setPrepared] = useState("Tim Engineering SolarApp");
@@ -1207,12 +1216,16 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
 
   // Update when project or savedLayout changes
   useEffect(() => {
-    const isCik = activeProj?.id === "proj-cikarang-500kwp";
+    const isMasSil = (projectId?.includes("mas-silueta") || activeProj?.id?.includes("mas-silueta") || activeProj?.name?.includes("Mas Silueta")) ?? false;
+    const isCik = activeProj?.id === "proj-cikarang-500kwp" || (activeProj?.name?.includes("Cikarang") ?? false);
+    const isKar = activeProj?.id === "proj-karawang-2mwp" || (activeProj?.name?.includes("Karawang") ?? false);
     const curSiteCoords = savedLayout?.site?.coordinates;
     const curSiteAddress = savedLayout?.site?.address;
-    const baseCoords = isCik
-      ? { lat: -6.3625, lng: 107.1689, name: "GIIC Cikarang, Jawa Barat" }
-      : { lat: -6.36838, lng: 107.19759, name: "Kawasan Industri KIIC Karawang (Lahan Ground-Mounted), Jawa Barat" };
+    const baseCoords = isMasSil
+      ? { lat: -6.961426, lng: 110.333304, name: "Kawasan Industri Candi Blok 10A No. 1, Ngaliyan, Semarang, Jawa Tengah" }
+      : isCik
+        ? { lat: -6.3625, lng: 107.1689, name: "GIIC Cikarang, Jawa Barat" }
+        : { lat: -6.36838, lng: 107.19759, name: "Kawasan Industri KIIC Karawang (Lahan Ground-Mounted), Jawa Barat" };
 
     const nextCoords = (curSiteCoords?.lat && curSiteCoords?.lng)
       ? {
@@ -1223,11 +1236,15 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
       : baseCoords;
 
     setCoords(nextCoords);
-    setCapacityKwp(activeProj?.capacity || (isCik ? 500 : 2000));
+    setCapacityKwp(activeProj?.capacity || (isMasSil ? 744 : isCik ? 500 : 2000));
     setClient(
-      isCik
-        ? "PT Cikarang Multi Industri Tbk (GIIC Cikarang)"
-        : "PT Kawasan Industri Karawang (KIIC)"
+      isMasSil
+        ? "PT Mas Silueta Indonesia"
+        : isCik
+          ? "PT Cikarang Multi Industri Tbk (GIIC Cikarang)"
+          : isKar
+            ? "PT Kawasan Industri Karawang (KIIC)"
+            : (activeProj?.name ? `PT ${activeProj.name}` : "PT Mas Silueta Indonesia")
     );
   }, [activeProj, savedLayout]);
 
@@ -1973,7 +1990,7 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
                 <strong style={{ color: "#dc2626" }}>{fmtNum(l.pct, 1)}%</strong>
               </div>
             ))}
-            {!reportData.result && <div>Belum dihitung — buka PV Layout lalu klik Hitung (Helio)</div>}
+            {!reportData.result && <div>Belum dihitung — buka PV Layout lalu klik Hitung (SolarApp Engine)</div>}
             <div style={{ display: "flex", justifyContent: "space-between", borderTop: "1.5px solid #0f172a", paddingTop: 3, fontWeight: 900 }}>
               <span style={{ color: "#0f172a" }}>Net Performance Ratio (PR):</span>
               <strong style={{ color: "#047857", fontSize: 9.5 }}>{fmtPct(engineOut(reportData.result)?.performance_ratio_pct, 1)}</strong>
@@ -2614,7 +2631,7 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
                 <div style={{ fontSize: 22, fontWeight: 800, color: "#10b981", margin: "6px 0 2px" }}>
                   {yieldData.carbonOffsetTons.toLocaleString()} <small style={{ fontSize: 12 }}>Ton/thn</small>
                 </div>
-                <small style={{ color: "#94a3b8", fontSize: 11, fontWeight: 600 }}>Sumber: Helio engine</small>
+                <small style={{ color: "#94a3b8", fontSize: 11, fontWeight: 600 }}>Sumber: SolarApp Engine Studio</small>
               </div>
 
               <div className="pv-card" style={{ padding: 14 }}>
@@ -2625,7 +2642,7 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
                 <div style={{ fontSize: 22, fontWeight: 800, color: "#c084fc", margin: "6px 0 2px" }}>
                   {Number.isFinite(engineOut(reportData.result)?.lcoe_idr_per_kwh) ? `Rp ${Math.round(engineOut(reportData.result).lcoe_idr_per_kwh).toLocaleString()}` : DASH} <small style={{ fontSize: 12 }}>/kWh</small>
                 </div>
-                <small style={{ color: "#94a3b8", fontSize: 11, fontWeight: 600 }}>Sumber: Helio engine</small>
+                <small style={{ color: "#94a3b8", fontSize: 11, fontWeight: 600 }}>Sumber: SolarApp Engine Studio</small>
               </div>
             </div>
           )}
@@ -2798,7 +2815,7 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
                         <strong style={{ color: "#f87171" }}>{fmtNum(l.pct, 1)}%</strong>
                       </div>
                     ))}
-                    {!reportData.result && <div style={{ color: "#cbd5e1" }}>Belum dihitung — buka PV Layout lalu klik Hitung (Helio)</div>}
+                    {!reportData.result && <div style={{ color: "#cbd5e1" }}>Belum dihitung — buka PV Layout lalu klik Hitung (SolarApp Engine)</div>}
                     <div style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", fontWeight: 700 }}>
                       <span style={{ color: "#edf5ef" }}>Total System PR Net</span>
                       <strong style={{ color: "var(--green, #b8f36b)" }}>{fmtPct(engineOut(reportData.result)?.performance_ratio_pct, 1)}</strong>

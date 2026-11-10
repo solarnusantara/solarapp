@@ -591,18 +591,38 @@ export function computeReportFallbacks(
   }
 
   // 11. Document Metadata
+  const isMasProj = projectId?.includes("mas-silueta") || project?.name?.includes("Mas Silueta");
+  const isCikProj = projectId?.includes("cikarang") || project?.name?.includes("Cikarang");
+  const isKarProj = projectId?.includes("karawang") || project?.name?.includes("Karawang");
+
+  const fallbackClient = isMasProj
+    ? "PT Mas Silueta Indonesia"
+    : isCikProj
+      ? "PT Cikarang Multi Industri Tbk (GIIC Cikarang)"
+      : isKarProj
+        ? "PT Kawasan Industri Karawang (KIIC)"
+        : (project?.name ? `PT ${project.name}` : "PT Mas Silueta Indonesia");
+
+  const fallbackAddress = isMasProj
+    ? "Kawasan Industri Candi Blok 10A No. 1, Ngaliyan, Semarang, Jawa Tengah (-6.9614, 110.3333)"
+    : isCikProj
+      ? "GIIC Cikarang, Jawa Barat (-6.3625, 107.1689)"
+      : isKarProj
+        ? "Kawasan Industri KIIC Karawang, Jawa Barat (-6.36838, 107.19759)"
+        : (lay?.site?.address || "Kompleks Atap PLTS (-6.9614, 110.3333)");
+
   const docMeta = {
-    name: (m as any)?.project_name || project?.name || (projectId?.includes("mas-silueta") ? "Mas Silueta" : "Proyek PLTS"),
+    name: (m as any)?.project_name || project?.name || (isMasProj ? "Mas Silueta" : "Proyek PLTS"),
     client:
       m?.client ||
       m?.owner_name ||
       localMeta?.client ||
-      (projectId?.includes("mas-silueta") ? "PT Kawasan Industri Karawang (KIIC)" : "PT Kawasan Industri"),
+      fallbackClient,
     address:
       m?.project_address ||
       localMeta?.project_address ||
       lay?.site?.address ||
-      "Kompleks Atap PLTS (-6.9614, 110.3333)",
+      fallbackAddress,
     epc: m?.epc_contractor || "PT Solar Nusantara Teknik",
     docNo: m?.doc_no || localMeta?.docNo || "SOLARAPP-DED-2026-001",
     rev: m?.rev || localMeta?.revNo || "REV 0 (IFC)",
