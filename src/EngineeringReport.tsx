@@ -1293,7 +1293,7 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
   }, [coords.lat, coords.lng, capacityKwp]);
 
   const maxMonthlyKwh = useMemo(() => {
-    if (!yieldData) return 1;
+    if (!yieldData || !Array.isArray(yieldData.monthly)) return 1;
     return Math.max(...yieldData.monthly.map((m) => m.monthlyEnergyKwh), 1);
   }, [yieldData]);
 
@@ -1491,7 +1491,7 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
             <span style={{ fontSize: 8, color: "#1e293b", fontWeight: 600 }}>Distribusi Musiman Berdasarkan Insolasi Harian NASA POWER 25 Tahun</span>
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(12, 1fr)", gap: 5, alignItems: "flex-end", height: 72, background: "#f8fafc", borderRadius: 4, padding: "6px 5px 3px", border: "1px solid #e2e8f0" }}>
-            {yieldData.monthly.map((m) => {
+            {Array.isArray(yieldData.monthly) && yieldData.monthly.map((m) => {
               const heightPct = Math.max(16, Math.round((m.monthlyEnergyKwh / maxMonthlyKwh) * 100));
               const mwh = (m.monthlyEnergyKwh / 1000).toFixed(1);
               return (
@@ -1521,7 +1521,7 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
               </tr>
             </thead>
             <tbody>
-              {yieldData.monthly.map((m, idx) => (
+              {Array.isArray(yieldData.monthly) && yieldData.monthly.map((m, idx) => (
                 <tr key={m.month} style={{ background: idx % 2 === 0 ? "#ffffff" : "#f1f5f9", textAlign: "center", borderBottom: "1px solid #e2e8f0" }}>
                   <td style={{ padding: "3.5px 6px", textAlign: "left", fontWeight: 800, color: "#0f172a" }}>{m.month}</td>
                   <td style={{ padding: "3.5px 6px", fontWeight: 600, color: "#0f172a" }}>{m.ghi.toFixed(2)}</td>
@@ -2725,7 +2725,7 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
                   border: "1px solid #142218",
                 }}
               >
-                {yieldData.monthly.map((m) => {
+                {Array.isArray(yieldData.monthly) && yieldData.monthly.map((m) => {
                   const heightPct = Math.max(18, Math.round((m.monthlyEnergyKwh / maxMonthlyKwh) * 100));
                   const mwh = (m.monthlyEnergyKwh / 1000).toFixed(1);
                   return (
@@ -2820,7 +2820,7 @@ export default function EngineeringReport({ lang = "id", projectId = null, proje
                     </tr>
                   </thead>
                   <tbody>
-                    {yieldData.monthly.map((m) => (
+                    {Array.isArray(yieldData.monthly) && yieldData.monthly.map((m) => (
                       <tr key={m.month} style={{ borderBottom: "1px solid #1e293b" }}>
                         <td style={{ fontWeight: 700, color: "#f8fafc", padding: "6px 8px" }}>{m.month}</td>
                         <td style={{ color: "#e2e8f0", padding: "6px 8px", textAlign: "center", fontWeight: 600 }}>{m.ghi.toFixed(2)}</td>

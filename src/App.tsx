@@ -15,6 +15,7 @@ import MountingDesign from "./MountingDesign";
 import SurveyReport from "./SurveyReport";
 import EngineeringReport from "./EngineeringReport";
 import ComponentLibrary from "./ComponentLibrary";
+import ErrorBoundary from "./ErrorBoundary";
 import { EngineBadge, EngineSwitch, StringingPanel, WireSchedulePanel, ProtectionPanel, DrawingsPanel } from "./engine/EngineElectrical";
 import BOQ from "./BOQ";
 import {
@@ -713,7 +714,9 @@ export default function App() {
           ) : active === "survey" ? (
             <SurveyReport lang={lang} />
           ) : active === "report" ? (
-            <EngineeringReport lang={lang} projectId={activeProject?.id} project={activeProject} />
+            <ErrorBoundary fallbackTitle="Kendala Memuat Laporan Engineering">
+              <EngineeringReport lang={lang} projectId={activeProject?.id} project={activeProject} />
+            </ErrorBoundary>
           ) : active === "components" ? (
             <ComponentLibrary
               lang={lang}
