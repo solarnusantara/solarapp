@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+import { createRendererSafe, releaseRenderer, WebGLUnavailable } from "./webglSafe";
 import {
   Sun,
   Zap,
@@ -142,6 +143,7 @@ export function Report3DViewport({
   const controlsRef = useRef<OrbitControls | null>(null);
   const [hour, setHour] = useState(defaultHour);
   const [cameraPreset, setCameraPreset] = useState<"iso" | "top">("iso");
+  const [glFailed, setGlFailed] = useState(false);
 
   const effectiveRoof3d = useMemo(() => {
     if (roof3dConfig) return roof3dConfig;
@@ -198,10 +200,15 @@ export function Report3DViewport({
     const viewDist = span * 1.25 + 6;
 
     // High quality renderer
-    const renderer = new THREE.WebGLRenderer({
+    const renderer = createRendererSafe({
       antialias: true,
       preserveDrawingBuffer: true,
     });
+    if (!renderer) {
+      cameraRef.current = null;
+      setGlFailed(true);
+      return;
+    }
     renderer.setSize(width, heightPx);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     renderer.shadowMap.enabled = true;
@@ -763,7 +770,7 @@ export function Report3DViewport({
       window.removeEventListener("resize", handleResize);
       cancelAnimationFrame(animId);
       controls.dispose();
-      renderer.dispose();
+      releaseRenderer(renderer);
       cameraRef.current = null;
       controlsRef.current = null;
       if (mount.contains(renderer.domElement)) {
@@ -791,6 +798,8 @@ export function Report3DViewport({
       ctrl.update();
     }
   }, [cameraTransform, cameraPreset]);
+
+  if (glFailed) return <WebGLUnavailable theme={theme} height={height} />;
 
   return (
     <div style={{ position: "relative", width: "100%", height, overflow: "hidden", background: isNight ? "#080f1a" : "#e0f2fe" }}>

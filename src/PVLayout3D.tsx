@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import * as api from "./api";
+import { createRendererSafe, releaseRenderer, WebGLUnavailable } from "./webglSafe";
 import {
   RotateCcw,
   RefreshCw,
@@ -136,6 +137,7 @@ export default function PVLayout3D({
   const [demLoading, setDemLoading] = useState(false);
   const [demStatus, setDemStatus] = useState("");
   const [sunInfo, setSunInfo] = useState({ azimuth: 0, elevation: 0 });
+  const [glFailed, setGlFailed] = useState(false);
   const id = lang === "id";
 
   // Load saved 3D settings on mount
@@ -331,7 +333,7 @@ export default function PVLayout3D({
 
   useEffect(() => {
     const host = hostRef.current;
-    if (!host) return;
+    if (!host || glFailed) return;
     let saved: SavedLayout = {};
     try {
       saved = JSON.parse(localStorage.getItem(scopedStorageKey) || "{}");
@@ -440,7 +442,11 @@ export default function PVLayout3D({
     const camera = new THREE.PerspectiveCamera(45, Math.max(1, host.clientWidth) / Math.max(1, host.clientHeight), Math.max(0.1, span / 2000), viewDist * 9);
     camera.position.set(span * 0.72, span * 0.78, span * 0.88);
 
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+    const renderer = createRendererSafe({ antialias: true, alpha: false });
+    if (!renderer) {
+      setGlFailed(true);
+      return;
+    }
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     renderer.setSize(host.clientWidth, host.clientHeight);
     renderer.shadowMap.enabled = true;
@@ -936,7 +942,7 @@ export default function PVLayout3D({
       observer.disconnect();
       host.removeEventListener("wheel", handle3DWheel);
       controls.dispose();
-      renderer.dispose();
+      releaseRenderer(renderer);
       scene.traverse(o => {
         if (o instanceof THREE.InstancedMesh) o.dispose();
         if (o instanceof THREE.Mesh || o instanceof THREE.Line || o instanceof THREE.LineSegments) {
@@ -962,7 +968,8 @@ export default function PVLayout3D({
     customRoofW,
     customRoofH,
     wallHeight,
-    roofPitchDeg
+    roofPitchDeg,
+    glFailed
   ]);
 
   // Shadow evaluation
@@ -1526,6 +1533,11 @@ export default function PVLayout3D({
         }}
       >
         <div ref={hostRef} style={{ width: "100%", height: "100%" }} />
+        {glFailed && (
+          <div style={{ position: "absolute", inset: 0, zIndex: 30 }}>
+            <WebGLUnavailable lang={id ? "id" : "en"} />
+          </div>
+        )}
 
         {/* Top-Left HUD Info Pill */}
         <div style={{
